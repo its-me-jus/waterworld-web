@@ -56,6 +56,9 @@ export type PlayerState = {
   unlocked: boolean
 }
 
+/** Shoves the swimmer out of solid geometry, in place, after they've moved. */
+export type Collider = (position: { x: number; y: number; z: number }) => void
+
 export type PlayerFrame = {
   underwater: boolean
   surfaceY: number
@@ -166,6 +169,7 @@ export function updatePlayer(
   input: InputState,
   dt: number,
   time: number,
+  collide?: Collider,
 ): PlayerFrame {
   if (Math.abs(input.lookX) > 0.02 || Math.abs(input.lookY) > 0.02) {
     player.yaw += input.lookX * LOOK_SENS_STICK * dt
@@ -256,6 +260,13 @@ export function updatePlayer(
   player.vy = clamp(player.vy, -9, 9)
   player.y += player.vy * dt
   player.y = clamp(player.y, surfaceY - MAX_DEPTH, surfaceY + 2.5)
+
+  if (collide) {
+    const before = player.y
+    collide(player)
+    // Settling onto rock or sand shouldn't keep banking downward velocity
+    if (player.y > before && player.vy < 0) player.vy = 0
+  }
 
   // —— head attitude ———————————————————————————————————————
   const n = water.normal

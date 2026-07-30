@@ -13,6 +13,9 @@ dist-ssr
 *.local
 .vercel
 
+# Screenshots from scripts/shot.mjs
+shots
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

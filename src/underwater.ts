@@ -526,27 +526,39 @@ const jellyVertex = /* glsl */ `
 uniform float uTime;
 
 attribute float aPhase;
+/** 0 on the bell, 1 on anything trailing beneath it. */
+attribute float aTrail;
 
 varying float vRim;
 varying float vDist;
 varying float vDrop;
+varying float vSpoke;
+varying float vTrail;
 
 void main() {
   vec3 p = position;
-  float pulse = sin(uTime * 1.15 + aPhase * 6.28318);
-  float rim = smoothstep(0.0, 0.48, length(p.xz));
+  float ph = aPhase * 6.28318;
+  float pulse = sin(uTime * 1.15 + ph);
+  // The tentacles answer the bell a beat late, which is what makes the swim
+  // read as one animal instead of a hat with strings on it
+  float lag = sin(uTime * 1.15 + ph - 1.0);
 
-  // Bell contracts outward-in and lifts as it squeezes
-  p.xz *= 1.0 + pulse * 0.15 * rim;
-  p.y -= pulse * 0.1 * rim;
+  float rim = smoothstep(0.0, 0.46, length(p.xz));
+  float drop = clamp(-p.y, 0.0, 3.0);
 
-  // Trailing skirt ripples further down
-  float drop = clamp(-p.y, 0.0, 2.0);
-  p.x += sin(uTime * 1.6 + aPhase * 5.0 + drop * 2.4) * 0.05 * drop;
-  p.z += cos(uTime * 1.4 + aPhase * 4.0 + drop * 2.1) * 0.05 * drop;
+  float squeeze = mix(pulse * 0.17 * rim, lag * 0.11 * (1.0 - exp(-drop * 1.6)), aTrail);
+  p.xz *= 1.0 + squeeze;
+  p.y -= pulse * 0.085 * rim * (1.0 - aTrail);
+
+  // Travelling ripple down the trailing gear
+  p.x += sin(uTime * 1.5 + ph * 3.0 - drop * 2.6) * 0.055 * drop * aTrail;
+  p.z += cos(uTime * 1.35 + ph * 2.4 - drop * 2.2) * 0.055 * drop * aTrail;
 
   vRim = rim;
   vDrop = drop;
+  vTrail = aTrail;
+  // Continuous around the seam as long as the fragment stripes an integer multiple
+  vSpoke = atan(position.z, position.x);
 
   vec4 world = modelMatrix * instanceMatrix * vec4(p, 1.0);
   vec4 mv = viewMatrix * world;
@@ -557,6 +569,7 @@ void main() {
 
 const jellyFragment = /* glsl */ `
 uniform vec3 uColor;
+uniform vec3 uCoreColor;
 uniform vec3 uWaterColor;
 uniform float uFogDensity;
 uniform float uOpacity;
@@ -564,12 +577,26 @@ uniform float uOpacity;
 varying float vRim;
 varying float vDist;
 varying float vDrop;
+varying float vSpoke;
+varying float vTrail;
 
 void main() {
-  float alpha = (0.32 + vRim * 0.5) * uOpacity;
-  alpha *= 1.0 - smoothstep(0.1, 1.6, vDrop) * 0.85;
+  // Radial canals — eight faint ribs fanning out from the stomach
+  float canal = pow(sin(vSpoke * 4.0) * 0.5 + 0.5, 5.0) * smoothstep(0.12, 0.85, vRim);
+  // Stomach cluster sits opaque under the apex
+  float core = 1.0 - smoothstep(0.0, 0.32, vRim);
 
-  vec3 col = uColor * (0.8 + vRim * 0.6);
+  float bell = 0.16 + vRim * 0.3 + canal * 0.24 + core * 0.3;
+  // Bright margin where the bell rolls under
+  bell += smoothstep(0.85, 1.0, vRim) * 0.24;
+
+  float trail = max(0.0, 0.4 - vDrop * 0.1) * (1.0 - smoothstep(0.2, 2.4, vDrop) * 0.8);
+
+  float alpha = mix(bell, trail, vTrail) * uOpacity;
+
+  vec3 col = uColor * (0.78 + vRim * 0.45 + canal * 0.5);
+  col = mix(col, uCoreColor, core * 0.5);
+
   float fog = 1.0 - exp(-vDist * uFogDensity);
   col = mix(col, uWaterColor, fog);
   alpha *= 1.0 - fog * 0.85;
@@ -583,11 +610,85 @@ void main() {
 
 type Jelly = { x: number; y: number; z: number; rise: number; spin: number; scale: number }
 
-function createJellyfish(count: number, waterColor: THREE.Color) {
-  const bell = new THREE.SphereGeometry(0.5, 16, 9, 0, TAU, 0, Math.PI * 0.56)
-  const skirt = new THREE.CylinderGeometry(0.44, 0.05, 1.5, 16, 5, true)
-  skirt.translate(0, -0.75, 0)
-  const geometry = mergeGeometries([bell, skirt]) ?? bell
+/**
+ * Bell profile from apex to margin, revolved into a dome. The old hemisphere +
+ * cone read as a party hat; a real medusa is round on top, thins toward the
+ * edge, and tucks back under at the margin.
+ */
+const BELL_PROFILE: [number, number][] = [
+  [0.0, 0.4],
+  [0.075, 0.396],
+  [0.15, 0.382],
+  [0.225, 0.356],
+  [0.298, 0.316],
+  [0.362, 0.262],
+  [0.416, 0.198],
+  [0.458, 0.128],
+  [0.487, 0.058],
+  [0.5, -0.01],
+  [0.496, -0.07],
+  [0.47, -0.116],
+  [0.436, -0.14],
+]
+
+/**
+ * Tapering ribbon hanging from the origin down -Y, crossed with a second copy so
+ * it never disappears when you look at it edge-on. `waviness` bends it in Z so
+ * the resting shape is already loose.
+ */
+function strand(length: number, width: number, tipWidth: number, waviness: number, segments: number) {
+  const build = () => {
+    const geo = new THREE.PlaneGeometry(1, length, 1, segments)
+    const pos = geo.attributes.position
+    for (let i = 0; i < pos.count; i++) {
+      const t = 0.5 - pos.getY(i) / length
+      pos.setX(i, pos.getX(i) * (width + (tipWidth - width) * t))
+      pos.setZ(i, Math.sin(t * 4.2) * waviness * t)
+    }
+    geo.translate(0, -length / 2, 0)
+    geo.computeVertexNormals()
+    return geo
+  }
+  const across = build()
+  across.rotateY(Math.PI / 2)
+  return mergeGeometries([build(), across], false) as THREE.BufferGeometry
+}
+
+/** Flag every vertex as bell or trailing gear so one shader can drive both. */
+function tagTrail(geometry: THREE.BufferGeometry, trail: number) {
+  const flags = new Float32Array(geometry.attributes.position.count).fill(trail)
+  geometry.setAttribute('aTrail', new THREE.BufferAttribute(flags, 1))
+  return geometry
+}
+
+function jellyGeometry(low: boolean) {
+  const profile = BELL_PROFILE.map(([r, y]) => new THREE.Vector2(r, y))
+  const parts = [tagTrail(new THREE.LatheGeometry(profile, low ? 14 : 22), 0)]
+
+  const tentacles = low ? 9 : 15
+  for (let i = 0; i < tentacles; i++) {
+    const a = (i / tentacles) * TAU
+    const length = 1.15 + (i % 4) * 0.28
+    const geo = strand(length, 0.03, 0.008, 0.06, low ? 4 : 7)
+    geo.rotateY(a)
+    geo.translate(Math.cos(a) * 0.455, -0.1, Math.sin(a) * 0.455)
+    parts.push(tagTrail(geo, 1))
+  }
+
+  // Four frilled oral arms hanging from the mouth, shorter and much broader
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * TAU + 0.4
+    const geo = strand(0.82, 0.15, 0.02, 0.12, low ? 5 : 8)
+    geo.rotateY(a)
+    geo.translate(Math.cos(a) * 0.1, -0.04, Math.sin(a) * 0.1)
+    parts.push(tagTrail(geo, 1))
+  }
+
+  return mergeGeometries(parts, false) as THREE.BufferGeometry
+}
+
+function createJellyfish(count: number, waterColor: THREE.Color, low: boolean) {
+  const geometry = jellyGeometry(low)
 
   const phases = new Float32Array(count)
   for (let i = 0; i < count; i++) phases[i] = Math.random()
@@ -597,6 +698,7 @@ function createJellyfish(count: number, waterColor: THREE.Color) {
     uniforms: {
       uTime: { value: 0 },
       uColor: { value: new THREE.Color('#bfe9ff') },
+      uCoreColor: { value: new THREE.Color('#f3c9d8') },
       uWaterColor: { value: waterColor.clone() },
       uFogDensity: { value: 0.045 },
       uOpacity: { value: 1 },
@@ -711,7 +813,7 @@ export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOption
   fish.material.uniforms.uSunDir.value.copy(opts.sunDir)
   group.add(fish.mesh)
 
-  const jellies = createJellyfish(low ? 7 : 14, opts.waterColor)
+  const jellies = createJellyfish(low ? 7 : 14, opts.waterColor, low)
   group.add(jellies.mesh)
 
   let fade = 0

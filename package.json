@@ -6,10 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "shot": "node scripts/shot.mjs",
+    "audio": "node scripts/gen-audio.mjs",
+    "audio:lyria": "node scripts/gen-audio-lyria.mjs"
   },
   "devDependencies": {
+    "@google/genai": "^2.15.0",
     "@types/three": "^0.185.1",
+    "playwright-core": "^1.62.1",
     "typescript": "~6.0.2",
     "vite": "^8.2.0"
   },

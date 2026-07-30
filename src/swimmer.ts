@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import type { PlayerFrame } from './player'
 
 /**
@@ -70,11 +71,135 @@ function samplePose(keys: Key[], phase: number, out: Pose) {
   return out
 }
 
-/** A limb segment hanging along -Y from its joint, plus a group at its far end. */
+// —— hands ————————————————————————————————————————————————
+
+const X_AXIS = new THREE.Vector3(1, 0, 0)
+const Z_AXIS = new THREE.Vector3(0, 0, 1)
+
+/** One bone in a finger: [end-to-end length, radius, extra curl at its joint]. */
+type Bone = [number, number, number]
+
+/** Index → pinky, laid out across the palm away from the thumb. */
+const FINGERS: { x: number; fan: number; bones: Bone[] }[] = [
+  { x: -0.03, fan: -0.11, bones: [[0.044, 0.0118, 0.2], [0.032, 0.0104, 0.3]] },
+  { x: -0.01, fan: -0.03, bones: [[0.048, 0.012, 0.17], [0.035, 0.0106, 0.28]] },
+  { x: 0.01, fan: 0.05, bones: [[0.045, 0.0113, 0.19], [0.032, 0.01, 0.32]] },
+  { x: 0.029, fan: 0.14, bones: [[0.036, 0.0098, 0.24], [0.026, 0.0088, 0.36]] },
+]
+
+/**
+ * A hand with actual fingers, merged down to one geometry. Canonical form is the
+ * right hand: wrist at the origin, fingers down -Y, palm facing +Z, thumb toward
+ * -X so it sits inboard the way a swimmer's thumbs face each other. Held in a
+ * slight cup, which is both what a swimmer does and what keeps the silhouette
+ * from reading as a mitten when a hand sweeps past the camera.
+ */
+function handGeometry() {
+  const parts: THREE.BufferGeometry[] = []
+  const matrix = new THREE.Matrix4()
+  const unit = new THREE.Vector3(1, 1, 1)
+  const joint = new THREE.Vector3()
+  const dir = new THREE.Vector3()
+  const mid = new THREE.Vector3()
+  const q = new THREE.Quaternion()
+  const step = new THREE.Quaternion()
+
+  /** Capsule of exact end-to-end `length`, placed by matrix. */
+  const place = (
+    length: number,
+    radius: number,
+    radial: number,
+    at: THREE.Vector3,
+    rot: THREE.Quaternion,
+    scale: THREE.Vector3 = unit,
+  ) => {
+    const geo = new THREE.CapsuleGeometry(radius, Math.max(0.002, length - radius * 2), 3, radial)
+    matrix.compose(at, rot, scale)
+    parts.push(geo.applyMatrix4(matrix))
+  }
+
+  /** Walk a chain of bones from `base`, each one bending further toward the palm. */
+  const chain = (base: THREE.Vector3, root: THREE.Quaternion, bones: Bone[], radial: number) => {
+    q.copy(root)
+    joint.copy(base)
+    for (const [length, radius, curl] of bones) {
+      // Fingers close toward +Z, so the curl is a negative turn about X
+      q.multiply(step.setFromAxisAngle(X_AXIS, -curl))
+      dir.set(0, -1, 0).applyQuaternion(q)
+      mid.copy(joint).addScaledVector(dir, length * 0.5)
+      place(length, radius, radial, mid, q)
+      joint.addScaledVector(dir, length)
+    }
+  }
+
+  // Palm: flattened front-to-back, knuckles ending around y = -0.1
+  const palm = new THREE.CapsuleGeometry(0.03, 0.05, 4, 10)
+  palm.scale(1.38, 1, 0.5)
+  palm.translate(0, -0.05, 0)
+  parts.push(palm)
+
+  // Thenar pad — the fleshy wedge at the base of the thumb
+  place(
+    0.066,
+    0.019,
+    8,
+    new THREE.Vector3(-0.02, -0.048, 0.005),
+    q.setFromAxisAngle(Z_AXIS, -0.4),
+    new THREE.Vector3(1, 1, 0.62),
+  )
+
+  for (const finger of FINGERS) {
+    chain(
+      new THREE.Vector3(finger.x, -0.096, 0.001),
+      new THREE.Quaternion().setFromAxisAngle(Z_AXIS, finger.fan),
+      finger.bones,
+      8,
+    )
+  }
+
+  // Thumb: splayed out to -X, then swung forward so it opposes the fingers
+  const thumbRoot = new THREE.Quaternion()
+    .setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.75)
+    .multiply(new THREE.Quaternion().setFromAxisAngle(Z_AXIS, -0.62))
+  chain(
+    new THREE.Vector3(-0.032, -0.044, 0.008),
+    thumbRoot,
+    [[0.038, 0.0138, 0.18], [0.031, 0.0116, 0.34]],
+    9,
+  )
+
+  return mergeGeometries(parts, false) ?? parts[0]
+}
+
+/**
+ * Mirror across X for the other hand. `scale(-1)` alone leaves every triangle
+ * wound backwards, so the index has to be reversed too or the mesh renders
+ * inside-out under front-face culling.
+ */
+function mirrorX(geometry: THREE.BufferGeometry) {
+  const out = geometry.clone()
+  out.scale(-1, 1, 1)
+  const index = out.getIndex()
+  if (!index) throw new Error('mirrorX expects indexed geometry')
+  const tri = index.array as Uint16Array | Uint32Array
+  for (let i = 0; i < tri.length; i += 3) {
+    const first = tri[i]
+    tri[i] = tri[i + 2]
+    tri[i + 2] = first
+  }
+  index.needsUpdate = true
+  return out
+}
+
+/**
+ * A limb segment hanging along -Y from its joint, plus a group at its far end.
+ * Generously segmented: forearms fill a third of the frame during a stroke, and
+ * at that size an octagonal cross-section is obvious.
+ */
 function limb(length: number, radius: number, material: THREE.Material) {
   const root = new THREE.Group()
   const mesh = new THREE.Mesh(
-    new THREE.CapsuleGeometry(radius, Math.max(0.02, length - radius * 2), 3, 8),
+    new THREE.CapsuleGeometry(radius, Math.max(0.02, length - radius * 2), 4, 16),
     material,
   )
   mesh.position.y = -length / 2
@@ -116,8 +241,8 @@ export function createSwimmer(camera: THREE.Camera) {
   const armRoot = new THREE.Group()
   rig.add(armRoot)
 
-  const handGeo = new THREE.CapsuleGeometry(0.038, 0.05, 3, 8)
-  handGeo.scale(1.15, 1.5, 0.45)
+  const rightHand = handGeometry()
+  const leftHand = mirrorX(rightHand)
 
   function makeArm(sign: number, offset: number): Arm {
     // Shoulders sit low and behind the eyes, so the upper arm is foreshortened
@@ -134,15 +259,16 @@ export function createSwimmer(camera: THREE.Camera) {
     const fore = limb(0.3, 0.038, skin)
     elbow.add(fore.root)
 
-    const bracer = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.042, 0.04, 8), gear)
+    const bracer = new THREE.Mesh(new THREE.CylinderGeometry(0.043, 0.041, 0.04, 16), gear)
     bracer.position.y = -0.23
     fore.root.add(bracer)
 
     const wrist = new THREE.Group()
     fore.end.add(wrist)
-    const hand = new THREE.Mesh(handGeo, skin)
-    hand.position.y = -0.08
-    hand.rotation.x = -0.18
+    const hand = new THREE.Mesh(sign > 0 ? rightHand : leftHand, skin)
+    // Palm faces +Z locally, so a little wrist extension points it back along the
+    // pull rather than up at the sky during the catch
+    hand.rotation.x = -0.12
     wrist.add(hand)
 
     return { shoulder, elbow, wrist, sign, offset }
@@ -182,7 +308,7 @@ export function createSwimmer(camera: THREE.Camera) {
     const shin = limb(0.42, 0.052, skin)
     knee.add(shin.root)
 
-    const foot = new THREE.Mesh(new THREE.CapsuleGeometry(0.038, 0.07, 3, 6), skin)
+    const foot = new THREE.Mesh(new THREE.CapsuleGeometry(0.038, 0.07, 3, 10), skin)
     foot.scale.set(1.1, 1, 0.6)
     foot.position.set(0, -0.06, -0.04)
     foot.rotation.x = 1.1

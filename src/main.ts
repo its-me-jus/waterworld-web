@@ -9,6 +9,8 @@ import { createSplashLayer } from './splash'
 import { createSwimmer } from './swimmer'
 import { createUnderwaterWorld } from './underwater'
 import { sampleOcean } from './waves'
+import { createWreck } from './wreck'
+import { createOceanAudio } from './audio'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('#app missing')
@@ -34,6 +36,17 @@ app.appendChild(crosshair)
 const underOverlay = document.createElement('div')
 underOverlay.id = 'under-overlay'
 app.appendChild(underOverlay)
+
+const marker = document.createElement('div')
+marker.id = 'marker'
+marker.innerHTML = '<span class="marker-ring"></span><span class="marker-range"></span>'
+app.appendChild(marker)
+const markerRange = marker.querySelector<HTMLElement>('.marker-range')
+
+const found = document.createElement('div')
+found.id = 'found'
+found.innerHTML = '<strong>The Wanderer</strong><span>Dive the hull</span>'
+app.appendChild(found)
 
 const bubblesLayer = document.createElement('div')
 bubblesLayer.id = 'bubbles'
@@ -81,6 +94,13 @@ const underwaterWorld = createUnderwaterWorld(scene, {
   lowPower,
 })
 
+// Placed dead ahead of the spawn heading, far enough out that the mast is a
+// smudge on the horizon before it resolves into a ship
+const wreck = createWreck(scene, { x: -38, z: -104, lowPower })
+const oceanAudio = createOceanAudio()
+let heave = 0
+let prevSurfaceForAudio = Number.NaN
+
 // Capture the sky (and clouds) into a cube map so the water reflects the real sky
 const envRT = new THREE.WebGLCubeRenderTarget(lowPower ? 128 : 256)
 envRT.texture.minFilter = THREE.LinearMipmapLinearFilter
@@ -99,13 +119,19 @@ function captureEnv() {
 
 const player = createPlayer()
 {
-  // ?depth=6&pitch=-0.2 spawns submerged — handy when tuning the underwater look
+  // ?depth=6&pitch=-0.2 spawns submerged, ?x=&z=&yaw= spawns somewhere specific —
+  // both handy when tuning the underwater look or the wreck
   const params = new URLSearchParams(location.search)
-  const depth = Number(params.get('depth') ?? 0)
+  const num = (key: string, fallback: number) =>
+    params.has(key) ? Number(params.get(key)) : fallback
+  player.x = num('x', player.x)
+  player.z = num('z', player.z)
+  player.yaw = num('yaw', player.yaw)
+  const depth = num('depth', 0)
   const surface = sampleOcean(player.x, player.z, 0).y
   player.y = surface + (depth > 0 ? -depth : 1.5)
   if (depth > 0) player.pitch = 0.5
-  if (params.has('pitch')) player.pitch = Number(params.get('pitch'))
+  player.pitch = num('pitch', player.pitch)
 }
 
 const input = createInputState()
@@ -174,15 +200,77 @@ const shallowTint = new THREE.Color('#0a4f5e')
 const deepTint = new THREE.Color('#031f2d')
 const waterTint = new THREE.Color()
 
+const airHemiSky = skyRig.hemi.color.clone()
+const airHemiGround = skyRig.hemi.groundColor.clone()
+const underHemiSky = new THREE.Color('#6fc6d8')
+
+const beaconView = new THREE.Vector3()
+const beaconClip = new THREE.Vector3()
+let foundAt = -1
+
+/**
+ * Pin a small pip on the wreck's mast head — clamped to the screen edge when
+ * it's behind you — so an ocean with no features still has a direction in it.
+ * Fades out once you're on top of it and back in if you wander off.
+ */
+function updateMarker(time: number) {
+  const range = camera.position.distanceTo(wreck.centre)
+
+  if (range < 26 && foundAt < 0) foundAt = time
+  const since = foundAt < 0 ? -1 : time - foundAt
+  found.style.opacity =
+    since < 0 ? '0' : String(THREE.MathUtils.clamp(Math.min(since / 0.6, (5.5 - since) / 1.2), 0, 1))
+
+  const strength = THREE.MathUtils.smoothstep(range, 26, 48)
+  marker.style.opacity = String(strength * 0.8)
+  if (strength < 0.01) return
+
+  camera.updateMatrixWorld()
+  beaconView.copy(wreck.beacon).applyMatrix4(camera.matrixWorldInverse)
+
+  let nx: number
+  let ny: number
+  if (beaconView.z > -0.5) {
+    // Behind us — park it on the side you'd have to turn toward
+    nx = beaconView.x >= 0 ? 0.93 : -0.93
+    ny = THREE.MathUtils.clamp(beaconView.y / Math.max(4, Math.abs(beaconView.z)), -0.8, 0.8)
+  } else {
+    beaconClip.copy(beaconView).applyMatrix4(camera.projectionMatrix)
+    nx = THREE.MathUtils.clamp(beaconClip.x, -0.93, 0.93)
+    ny = THREE.MathUtils.clamp(beaconClip.y, -0.88, 0.88)
+  }
+
+  marker.style.transform = `translate(-50%, -50%) translate(${(nx * 50 + 50).toFixed(2)}vw, ${(50 - ny * 50).toFixed(2)}vh)`
+  if (markerRange) markerRange.textContent = `${range.toFixed(0)} m`
+}
+
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05)
   const t = clock.elapsedTime
 
   touch.apply(input)
   desktop.mergeKeys(input)
+  // Any keyboard use unlocks the audio context (WASD before click)
+  if (
+    input.moveForward ||
+    input.moveStrafe ||
+    input.lookX ||
+    input.lookY ||
+    input.rise ||
+    input.dive
+  ) {
+    void oceanAudio.unlock()
+  }
 
-  const view = updatePlayer(player, camera, input, dt, t)
+  const view = updatePlayer(player, camera, input, dt, t, wreck.resolve)
   const { underwater, surfaceY, depth } = view
+
+  if (Number.isNaN(prevSurfaceForAudio)) prevSurfaceForAudio = surfaceY
+  heave = THREE.MathUtils.damp(heave, surfaceY - prevSurfaceForAudio, 6, dt)
+  prevSurfaceForAudio = surfaceY
+  oceanAudio.update(dt, view.submersion, depth, heave)
+  // Pointer-lock / first click also unlocks audio in case the global listeners missed it
+  if (document.pointerLockElement) void oceanAudio.unlock()
 
   swimmer.update(dt, t, view, player.pitch + player.viewPitch, player.roll)
 
@@ -200,14 +288,27 @@ function frame() {
   const murk = Math.min(1, depth / 24)
   underFog.density = 0.026 + murk * 0.032
   waterTint.copy(shallowTint).lerp(deepTint, murk)
+  // Fog has to track the tint or distant geometry fades to the wrong colour and
+  // reads as a flat cutout against the water instead of dissolving into it
+  underFog.color.copy(waterTint)
 
   scene.fog = underwater ? underFog : airFog
   scene.background = underwater ? waterTint : skyRig.horizonColor
   renderer.toneMappingExposure = underwater ? 0.98 - murk * 0.25 : 0.9
   skyRig.sky.visible = !underwater
   skyRig.clouds.visible = !underwater
-  skyRig.hemi.intensity = underwater ? 0.34 - murk * 0.14 : 0.5
-  skyRig.sunLight.intensity = underwater ? 1.1 - murk * 0.5 : 2.6
+  if (underwater) {
+    // Backscatter off the water is the only fill down here. Without a lit lower
+    // hemisphere every underside — reef flank, hull, kelp — goes flat black.
+    skyRig.hemi.color.copy(underHemiSky)
+    skyRig.hemi.groundColor.copy(waterTint).multiplyScalar(2.4)
+    skyRig.hemi.intensity = 1.35 - murk * 0.45
+  } else {
+    skyRig.hemi.color.copy(airHemiSky)
+    skyRig.hemi.groundColor.copy(airHemiGround)
+    skyRig.hemi.intensity = 0.5
+  }
+  skyRig.sunLight.intensity = underwater ? 1.5 - murk * 0.6 : 2.6
 
   document.body.classList.toggle('underwater', underwater)
   underOverlay.style.opacity = String(view.submersion)
@@ -223,6 +324,9 @@ function frame() {
     underwater,
     pixelRatio: renderer.getPixelRatio(),
   })
+
+  wreck.update(t, camera)
+  updateMarker(t)
 
   splash.update(dt, camera.position.y, surfaceY, view.moving)
 
