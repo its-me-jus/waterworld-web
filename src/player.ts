@@ -6,7 +6,7 @@ const LOOK_SENS_MOUSE = 0.0022
 const LOOK_SENS_STICK = 2.4
 const MOVE_SPEED = 7.5
 const SWIM_VERTICAL = 4.2
-const EYE_HEIGHT = 0.35
+const EYE_HEIGHT = 1.5
 
 export type PlayerState = {
   yaw: number

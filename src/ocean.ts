@@ -1,16 +1,7 @@
 import * as THREE from 'three'
 import { WAVES, WAVE_COUNT } from './waves'
 
-const vertexShader = /* glsl */ `
-uniform float uTime;
-uniform vec4 uWaves[${WAVE_COUNT}]; // xy dir, z steepness, w wavelength
-uniform vec2 uWaveExtra[${WAVE_COUNT}]; // x phase, y speed
-
-varying vec3 vWorldPos;
-varying vec3 vNormal;
-varying float vFoam;
-varying float vFresnelHint;
-
+const noiseGLSL = /* glsl */ `
 float hash(vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
@@ -23,27 +14,40 @@ float noise(vec2 p) {
   float b = hash(i + vec2(1.0, 0.0));
   float c = hash(i + vec2(0.0, 1.0));
   float d = hash(i + vec2(1.0, 1.0));
-  return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-float fbm(vec2 p) {
+float fbm(vec2 p, int octaves) {
   float v = 0.0;
   float a = 0.5;
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 6; i++) {
+    if (i >= octaves) break;
     v += a * noise(p);
-    p = p * 2.02 + vec2(17.1, 9.3);
+    p = p * 2.03 + vec2(17.1, 9.3);
     a *= 0.5;
   }
   return v;
 }
+`
 
-vec3 gerstner(vec3 pos, vec4 wave, vec2 extra, inout vec3 tangent, inout vec3 binormal) {
+const vertexShader = /* glsl */ `
+uniform float uTime;
+uniform vec4 uWaves[${WAVE_COUNT}];
+uniform vec2 uWaveExtra[${WAVE_COUNT}];
+
+varying vec3 vWorldPos;
+varying vec3 vNormal;
+varying float vCrest;
+
+${noiseGLSL}
+
+vec3 gerstner(vec2 p, vec4 wave, vec2 extra, inout vec3 tangent, inout vec3 binormal) {
   float steepness = wave.z;
   float wavelength = wave.w;
   float k = 6.28318530718 / wavelength;
   float c = sqrt(9.8 / k) * extra.y;
   vec2 d = normalize(wave.xy);
-  float f = k * (dot(d, pos.xz) - c * uTime) + extra.x;
+  float f = k * (dot(d, p) - c * uTime) + extra.x;
   float a = steepness / k;
 
   tangent += vec3(
@@ -61,127 +65,186 @@ vec3 gerstner(vec3 pos, vec4 wave, vec2 extra, inout vec3 tangent, inout vec3 bi
 }
 
 void main() {
-  vec3 pos = position;
+  // Waves live in world space so the mesh can follow the camera seamlessly
+  vec3 world = (modelMatrix * vec4(position, 1.0)).xyz;
+
   vec3 tangent = vec3(1.0, 0.0, 0.0);
   vec3 binormal = vec3(0.0, 0.0, 1.0);
-  vec3 displacement = vec3(0.0);
+  vec3 disp = vec3(0.0);
 
   for (int i = 0; i < ${WAVE_COUNT}; i++) {
-    displacement += gerstner(pos, uWaves[i], uWaveExtra[i], tangent, binormal);
+    disp += gerstner(world.xz, uWaves[i], uWaveExtra[i], tangent, binormal);
   }
 
   float chop =
-    (fbm(pos.xz * 0.08 + vec2(uTime * 0.07, -uTime * 0.05)) - 0.5) * 0.55 +
-    (fbm(pos.xz * 0.22 + vec2(-uTime * 0.11, uTime * 0.03)) - 0.5) * 0.22;
-  displacement.y += chop;
+    (fbm(world.xz * 0.08 + vec2(uTime * 0.07, -uTime * 0.05), 4) - 0.5) * 0.55 +
+    (fbm(world.xz * 0.22 + vec2(-uTime * 0.11, uTime * 0.03), 3) - 0.5) * 0.22;
+  disp.y += chop;
 
-  // Mild horizontal jitter so crests don't stay locked to a grid
-  displacement.x += (fbm(pos.xz * 0.15 + 3.1) - 0.5) * 0.35;
-  displacement.z += (fbm(pos.xz * 0.15 + 7.7) - 0.5) * 0.35;
+  world += disp;
 
-  pos += displacement;
+  vCrest = smoothstep(0.4, 1.35, disp.y);
+  vWorldPos = world;
+  vNormal = normalize(cross(binormal, tangent));
 
-  // Perturb normal with chop derivatives (approximate)
-  float e = 0.35;
-  float hx = (fbm((pos.xz + vec2(e, 0.0)) * 0.08) - fbm((pos.xz - vec2(e, 0.0)) * 0.08));
-  float hz = (fbm((pos.xz + vec2(0.0, e)) * 0.08) - fbm((pos.xz - vec2(0.0, e)) * 0.08));
-  vec3 normal = normalize(cross(binormal, tangent) + vec3(-hx * 1.4, 0.0, -hz * 1.4));
-
-  float peak = max(displacement.y, 0.0);
-  vFoam = smoothstep(0.35, 1.1, peak) * 0.85 + chop * 0.15;
-  vFresnelHint = clamp(1.0 - normal.y, 0.0, 1.0);
-
-  vec4 world = modelMatrix * vec4(pos, 1.0);
-  vWorldPos = world.xyz;
-  vNormal = normalize(mat3(modelMatrix) * normal);
-  gl_Position = projectionMatrix * viewMatrix * world;
+  gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
 }
 `
 
 const fragmentShader = /* glsl */ `
+uniform samplerCube uEnvMap;
 uniform vec3 uDeepColor;
 uniform vec3 uShallowColor;
 uniform vec3 uUnderColor;
+uniform vec3 uSunColor;
 uniform vec3 uSunDir;
 uniform vec3 uCameraPos;
+uniform vec3 uHorizonColor;
 uniform float uUnderwater;
 uniform float uTime;
 
 varying vec3 vWorldPos;
 varying vec3 vNormal;
-varying float vFoam;
-varying float vFresnelHint;
+varying float vCrest;
 
-float hash(vec2 p) {
-  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+${noiseGLSL}
+
+// Micro-detail normal from noise gradient, faded with distance to kill shimmer
+vec3 detailNormal(vec2 p, float fade) {
+  float e = 0.32;
+  vec2 flow = vec2(uTime * 0.35, uTime * -0.22);
+  float h = fbm((p + flow) * 0.62, ${'DETAIL_OCT'});
+  float hx = fbm((p + flow + vec2(e, 0.0)) * 0.62, ${'DETAIL_OCT'});
+  float hz = fbm((p + flow + vec2(0.0, e)) * 0.62, ${'DETAIL_OCT'});
+
+  vec2 flow2 = vec2(uTime * -0.6, uTime * 0.4);
+  float g = fbm((p + flow2) * 2.3, 2);
+  float gx = fbm((p + flow2 + vec2(e * 0.45, 0.0)) * 2.3, 2);
+  float gz = fbm((p + flow2 + vec2(0.0, e * 0.45)) * 2.3, 2);
+
+  float dx = (hx - h) * 3.4 + (gx - g) * 2.0;
+  float dz = (hz - h) * 3.4 + (gz - g) * 2.0;
+  return normalize(vec3(-dx * fade, 1.0, -dz * fade));
 }
 
-float noise(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  vec2 u = f * f * (3.0 - 2.0 * f);
-  return mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x)
-    + (hash(i + vec2(0.0, 1.0)) - hash(i)) * u.y * (1.0 - u.x)
-    + (hash(i + vec2(1.0, 1.0)) - hash(i + vec2(1.0, 0.0))) * u.x * u.y;
+// GGX specular — gives tight sun glitter instead of a plastic blob
+float ggx(vec3 N, vec3 V, vec3 L, float rough) {
+  vec3 H = normalize(V + L);
+  float a = rough * rough;
+  float ndh = max(dot(N, H), 0.0);
+  float d = ndh * ndh * (a * a - 1.0) + 1.0;
+  float D = (a * a) / (3.14159265 * d * d);
+  float ndl = max(dot(N, L), 0.0);
+  float ndv = max(dot(N, V), 0.0);
+  float k = a * 0.5;
+  float G = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+  return D * G;
 }
 
 void main() {
-  vec3 N = normalize(vNormal);
-  // Flip normal when looking from below
   vec3 V = normalize(uCameraPos - vWorldPos);
-  if (dot(N, V) < 0.0) N = -N;
-
+  float dist = length(uCameraPos - vWorldPos);
   vec3 L = normalize(uSunDir);
 
-  if (uUnderwater > 0.5) {
-    // Murky volume look when camera is submerged
-    float depthTint = clamp((-uCameraPos.y + 2.0) * 0.08, 0.0, 1.0);
-    vec3 base = mix(uUnderColor, uDeepColor * 0.45, depthTint);
-    float caustics = noise(vWorldPos.xz * 0.35 + vec2(uTime * 0.2, -uTime * 0.15));
-    caustics *= noise(vWorldPos.xz * 0.7 - vec2(uTime * 0.12, uTime * 0.08));
-    base += vec3(0.15, 0.35, 0.3) * pow(caustics, 2.0) * 0.35;
+  float fade = 1.0 / (1.0 + dist * 0.035);
+  vec3 base = normalize(vNormal);
+  vec3 detail = detailNormal(vWorldPos.xz, fade);
+  vec3 N = normalize(base + vec3(detail.x, 0.0, detail.z) * 0.7);
+  N.y = max(N.y, 0.12);
+  N = normalize(N);
 
-    float fresnel = pow(1.0 - max(dot(N, V), 0.0), 2.0);
-    // Surface from below = brighter silvery sky patch
-    vec3 aboveGlow = vec3(0.45, 0.75, 0.85);
-    vec3 color = mix(base, aboveGlow, fresnel * 0.55);
-    float spec = pow(max(dot(reflect(-L, N), V), 0.0), 40.0);
-    color += vec3(0.6, 0.85, 0.9) * spec * 0.25;
-    gl_FragColor = vec4(color, 0.88);
+  if (uUnderwater > 0.5) {
+    float depth = clamp((-uCameraPos.y + 2.0) * 0.05, 0.0, 1.0);
+    vec3 murk = mix(uUnderColor, uUnderColor * 0.45, depth);
+
+    // Light shafts / caustics rippling on the underside of the surface
+    float caus = fbm(vWorldPos.xz * 0.4 + vec2(uTime * 0.25, -uTime * 0.18), 3);
+    caus *= fbm(vWorldPos.xz * 0.9 - vec2(uTime * 0.15, uTime * 0.1), 2);
+    murk += vec3(0.2, 0.5, 0.46) * pow(caus, 1.6) * 0.8;
+
+    // Looking up through the surface: Snell's window opens toward vertical,
+    // everything outside it mirrors the dark water back at you.
+    vec3 I = normalize(vWorldPos - uCameraPos);
+    vec3 Nd = -N; // surface normal facing the submerged camera
+    float upness = clamp(I.y, 0.0, 1.0);
+
+    vec3 refr = refract(I, Nd, 1.33);
+    vec3 sky = dot(refr, refr) < 0.0001
+      ? uUnderColor * 1.3
+      : min(textureCube(uEnvMap, refr).rgb, vec3(1.3));
+
+    float snell = smoothstep(0.24, 0.95, upness);
+    vec3 mirror = mix(murk * 1.15, vec3(0.3, 0.55, 0.6), 0.25);
+    // Haze the sky patch so the window edge feels like water, not a cutout
+    sky = mix(mirror, sky, 0.72);
+    vec3 col = mix(mirror, sky, snell);
+
+    col += uSunColor * ggx(Nd, -I, L, 0.45) * 0.25 * snell;
+    col = mix(col, murk, smoothstep(8.0, 60.0, dist));
+
+    gl_FragColor = vec4(col, 0.95);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
     return;
   }
 
-  float fresnel = pow(1.0 - max(dot(N, V), 0.0), 2.8);
-  float facing = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-  vec3 water = mix(uDeepColor, uShallowColor, facing * facing);
-  // Subtle SSS-ish green on wave backs
-  water = mix(water, vec3(0.12, 0.45, 0.4), (1.0 - facing) * 0.22);
+  vec3 R = reflect(-V, N);
+  R.y = max(R.y, 0.015); // never sample below the horizon
+  vec3 sky = textureCube(uEnvMap, R).rgb;
+  // Physical sky can spike near the sun — keep reflections from blowing out
+  sky = min(sky, vec3(1.2));
+  // Grazing reflections read darker/greyer on real water, not milky white
+  sky = mix(sky * 0.42, sky, smoothstep(0.0, 0.38, R.y));
+  sky = mix(sky, uHorizonColor * 0.7, smoothstep(0.28, 0.0, R.y) * 0.45);
 
-  vec3 skyTint = vec3(0.55, 0.78, 0.95);
-  vec3 horizon = vec3(0.95, 0.72, 0.48);
-  vec3 reflectCol = mix(skyTint, horizon, pow(1.0 - clamp(V.y, 0.0, 1.0), 2.0));
-  vec3 color = mix(water, reflectCol, fresnel * 0.78);
+  // Schlick fresnel for water (F0 ~ 0.02), capped so near water keeps its colour
+  float ndv = max(dot(N, V), 0.0);
+  float fres = 0.02 + 0.9 * pow(1.0 - ndv, 5.0);
+  fres = min(fres, 0.52);
 
-  float diffuse = max(dot(N, L), 0.0) * 0.4 + 0.5;
-  color *= diffuse;
+  // Body colour: deeper looking down the wave, brighter on the shoulders
+  float facing = clamp(N.y, 0.0, 1.0);
+  vec3 body = mix(uDeepColor, uShallowColor, pow(facing, 2.2));
 
-  float spec = pow(max(dot(reflect(-L, N), V), 0.0), 110.0);
-  float wide = pow(max(dot(reflect(-L, N), V), 0.0), 18.0);
-  color += vec3(1.0, 0.97, 0.9) * spec * 1.2;
-  color += vec3(0.7, 0.85, 0.95) * wide * 0.12;
+  // Subsurface glow where the sun shines through a wave back
+  float sss = pow(max(dot(-L, V) * 0.5 + 0.5, 0.0), 3.0) * (1.0 - facing);
+  body += vec3(0.05, 0.3, 0.24) * sss * 0.8;
 
-  float foam = smoothstep(0.25, 0.85, vFoam) * (0.55 + 0.45 * vFresnelHint);
-  color = mix(color, vec3(0.92, 0.96, 0.98), foam * 0.55);
+  vec3 color = mix(body, sky, fres);
 
-  // Distance haze into open water
-  float dist = length(uCameraPos - vWorldPos);
-  color = mix(color, uDeepColor * 1.1, smoothstep(80.0, 260.0, dist) * 0.35);
+  // Troughs sit in their own shadow
+  float ao = 0.68 + 0.32 * smoothstep(-2.0, 1.4, vWorldPos.y);
+  color *= ao;
 
-  gl_FragColor = vec4(color, mix(0.88, 0.97, fresnel));
+  // Sun glitter: sharp near, broader far
+  float rough = mix(0.05, 0.2, clamp(dist * 0.006, 0.0, 1.0));
+  color += uSunColor * ggx(N, V, L, rough) * 1.6;
+
+  // Whitecaps on crests + a little foam streaking in the chop
+  float streak = fbm(vWorldPos.xz * 0.9 + vec2(uTime * 0.25, -uTime * 0.2), 3);
+  float foam = clamp(vCrest * smoothstep(0.45, 0.95, streak), 0.0, 1.0);
+  foam *= smoothstep(0.35, 0.8, facing);
+  color = mix(color, vec3(0.88, 0.94, 0.97), foam * 0.5);
+
+  // Blend to horizon so the mesh edge disappears
+  float far = smoothstep(220.0, 430.0, dist);
+  color = mix(color, uHorizonColor * 0.85, far * 0.6);
+
+  gl_FragColor = vec4(color, 1.0);
+
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }
 `
 
-export function createOcean(size = 520, segments = 256) {
+export type OceanOptions = {
+  size?: number
+  segments?: number
+  /** fewer noise octaves on weak GPUs */
+  detailOctaves?: number
+}
+
+export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: OceanOptions = {}) {
   const geometry = new THREE.PlaneGeometry(size, size, segments, segments)
   geometry.rotateX(-Math.PI / 2)
 
@@ -195,15 +258,18 @@ export function createOcean(size = 520, segments = 256) {
       uTime: { value: 0 },
       uWaves: { value: uWaves },
       uWaveExtra: { value: uWaveExtra },
-      uDeepColor: { value: new THREE.Color('#0a3d4d') },
-      uShallowColor: { value: new THREE.Color('#2f9eae') },
-      uUnderColor: { value: new THREE.Color('#053842') },
-      uSunDir: { value: new THREE.Vector3(0.45, 0.75, 0.3).normalize() },
+      uEnvMap: { value: null },
+      uDeepColor: { value: new THREE.Color('#031d2b') },
+      uShallowColor: { value: new THREE.Color('#12718c') },
+      uUnderColor: { value: new THREE.Color('#0c5c6b') },
+      uSunColor: { value: new THREE.Color('#fff3d8') },
+      uHorizonColor: { value: new THREE.Color('#8fb3c9') },
+      uSunDir: { value: new THREE.Vector3(0.45, 0.35, 0.3).normalize() },
       uCameraPos: { value: new THREE.Vector3() },
       uUnderwater: { value: 0 },
     },
     vertexShader,
-    fragmentShader,
+    fragmentShader: fragmentShader.replaceAll('DETAIL_OCT', String(detailOctaves)),
     transparent: true,
     side: THREE.DoubleSide,
     depthWrite: false,
@@ -212,5 +278,14 @@ export function createOcean(size = 520, segments = 256) {
   const mesh = new THREE.Mesh(geometry, material)
   mesh.name = 'Ocean'
   mesh.frustumCulled = false
-  return { mesh, material }
+
+  const step = size / segments
+
+  /** Keep the ocean centred on the player without the waves sliding along. */
+  function follow(x: number, z: number) {
+    mesh.position.x = Math.round(x / step) * step
+    mesh.position.z = Math.round(z / step) * step
+  }
+
+  return { mesh, material, follow }
 }

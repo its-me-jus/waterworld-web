@@ -2,6 +2,11 @@
 
 First-person ocean seed — Gerstner waves, swim controls, underwater murk. Built with Vite + Three.js.
 
+## Live
+
+- **Phone / share:** https://waterworld-web.vercel.app
+- **Repo:** https://github.com/its-me-jus/waterworld-web
+
 ## Local
 
 ```powershell
