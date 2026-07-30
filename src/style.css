@@ -61,6 +61,24 @@ body.touch-ui canvas {
   color: #9fd0ff;
 }
 
+#depth {
+  position: fixed;
+  z-index: 5;
+  left: 50%;
+  top: 1rem;
+  transform: translateX(-50%);
+  padding: 0.3rem 0.7rem;
+  border: 1px solid rgba(150, 220, 235, 0.25);
+  background: rgba(4, 30, 38, 0.5);
+  color: #a8e4f2;
+  font-size: 0.75rem;
+  letter-spacing: 0.14em;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
 #crosshair {
   position: fixed;
   z-index: 4;

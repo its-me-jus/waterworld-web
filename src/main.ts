@@ -6,6 +6,8 @@ import { createOcean } from './ocean'
 import { bindKeyboardMouse, createPlayer, updatePlayer } from './player'
 import { createSky } from './sky'
 import { createSplashLayer } from './splash'
+import { createSwimmer } from './swimmer'
+import { createUnderwaterWorld } from './underwater'
 import { sampleOcean } from './waves'
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -20,6 +22,10 @@ hud.innerHTML = mobile
   ? '<strong>WaterWorld</strong><span id="hud-hint">Left stick move · Right stick look · ▲▼ depth</span>'
   : '<strong>WaterWorld</strong><span id="hud-hint">Sticks or WASD · Click canvas to mouse-look · Space/Shift depth</span>'
 app.appendChild(hud)
+
+const depthReadout = document.createElement('div')
+depthReadout.id = 'depth'
+app.appendChild(depthReadout)
 
 const crosshair = document.createElement('div')
 crosshair.id = 'crosshair'
@@ -40,8 +46,10 @@ const airFog = new THREE.FogExp2(0x8fb3c9, 0.0045)
 const underFog = new THREE.FogExp2(0x0c5c6b, 0.03)
 scene.fog = airFog
 
-const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.05, 9000)
+const camera = new THREE.PerspectiveCamera(66, window.innerWidth / window.innerHeight, 0.05, 9000)
 camera.rotation.order = 'YXZ'
+// The swimmer body is parented to the camera, so the camera has to be in the scene
+scene.add(camera)
 
 const pixelRatioCap = lowPower ? 1.25 : 1.75
 const renderer = new THREE.WebGLRenderer({
@@ -65,6 +73,14 @@ const { mesh: ocean, material: oceanMat, follow } = createOcean({
 oceanMat.uniforms.uHorizonColor.value.copy(skyRig.horizonColor)
 scene.add(ocean)
 
+const swimmer = createSwimmer(camera)
+
+const underwaterWorld = createUnderwaterWorld(scene, {
+  waterColor: new THREE.Color('#0c5c6b'),
+  sunDir: skyRig.sunDir,
+  lowPower,
+})
+
 // Capture the sky (and clouds) into a cube map so the water reflects the real sky
 const envRT = new THREE.WebGLCubeRenderTarget(lowPower ? 128 : 256)
 envRT.texture.minFilter = THREE.LinearMipmapLinearFilter
@@ -74,18 +90,22 @@ oceanMat.uniforms.uEnvMap.value = envRT.texture
 
 function captureEnv() {
   ocean.visible = false
+  swimmer.rig.visible = false
   envCam.position.set(camera.position.x, Math.max(camera.position.y, 2), camera.position.z)
   envCam.update(renderer, scene)
   ocean.visible = true
+  swimmer.rig.visible = true
 }
 
 const player = createPlayer()
 {
-  // ?depth=6 spawns submerged — handy when tuning the underwater look
-  const depth = Number(new URLSearchParams(location.search).get('depth') ?? 0)
+  // ?depth=6&pitch=-0.2 spawns submerged — handy when tuning the underwater look
+  const params = new URLSearchParams(location.search)
+  const depth = Number(params.get('depth') ?? 0)
   const surface = sampleOcean(player.x, player.z, 0).y
   player.y = surface + (depth > 0 ? -depth : 1.5)
   if (depth > 0) player.pitch = 0.5
+  if (params.has('pitch')) player.pitch = Number(params.get('pitch'))
 }
 
 const input = createInputState()
@@ -122,13 +142,25 @@ function spawnBubble() {
   window.setTimeout(() => b.remove(), 4200)
 }
 
-function onResize() {
-  camera.aspect = window.innerWidth / window.innerHeight
+/**
+ * Portrait phones are extremely narrow — a fixed vertical FOV crops the view to
+ * a letterbox slit. Widen vertically until the horizontal FOV stays playable.
+ */
+function applyView() {
+  const aspect = window.innerWidth / window.innerHeight
+  camera.aspect = aspect
+  const needed = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(74) / 2) / aspect)
+  camera.fov = THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(needed), 66, 96)
   camera.updateProjectionMatrix()
+}
+
+function onResize() {
+  applyView()
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap))
   renderer.setSize(window.innerWidth, window.innerHeight)
 }
 window.addEventListener('resize', onResize)
+applyView()
 
 app.addEventListener(
   'touchmove',
@@ -138,7 +170,9 @@ app.addEventListener(
   { passive: false },
 )
 
-const underWaterTint = new THREE.Color('#0a4f5e')
+const shallowTint = new THREE.Color('#0a4f5e')
+const deepTint = new THREE.Color('#031f2d')
+const waterTint = new THREE.Color()
 
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05)
@@ -147,7 +181,10 @@ function frame() {
   touch.apply(input)
   desktop.mergeKeys(input)
 
-  const { underwater, surfaceY, moving } = updatePlayer(player, camera, input, dt, t)
+  const view = updatePlayer(player, camera, input, dt, t)
+  const { underwater, surfaceY, depth } = view
+
+  swimmer.update(dt, t, view, player.pitch + player.viewPitch, player.roll)
 
   skyRig.update(t)
   skyRig.sky.position.set(camera.position.x, 0, camera.position.z)
@@ -159,18 +196,35 @@ function frame() {
   oceanMat.uniforms.uSunDir.value.copy(skyRig.sunDir)
   oceanMat.uniforms.uUnderwater.value = underwater ? 1 : 0
 
+  // The deeper you go, the tighter and darker the water closes in
+  const murk = Math.min(1, depth / 24)
+  underFog.density = 0.026 + murk * 0.032
+  waterTint.copy(shallowTint).lerp(deepTint, murk)
+
   scene.fog = underwater ? underFog : airFog
-  scene.background = underwater ? underWaterTint : skyRig.horizonColor
-  renderer.toneMappingExposure = underwater ? 0.95 : 0.9
+  scene.background = underwater ? waterTint : skyRig.horizonColor
+  renderer.toneMappingExposure = underwater ? 0.98 - murk * 0.25 : 0.9
   skyRig.sky.visible = !underwater
   skyRig.clouds.visible = !underwater
-  skyRig.hemi.intensity = underwater ? 0.3 : 0.5
-  skyRig.sunLight.intensity = underwater ? 0.8 : 2.6
+  skyRig.hemi.intensity = underwater ? 0.34 - murk * 0.14 : 0.5
+  skyRig.sunLight.intensity = underwater ? 1.1 - murk * 0.5 : 2.6
 
   document.body.classList.toggle('underwater', underwater)
-  underOverlay.style.opacity = underwater ? '1' : '0'
+  underOverlay.style.opacity = String(view.submersion)
+  depthReadout.textContent = underwater ? `${depth.toFixed(1)} m` : ''
+  depthReadout.style.opacity = underwater ? '1' : '0'
 
-  splash.update(dt, player.y, surfaceY, moving)
+  underwaterWorld.update({
+    dt,
+    time: t,
+    camera,
+    surfaceY,
+    submersion: view.submersion,
+    underwater,
+    pixelRatio: renderer.getPixelRatio(),
+  })
+
+  splash.update(dt, camera.position.y, surfaceY, view.moving)
 
   if (underwater) {
     bubbleTimer -= dt
