@@ -18,12 +18,13 @@ if (!app) throw new Error('#app missing')
 const mobile = preferTouchUI()
 const lowPower = isLowPowerDevice()
 
-const hud = document.createElement('div')
-hud.id = 'hud'
-hud.innerHTML = mobile
-  ? '<strong>WaterWorld</strong><span id="hud-hint">Left stick move · Right stick look · ▲▼ depth</span>'
-  : '<strong>WaterWorld</strong><span id="hud-hint">Sticks or WASD · Click canvas to mouse-look · Space/Shift depth</span>'
-app.appendChild(hud)
+if (!mobile) {
+  const hud = document.createElement('div')
+  hud.id = 'hud'
+  hud.innerHTML =
+    '<strong>WaterWorld</strong><span id="hud-hint">WASD · Click canvas to mouse-look · Space/Shift depth</span>'
+  app.appendChild(hud)
+}
 
 const depthReadout = document.createElement('div')
 depthReadout.id = 'depth'
@@ -254,8 +255,8 @@ function frame() {
   if (
     input.moveForward ||
     input.moveStrafe ||
-    input.lookX ||
-    input.lookY ||
+    input.lookDeltaX ||
+    input.lookDeltaY ||
     input.rise ||
     input.dive
   ) {

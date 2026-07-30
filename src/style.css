@@ -246,14 +246,25 @@ body.underwater #bubbles {
   pointer-events: auto;
   touch-action: none;
   user-select: none;
+  z-index: 1;
+}
+
+.look-pad {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+/* Desktop mouse-look uses pointer lock on the canvas — don't steal clicks. */
+@media (hover: hover) and (pointer: fine) {
+  .look-pad {
+    pointer-events: none;
+  }
 }
 
 .stick-move {
   left: max(1rem, env(safe-area-inset-left));
-}
-
-.stick-look {
-  right: max(1rem, env(safe-area-inset-right));
 }
 
 .stick-knob {
@@ -285,7 +296,8 @@ body.underwater #bubbles {
 .touch-actions {
   position: absolute;
   right: max(1rem, env(safe-area-inset-right));
-  bottom: calc(128px + 2.5rem + env(safe-area-inset-bottom, 0px));
+  bottom: max(1.25rem, env(safe-area-inset-bottom));
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: 0.65rem;

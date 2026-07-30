@@ -16,7 +16,7 @@ npm run dev
 
 ## Controls
 
-- **Touch / on-screen:** left stick move · right stick look · ▲▼ depth
+- **Touch / on-screen:** left stick move · drag anywhere to look · ▲▼ depth
 - **Desktop:** WASD · click for mouse-look · Space/E up · Shift/Q dive
 
 Brain notes: `../agenticiallyjus/projects/waterworld.md`

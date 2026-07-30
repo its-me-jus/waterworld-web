@@ -4,7 +4,8 @@ import { WAVES, sampleOcean } from './waves'
 
 const TAU = Math.PI * 2
 const LOOK_SENS_MOUSE = 0.0022
-const LOOK_SENS_STICK = 2.4
+/** Touch-drag look — a touch higher than mouse so a thumb swipe feels responsive. */
+const LOOK_SENS_TOUCH = 0.0032
 
 const SURFACE_SPEED = 5.2
 const SUBMERGED_SPEED = 6.6
@@ -171,9 +172,9 @@ export function updatePlayer(
   time: number,
   collide?: Collider,
 ): PlayerFrame {
-  if (Math.abs(input.lookX) > 0.02 || Math.abs(input.lookY) > 0.02) {
-    player.yaw += input.lookX * LOOK_SENS_STICK * dt
-    player.pitch = clamp(player.pitch + input.lookY * LOOK_SENS_STICK * dt, -1.45, 1.45)
+  if (Math.abs(input.lookDeltaX) > 0.01 || Math.abs(input.lookDeltaY) > 0.01) {
+    player.yaw -= input.lookDeltaX * LOOK_SENS_TOUCH
+    player.pitch = clamp(player.pitch - input.lookDeltaY * LOOK_SENS_TOUCH, -1.45, 1.45)
   }
 
   const forwardX = -Math.sin(player.yaw)
