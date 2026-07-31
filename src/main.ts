@@ -4,19 +4,27 @@ import { createTouchControls } from './controls'
 import { createInputState, isLowPowerDevice, preferTouchUI } from './input'
 import { createOcean } from './ocean'
 import { bindKeyboardMouse, createPlayer, updatePlayer } from './player'
+import type { SwimLimits } from './player'
 import { createSky } from './sky'
 import { createSplashLayer } from './splash'
 import { createSwimmer } from './swimmer'
 import { createUnderwaterWorld } from './underwater'
-import { sampleOcean } from './waves'
+import { oceanState, sampleOcean } from './waves'
 import { createWreck } from './wreck'
 import { createOceanAudio } from './audio'
+import { createForage } from './forage'
+import { createHud } from './hud'
+import { createSeaState } from './sea'
+import { createShark } from './shark'
+import { createVitals } from './vitals'
+import type { DeathCause } from './vitals'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('#app missing')
 
 const mobile = preferTouchUI()
 const lowPower = isLowPowerDevice()
+const urlParams = new URLSearchParams(location.search)
 
 const depthReadout = document.createElement('div')
 depthReadout.id = 'depth'
@@ -94,6 +102,108 @@ const oceanAudio = createOceanAudio()
 let heave = 0
 let prevSurfaceForAudio = Number.NaN
 
+// —— survival layer (Phase A) ————————————————————————————————
+// Design locks: grounded castaway · permadeath · predators as rare events ·
+// infinite thrive. The body is the readout; the whisper HUD only names what
+// you already feel.
+const hud = createHud(app)
+const sea = createSeaState({
+  onGlassOff: () => hud.whisper('The swell lies down.'),
+  onSwellUp: () => hud.whisper('The sea gets up again.'),
+})
+
+let breathShort = 0
+let hungerShort = 0
+const vitals = createVitals(app, {
+  whisper: hud.whisper,
+  onBreath: (s) => {
+    breathShort = s
+    oceanAudio.setVitals({ breath: breathShort, hunger: hungerShort })
+  },
+  onHunger: (s) => {
+    hungerShort = s
+    oceanAudio.setVitals({ breath: breathShort, hunger: hungerShort })
+  },
+})
+
+const forage = createForage(app, hud, vitals, {
+  provisionSpot: wreck.provisionSpot,
+  takeProvision: wreck.takeProvision,
+  fish: underwaterWorld.fish,
+  mobile,
+})
+
+const shark = createShark(scene, {
+  resolve: wreck.resolve,
+  whisper: hud.whisper,
+  // ?shark=8 summons the first pass in eight seconds, for tuning
+  summonIn: urlParams.has('shark') ? Number(urlParams.get('shark')) : undefined,
+})
+if (urlParams.has('shark')) {
+  ;(window as unknown as { __shark: unknown }).__shark = shark
+}
+
+let hasDived = false
+let swimLimits: SwimLimits = { speedScale: 1, climbScale: 1, cadenceScale: 1, wobble: 0 }
+
+// —— permadeath ————————————————————————————————————————————
+const DEAD_INPUT = createInputState()
+const deathEl = document.createElement('div')
+deathEl.id = 'death'
+deathEl.innerHTML = `
+  <strong>The ocean keeps you</strong>
+  <span class="cause"></span>
+  <span class="stat"></span>
+  <span class="again">press any key</span>
+`
+app.appendChild(deathEl)
+const deathCause = deathEl.querySelector<HTMLElement>('.cause')!
+const deathStat = deathEl.querySelector<HTMLElement>('.stat')!
+const deathAgain = deathEl.querySelector<HTMLElement>('.again')!
+
+let dying = false
+let deathT = 0
+let survived = 0
+
+function beginDeath(cause: DeathCause, now: number) {
+  dying = true
+  survived = now
+  deathCause.textContent =
+    cause === 'drowned' ? 'You never make the surface.' : 'You simply run out of strength.'
+
+  const minutes = Math.floor(survived / 60)
+  const lasted =
+    minutes <= 0 ? 'less than a minute' : `${minutes} minute${minutes === 1 ? '' : 's'}`
+  let stat = `You lasted ${lasted}.`
+  try {
+    const best = Math.max(survived, Number(localStorage.getItem('ww.best') ?? 0))
+    localStorage.setItem('ww.best', String(best))
+    const bestMin = Math.floor(best / 60)
+    if (best > survived + 1 && bestMin > 0) stat += ` Longest drift: ${bestMin} min.`
+  } catch {
+    // Private-mode storage is a nice-to-have, never a reason to lose the ending
+  }
+  deathStat.textContent = stat
+
+  document.body.classList.add('dying')
+  deathEl.classList.add('show')
+  window.setTimeout(() => deathAgain.classList.add('ready'), 3800)
+
+  const restart = () => {
+    if (deathT > 3.5) location.reload()
+  }
+  window.addEventListener('keydown', restart)
+  window.addEventListener('pointerdown', restart)
+}
+
+// Amnesia opener — two quiet lines, then the ocean leaves you alone
+window.setTimeout(() => {
+  if (!vitals.dead) hud.whisper('Cold. Salt. You don’t remember the fall.')
+}, 6000)
+window.setTimeout(() => {
+  if (!vitals.dead) hud.whisper('The mast is still standing. Things float near it.')
+}, 20000)
+
 // Capture the sky (and clouds) into a cube map so the water reflects the real sky
 const envRT = new THREE.WebGLCubeRenderTarget(lowPower ? 128 : 256)
 envRT.texture.minFilter = THREE.LinearMipmapLinearFilter
@@ -114,9 +224,8 @@ const player = createPlayer()
 {
   // ?depth=6&pitch=-0.2 spawns submerged, ?x=&z=&yaw= spawns somewhere specific —
   // both handy when tuning the underwater look or the wreck
-  const params = new URLSearchParams(location.search)
   const num = (key: string, fallback: number) =>
-    params.has(key) ? Number(params.get(key)) : fallback
+    urlParams.has(key) ? Number(urlParams.get(key)) : fallback
   player.x = num('x', player.x)
   player.z = num('z', player.z)
   player.yaw = num('yaw', player.yaw)
@@ -125,6 +234,12 @@ const player = createPlayer()
   player.y = surface + (depth > 0 ? -depth : 1.5)
   if (depth > 0) player.pitch = 0.5
   player.pitch = num('pitch', player.pitch)
+  // ?calm=1 pins a glass-off; ?breath / ?hunger pre-set vitals for tuning
+  if (urlParams.has('calm')) sea.pinCalm()
+  vitals.debugSet({
+    breath: urlParams.has('breath') ? Number(urlParams.get('breath')) : undefined,
+    hunger: urlParams.has('hunger') ? Number(urlParams.get('hunger')) : undefined,
+  })
 }
 
 const input = createInputState()
@@ -237,8 +352,15 @@ function frame() {
   const dt = Math.min(timer.getDelta(), 0.05)
   const t = timer.getElapsed()
 
-  touch.apply(input)
-  desktop.mergeKeys(input)
+  // The sea breathes first — everything else samples the state it sets
+  sea.update(dt, t)
+  oceanAudio.setSeaWeight(sea.weight)
+
+  const liveInput = dying ? DEAD_INPUT : input
+  if (!dying) {
+    touch.apply(liveInput)
+    desktop.mergeKeys(liveInput)
+  }
   // Any keyboard use unlocks the audio context (WASD before click)
   if (
     input.moveForward ||
@@ -251,8 +373,22 @@ function frame() {
     void oceanAudio.unlock()
   }
 
-  const view = updatePlayer(player, camera, input, dt, t, wreck.resolve)
+  const view = updatePlayer(player, camera, liveInput, dt, t, wreck.resolve, swimLimits)
   const { underwater, surfaceY, depth } = view
+  if (depth > 1) hasDived = true
+
+  // Vitals read this frame's exertion; their limits reach the swim model next
+  // frame. One frame of lag on a minutes-long decline is nothing.
+  if (!dying) swimLimits = vitals.update(dt, view)
+  forage.update(dt, camera, view)
+  shark.update(dt, t, camera, hasDived)
+  oceanAudio.setDanger(shark.proximity)
+
+  if (!dying && vitals.dead) beginDeath(vitals.dead, t)
+  if (dying) {
+    deathT += dt
+    oceanAudio.dim(Math.min(1, deathT / 3.2))
+  }
 
   if (Number.isNaN(prevSurfaceForAudio)) prevSurfaceForAudio = surfaceY
   heave = THREE.MathUtils.damp(heave, surfaceY - prevSurfaceForAudio, 6, dt)
@@ -266,9 +402,13 @@ function frame() {
   skyRig.update(t)
   skyRig.sky.position.set(camera.position.x, 0, camera.position.z)
   skyRig.clouds.position.set(camera.position.x, 0, camera.position.z)
+  // Heavy weather carries more cloud; a glass-off opens the sky up
+  ;(skyRig.clouds.material as THREE.ShaderMaterial).uniforms.uCover.value =
+    0.66 - sea.weight * 0.16
   follow(camera.position.x, camera.position.z)
 
   oceanMat.uniforms.uTime.value = t
+  oceanMat.uniforms.uAmp.value = oceanState.amp
   oceanMat.uniforms.uCameraPos.value.copy(camera.position)
   oceanMat.uniforms.uSunDir.value.copy(skyRig.sunDir)
   oceanMat.uniforms.uUnderwater.value = underwater ? 1 : 0
@@ -312,6 +452,7 @@ function frame() {
     submersion: view.submersion,
     underwater,
     pixelRatio: renderer.getPixelRatio(),
+    effort: view.effort,
   })
 
   wreck.update(t, camera)
