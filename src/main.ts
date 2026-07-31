@@ -118,6 +118,12 @@ const collide = (p: { x: number; y: number; z: number }) => {
   island.resolve(p)
 }
 
+// Two pieces of standable world — the island's shelf and the reef spire beside
+// the wreck. Whichever is higher under your feet is the ground you're on.
+const groundAt = (x: number, z: number) => Math.max(island.heightAt(x, z), wreck.standAt(x, z))
+/** True while the ground under you is the spire rather than the island. */
+const onPerchAt = (x: number, z: number) => wreck.standAt(x, z) > island.heightAt(x, z)
+
 const oceanAudio = createOceanAudio()
 let heave = 0
 let prevSurfaceForAudio = Number.NaN
@@ -199,6 +205,23 @@ let dead = false
 let deathT = 0
 let hasDived = false
 
+// First time out of the water, whichever way you managed it. The line is the
+// only reward — no counter, no achievement, just the body noticing.
+let saidPerch = false
+let saidShore = false
+
+function landfall(onPerch: boolean) {
+  if (onPerch) {
+    if (saidPerch) return
+    saidPerch = true
+    hud.whisper('Rock under you, and the sea below it. Your heat comes back slowly.')
+    return
+  }
+  if (saidShore) return
+  saidShore = true
+  hud.whisper('Sand. You are out of the ocean, and it cannot reach you here.')
+}
+
 // —— the shark, and the wreck's answer to it ————————————————————————
 // The fin is a rare event until you've dived the wreck; the mate's spear,
 // once found, makes a run a question you can answer.
@@ -255,6 +278,8 @@ function restart() {
   dead = false
   deathT = 0
   hasDived = false
+  saidPerch = false
+  saidShore = false
 }
 
 const desktop = bindKeyboardMouse(renderer.domElement, player, {
@@ -388,17 +413,23 @@ function frame() {
   // Last frame's tanks drive this frame's body — one frame of lag on a
   // minutes-long decline is nothing
   const limits = swimLimits(vitals)
-  const view = updatePlayer(player, camera, input, dt, t, collide, island.heightAt, limits)
+  const view = updatePlayer(player, camera, input, dt, t, collide, groundAt, limits)
   const { underwater, surfaceY, depth } = view
   if (depth > 1) hasDived = true
 
   // Ashore and on dry ground — wading the shallows still counts as in the sea
   const onLand = view.walking && view.groundY > 0.3
+  const onPerch = onLand && onPerchAt(player.x, player.z)
+  // A wave-washed spire gives back far less heat than dry sand up the beach,
+  // and the beach itself is better the further you are from the wash
+  const shelter = onPerch ? 0.42 : Math.min(1, 0.55 + view.groundY * 0.12)
+  if (onLand) landfall(onPerch)
   updateVitals(vitals, dt, {
     submerged: view.submersion > 0.85,
     depth,
     effort: view.effort,
     onLand,
+    shelter,
     cold: weather.cold,
     swimCost: weather.swimCost,
     whisper: hud.whisper,

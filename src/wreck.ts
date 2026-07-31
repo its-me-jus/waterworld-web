@@ -37,6 +37,20 @@ function materials() {
       side: THREE.DoubleSide,
     }),
     sand: new THREE.MeshStandardMaterial({ color: 0xa89e86, roughness: 1 }),
+    // The spire stands in the sun and the salt, so it reads paler than the
+    // drowned reef below it. The emissive lift stands in for skylight, which
+    // standard shading has none of out here — without it the seaward faces
+    // crush to a silhouette from whichever side you swim in on.
+    // The air hemisphere out here is lit by a near-black sea, so anything not
+    // facing the sun crushes to a silhouette. Standing on the spire you are
+    // *always* looking at one shaded face or another, so it carries a cool
+    // skylight term of its own — the blue a real rock takes in open shade.
+    perchRock: new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 1,
+      emissive: 0x44525c,
+      emissiveIntensity: 0.9,
+    }),
     iron: new THREE.MeshStandardMaterial({
       color: 0x5a5048,
       roughness: 0.65,
@@ -153,6 +167,142 @@ function buildReef(low: boolean) {
 }
 
 const SAND_Y = -25
+
+/**
+ * The one piece of the reef that beat the water to the surface: a basalt spire
+ * off the wreck's port shoulder with a tilted shelf on top, a metre and a half
+ * clear of mean sea level. It is the only place in a thousand square kilometres
+ * you can be out of the ocean without crossing it.
+ *
+ * The shelf is deliberately small and low. You can sit out a bad hour on it and
+ * get some heat back, but a big sea washes clean over the top, so it is shelter
+ * the way a rock in a river is shelter — conditional, and it knows it.
+ */
+const PERCH = {
+  x: -20,
+  z: -17,
+  /**
+   * Shelf height above mean sea level. The swell stacks to roughly five metres
+   * in an ordinary sea, so anything lower isn't land — it's a rock you get
+   * washed off. At this height a gale still reaches you, and that's the point.
+   */
+  top: 6.5,
+  /** Flat standing area. */
+  flat: 3.2,
+  /** Height where the rock meets the water and you're swimming again. */
+  shoulderY: -2.5,
+  /** Shortest run from the shelf to the sea — the cliff faces. */
+  cliffRun: 4,
+  /** Extra run on the ramp side, where legs can actually make the climb. */
+  rampRun: 20,
+  /** Which way the climbable ramp faces, in local radians. */
+  rampDir: -0.79,
+  /** How far the flank keeps falling past the waterline, into the sand. */
+  flankRun: 6,
+}
+
+/**
+ * How far this bearing gets before the rock reaches the sea. The spire is a
+ * cliff nearly all the way round — one shoulder shelves out into a long ramp,
+ * and finding it is the whole of the climb. Real rock is not a staircase.
+ *
+ * The wobble keeps the waterline from being a drawn-compass circle with one
+ * neat wedge cut out of it, which is exactly what it looks like without.
+ */
+function perchReach(lx: number, lz: number) {
+  const angle = Math.atan2(lz - PERCH.z, lx - PERCH.x)
+  const lobe = Math.max(0, Math.cos(angle - PERCH.rampDir)) ** 1.5
+  const wobble = 0.84 + fbm(Math.cos(angle) * 2.3 + 11.4, Math.sin(angle) * 2.3 - 5.2) * 0.44
+  return (PERCH.flat + PERCH.cliffRun + lobe * PERCH.rampRun) * wobble
+}
+
+/** Spire height in wreck-local coords, without the outer cutoff. */
+function perchSurface(lx: number, lz: number) {
+  const d = Math.hypot(lx - PERCH.x, lz - PERCH.z)
+  const waterline = perchReach(lx, lz)
+  // A straight grade rather than a smoothstep: an eased curve is half again as
+  // steep through its middle, which is exactly where it would stop being
+  // climbable and quietly strand anyone who tried
+  const ramp = THREE.MathUtils.clamp((d - PERCH.flat) / (waterline - PERCH.flat), 0, 1)
+  const flank = THREE.MathUtils.smoothstep(d, waterline, waterline + PERCH.flankRun)
+  // The shelf tilts seaward, so it reads as broken rock rather than a table
+  const tilt = (lx - PERCH.x) * 0.03 + (lz - PERCH.z) * 0.022
+  // Relief in two bands. The long one gives the rock its swells and hollows
+  // without ever building a gradient legs can't take; the short one is the
+  // broken surface you actually see underfoot. Both stay well inside the
+  // walk controller's slope limit, and the flanks get the violent stuff.
+  const swellRelief = (fbm(lx * 0.085 + 3.4, lz * 0.085 - 9.1) - 0.5) * 2.2
+  const grain = (fbm(lx * 0.62 + 5.1, lz * 0.62 - 2.7) - 0.5) * 0.34
+  const broken = (fbm(lx * 0.3 - 7.7, lz * 0.3 + 4.4) - 0.5) * flank * 4.6
+  return (
+    PERCH.top +
+    tilt -
+    ramp * (PERCH.top - PERCH.shoulderY) -
+    flank * 24 +
+    swellRelief +
+    grain +
+    broken
+  )
+}
+
+/** Walkable ground on the spire, or deep negative once you're off it. */
+function perchGround(lx: number, lz: number) {
+  const d = Math.hypot(lx - PERCH.x, lz - PERCH.z)
+  // Cut off per bearing, not on one big circle — otherwise the flank's tail
+  // spreads across the sand and buries the stern's chest
+  if (d > perchReach(lx, lz) + PERCH.flankRun) return -1000
+  return perchSurface(lx, lz)
+}
+
+/**
+ * The spire mesh, sampled from the same function the feet stand on. A ring
+ * rather than a square patch, so the flanks run all the way down instead of
+ * ending in a shelf hanging in open water, and the tail is clamped below the
+ * seabed where the sand plateau hides it.
+ */
+function buildPerch(low: boolean) {
+  const span = PERCH.flat + PERCH.cliffRun + PERCH.rampRun + PERCH.flankRun
+  const geo = new THREE.RingGeometry(0.04, span, low ? 40 : 72, low ? 12 : 22)
+  geo.rotateX(-Math.PI / 2)
+  geo.translate(PERCH.x, 0, PERCH.z)
+  const pos = geo.attributes.position
+  for (let i = 0; i < pos.count; i++) {
+    pos.setY(i, Math.max(-27, perchSurface(pos.getX(i), pos.getZ(i))))
+  }
+  geo.computeVertexNormals()
+
+  // Painted per vertex, because a single flat colour turns the whole spire
+  // into a paper cutout against the water: sun-bleached basalt up top, a wet
+  // band of weed where the swell keeps washing it, dark rock below.
+  const normal = geo.attributes.normal
+  const bleached = new THREE.Color('#9d9583')
+  const basalt = new THREE.Color('#5d564b')
+  const drowned = new THREE.Color('#414a41')
+  const weed = new THREE.Color('#54663f')
+  const shade = new THREE.Color()
+  const colors = new Float32Array(pos.count * 3)
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i)
+    const y = pos.getY(i)
+    const z = pos.getZ(i)
+    const mottle = fbm(x * 0.18 + 1.7, z * 0.18 - 4.3)
+
+    shade.copy(drowned).lerp(basalt, THREE.MathUtils.smoothstep(y, -9, -1))
+    shade.lerp(bleached, THREE.MathUtils.smoothstep(y, 1.2, 5.5))
+    // Splash zone: the metre either side of mean sea level never dries
+    const wet = 1 - Math.min(1, Math.abs(y + 0.2) / 2.4)
+    shade.lerp(weed, wet * (0.35 + mottle * 0.5))
+    // Steep faces shed weed and salt alike — bare stone on the cliffs
+    shade.lerp(basalt, 1 - THREE.MathUtils.smoothstep(normal.getY(i), 0.3, 0.72))
+    shade.multiplyScalar(0.86 + mottle * 0.28)
+
+    colors[i * 3] = shade.r
+    colors[i * 3 + 1] = shade.g
+    colors[i * 3 + 2] = shade.b
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  return geo
+}
 
 /** Height of the seabed at a point, shared by the mesh and the collider. */
 function sandHeight(x: number, z: number) {
@@ -621,6 +771,10 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   sand.position.y = SAND_Y
   group.add(sand)
 
+  // The spire that breaks the surface — the wreck's only dry ground
+  const perch = new THREE.Mesh(buildPerch(low), mat.perchRock)
+  group.add(perch)
+
   // —— bow section, canted on the reef shoulder ——
   const bow = new THREE.Group()
   bow.position.set(-1.2, -13.6, 0.6)
@@ -1004,6 +1158,20 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     if (Math.hypot(lx, lz) < 48) {
       p.y = Math.max(p.y, sandHeight(lx, lz) + 0.55)
     }
+
+    // The spire is a floor rather than a wall: swim at it and the rock lifts
+    // you up its flank until you're standing on it, which is how hauling out
+    // of a heaving sea actually goes.
+    const spire = perchGround(lx, lz)
+    if (spire > -900) p.y = Math.max(p.y, spire + 0.55)
+  }
+
+  /**
+   * Height of standable wreck ground in world coordinates, or deep negative
+   * where there is none. Feeds the same walk controller the island uses.
+   */
+  function standAt(x: number, z: number) {
+    return perchGround(x - opts.x, z - opts.z)
   }
 
   // —— salvage state —————————————————————————————————————————
@@ -1179,6 +1347,15 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     hatch: hatchAt,
     flotsam,
     resolve,
+    standAt,
+    /** World position of the spire's shelf — the one place to haul out. */
+    perch: new THREE.Vector3(opts.x + PERCH.x, PERCH.top, opts.z + PERCH.z),
+    /** Foot of the climbable ramp, for tests and tuning. */
+    perchRamp: new THREE.Vector3(
+      opts.x + PERCH.x + Math.cos(PERCH.rampDir) * (PERCH.flat + PERCH.cliffRun + PERCH.rampRun),
+      0,
+      opts.z + PERCH.z + Math.sin(PERCH.rampDir) * (PERCH.flat + PERCH.cliffRun + PERCH.rampRun),
+    ),
     update,
     provisionSpot,
     takeProvision,
