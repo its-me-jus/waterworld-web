@@ -194,6 +194,7 @@ const salvage = createSalvage(scene, {
   reefResolve: wreck.resolve,
   hatch: wreck.hatch,
   shore: island.shore,
+  pools: island.pools,
 })
 
 const input = createInputState()

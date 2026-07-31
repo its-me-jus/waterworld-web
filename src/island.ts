@@ -29,6 +29,12 @@ export type Island = {
   resolve: (p: { x: number; y: number; z: number }) => void
   /** Beach-level world positions, for anything that wants to sit on the sand. */
   shore: THREE.Vector3[]
+  /**
+   * Rain caught in rock hollows above the beach. This is the one thing the
+   * island has that the ocean and the wreck cannot give you at all: water that
+   * keeps coming back. It's what turns landfall into somewhere you could stay.
+   */
+  pools: THREE.Vector3[]
   update: (camera: THREE.Camera, underwater: boolean) => void
   /** Keep aerial perspective matched to the live horizon. */
   setHaze: (color: THREE.Color) => void
@@ -183,10 +189,37 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   group.position.set(opts.x, 0, opts.z)
   scene.add(group)
 
-  const heightAt = (x: number, z: number) => ground(x - opts.x, z - opts.z)
-
   // —— terrain ————————————————————————————————————————————————
   const segments = low ? 120 : 184
+  const step = (SPAN * 2) / segments
+
+  /**
+   * The height the island is actually *drawn* at.
+   *
+   * The mesh only samples `ground` every few metres, so between grid lines the
+   * rendered surface and the analytic function disagree by up to a metre on a
+   * steep slope. Anything that trusts the function instead of the mesh — feet,
+   * planted props, a pool of rainwater — ends up floating or buried. So both
+   * the collider and the planting interpolate the same corners the mesh used.
+   */
+  function surface(lx: number, lz: number) {
+    const gx = (lx + SPAN) / step
+    const gz = (lz + SPAN) / step
+    const i = Math.floor(gx)
+    const j = Math.floor(gz)
+    const fx = gx - i
+    const fz = gz - j
+    const x0 = -SPAN + i * step
+    const z0 = -SPAN + j * step
+    const h00 = ground(x0, z0)
+    const h10 = ground(x0 + step, z0)
+    const h01 = ground(x0, z0 + step)
+    const h11 = ground(x0 + step, z0 + step)
+    return (h00 * (1 - fx) + h10 * fx) * (1 - fz) + (h01 * (1 - fx) + h11 * fx) * fz
+  }
+
+  const heightAt = (x: number, z: number) => surface(x - opts.x, z - opts.z)
+
   const geometry = new THREE.PlaneGeometry(SPAN * 2, SPAN * 2, segments, segments)
   geometry.rotateX(-Math.PI / 2)
 
@@ -262,10 +295,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const radius = 150 + ((i * 13) % 210)
     const lx = Math.cos(angle) * radius
     const lz = Math.sin(angle) * radius
-    const h = ground(lx, lz)
+    const h = surface(lx, lz)
     if (h < 2.4 || h > 13) continue
     // Palms want flat ground, not a cliff face
-    const slope = Math.abs(ground(lx + 7, lz) - h) + Math.abs(ground(lx, lz + 7) - h)
+    const slope = Math.abs(surface(lx + 7, lz) - h) + Math.abs(surface(lx, lz + 7) - h)
     if (slope > 4.5) continue
 
     const at = new THREE.Vector3(lx, h - 0.3, lz)
@@ -303,12 +336,78 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     )
   }
 
+  // —— rain catchment ————————————————————————————————————————
+  // Basalt holds water. A few hollows up off the sand stay full between
+  // squalls, and finding one is the difference between a night ashore and a
+  // week of them. Placed on flattish ground well above the wash, so a storm
+  // sea can't salt them.
+  const pools: THREE.Vector3[] = []
+  {
+    // Standing water with nothing to reflect renders as a hole in the ground,
+    // so this leans on an emissive sky term rather than a mirror finish.
+    const poolWater = new THREE.MeshStandardMaterial({
+      color: 0x3f757b,
+      roughness: 0.28,
+      metalness: 0.05,
+      emissive: 0x27505a,
+      emissiveIntensity: 0.85,
+      transparent: true,
+      opacity: 0.92,
+    })
+    const rimMaterial = hazeMaterial(haze, { color: 0x6e6656, roughness: 0.95, ...skylight })
+
+    // Still water is level water: on any real slope a disc of it saws straight
+    // through the hillside. So every candidate is scored for flatness and only
+    // the flattest few are used, rather than the first ones that happen to fit.
+    const candidates: { lx: number; lz: number; h: number; slope: number }[] = []
+    for (let i = 0; i < 900; i++) {
+      const angle = i * 2.399 + 0.83
+      const radius = 100 + ((i * 19) % 210)
+      const lx = Math.cos(angle) * radius
+      const lz = Math.sin(angle) * radius
+      const h = surface(lx, lz)
+      if (h < 7 || h > 26) continue
+      const slope =
+        Math.abs(surface(lx + 4, lz) - h) +
+        Math.abs(surface(lx - 4, lz) - h) +
+        Math.abs(surface(lx, lz + 4) - h) +
+        Math.abs(surface(lx, lz - 4) - h)
+      candidates.push({ lx, lz, h, slope })
+    }
+    candidates.sort((a, b) => a.slope - b.slope)
+
+    for (const spot of candidates) {
+      if (pools.length >= 3) break
+      const { lx, lz, h } = spot
+      // Keep them apart, so finding one isn't finding all of them
+      if (pools.some((p) => Math.hypot(p.x - (opts.x + lx), p.z - (opts.z + lz)) < 90)) continue
+
+      const size = 1.5 + (pools.length % 3) * 0.35
+      // The rim is set low enough that the water sits proud of it, or the
+      // basin's inner wall hides the pool from anyone standing over it
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(size, 0.42, 6, 16), rimMaterial)
+      rim.rotation.x = Math.PI / 2
+      rim.scale.y = 0.55
+      rim.position.set(lx, h - 0.2, lz)
+      group.add(rim)
+
+      // Water stops inside the ring, so the stone lip frames it and hides
+      // where a flat disc and a not-quite-flat hillside disagree
+      const water = new THREE.Mesh(new THREE.CircleGeometry(size - 0.2, 20), poolWater)
+      water.rotation.x = -Math.PI / 2
+      water.position.set(lx, h + 0.02, lz)
+      group.add(water)
+
+      pools.push(new THREE.Vector3(opts.x + lx, h, opts.z + lz))
+    }
+  }
+
   // —— collision ————————————————————————————————————————————
   function resolve(p: { x: number; y: number; z: number }) {
     const lx = p.x - opts.x
     const lz = p.z - opts.z
     if (Math.abs(lx) > SPAN || Math.abs(lz) > SPAN) return
-    const h = ground(lx, lz)
+    const h = surface(lx, lz)
     if (h < -40) return
     // Eye height above the sand. The swim controller still owns the body here,
     // so wading is approximate until there's a real walk mode to take over.
@@ -328,5 +427,5 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     haze.copy(color).convertLinearToSRGB()
   }
 
-  return { group, centre, heightAt, resolve, shore, update, setHaze }
+  return { group, centre, heightAt, resolve, shore, pools, update, setHaze }
 }

@@ -158,7 +158,12 @@ export type SalvageOptions = {
   hatch: THREE.Vector3
   /** Beach spots, for whoever makes the crossing. */
   shore: THREE.Vector3[]
+  /** Rain-filled rock hollows above the beach — the island's one renewable. */
+  pools: THREE.Vector3[]
 }
+
+/** Seconds a drained rock hollow takes to catch enough rain to matter again. */
+const POOL_REFILL = 260
 
 export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
   const mat = materials()
@@ -273,6 +278,28 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     }
   }
 
+  // —— rain pools ————————————————————————————————————————————————
+  // Not a find: a place. Drink it down and it's damp rock until the weather
+  // puts something back, which is the whole argument for staying ashore
+  // rather than treating the island as a one-way finish line.
+  const pools = opts.pools.map((at) => ({ at, full: 1 }))
+  for (const pool of pools) {
+    interactions.add({
+      // Reach is measured from the eye, so a hotspot pinned to the ground is
+      // most of a body's height further away than it looks. Lift it to about
+      // where your hands would be when you crouch to the water.
+      position: pool.at.clone().setY(pool.at.y + 0.85),
+      verb: 'Drink from',
+      label: 'the rain pool',
+      radius: 3.4,
+      available: () => vitals.alive && pool.full > 0.45,
+      use: () => {
+        eat(vitals, 0, pool.full * 0.85)
+        pool.full = 0
+      },
+    })
+  }
+
   for (let i = 0; i < opts.shore.length; i += 3) {
     const at = opts.shore[i].clone()
     at.y += 0.22
@@ -316,7 +343,17 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     find.object.visible = true
   }
 
+  let lastTime = -1
+
   function update(time: number, viewer: THREE.Vector3) {
+    // Rain pools refill on their own clock. Derived from the frame time rather
+    // than taking a dt, so the signature stays the one main already calls.
+    const dt = lastTime < 0 ? 0 : Math.min(0.25, time - lastTime)
+    lastTime = time
+    for (const pool of pools) {
+      if (pool.full < 1) pool.full = Math.min(1, pool.full + dt / POOL_REFILL)
+    }
+
     for (const find of finds) {
       const drift = find.drift
 
@@ -354,6 +391,7 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
 
   function reset(viewer: THREE.Vector3) {
     for (const key of Object.keys(stash) as StashKind[]) stash[key] = 0
+    for (const pool of pools) pool.full = 1
     for (const find of finds) {
       find.taken = false
       find.object.visible = true
