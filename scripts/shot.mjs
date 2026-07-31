@@ -7,6 +7,8 @@ import { mkdirSync } from 'node:fs'
 const CHROME =
   process.env.CHROME_PATH ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 const OUT = 'shots'
+// iPhone-ish portrait — the tightest FOV we have to keep the hands inside
+const PORTRAIT = { width: 430, height: 932 }
 // `dive` holds Shift for N seconds (~4 m/s down) then releases and shoots
 // immediately, since buoyancy starts floating the swimmer back up
 const VIEWS = [
@@ -30,6 +32,30 @@ const VIEWS = [
     url: 'http://localhost:5173/',
     zoom: { x: 560, y: 340, width: 500, height: 330 },
   },
+  // Looking straight down: chest, belt, legs — the "is this a body" check
+  { name: 'body-lookdown', url: 'http://localhost:5173/?pitch=-1.3' },
+  // Mid front-crawl: two different waits catch different stroke phases.
+  // W stays held through the screenshot so effort doesn't decay
+  { name: 'crawl-a', url: 'http://localhost:5173/?pitch=-0.4', fwd: 2.2 },
+  { name: 'crawl-b', url: 'http://localhost:5173/?pitch=-0.4', fwd: 2.9 },
+  // Descending breaststroke — arms and whip kick should read as a pair
+  { name: 'breast-under', url: 'http://localhost:5173/?pitch=-0.35', dive: 2.4, fwd: 2.4 },
+  {
+    name: 'hand-crawl-closeup',
+    url: 'http://localhost:5173/?pitch=-0.4',
+    fwd: 2.5,
+    zoom: { x: 640, y: 380, width: 560, height: 380 },
+  },
+  // Idle scull framing — where the hands sit when you're just treading
+  {
+    name: 'idle-hands',
+    url: 'http://localhost:5173/?pitch=-0.2',
+    zoom: { x: 320, y: 340, width: 640, height: 380 },
+  },
+  // Portrait phones: narrow horizontal FOV, hands crop easily
+  { name: 'idle-portrait', url: 'http://localhost:5173/?pitch=-0.2', viewport: PORTRAIT },
+  { name: 'crawl-portrait', url: 'http://localhost:5173/?pitch=-0.35', fwd: 2.4, viewport: PORTRAIT },
+  { name: 'body-portrait', url: 'http://localhost:5173/?pitch=-1.3', viewport: PORTRAIT },
 ]
 
 mkdirSync(OUT, { recursive: true })
@@ -40,9 +66,9 @@ const browser = await chromium.launch({
 })
 
 let bad = 0
-for (const { name, url, dive = 0, zoom } of VIEWS) {
+for (const { name, url, dive = 0, fwd = 0, zoom, viewport } of VIEWS) {
   const page = await browser.newPage({
-    viewport: { width: 1280, height: 720 },
+    viewport: viewport ?? { width: 1280, height: 720 },
     deviceScaleFactor: zoom ? 3 : 1,
   })
   const noise = /THREE.Clock: This module has been deprecated/
@@ -61,12 +87,13 @@ for (const { name, url, dive = 0, zoom } of VIEWS) {
 
   await page.goto(url, { waitUntil: 'load' })
   await page.waitForTimeout(2500)
-  if (dive > 0) {
-    await page.keyboard.down('Shift')
-    await page.waitForTimeout(dive * 1000)
-    await page.keyboard.up('Shift')
-  }
+  if (fwd > 0) await page.keyboard.down('KeyW')
+  if (dive > 0) await page.keyboard.down('Shift')
+  const wait = Math.max(dive, fwd)
+  if (wait > 0) await page.waitForTimeout(wait * 1000)
+  if (dive > 0) await page.keyboard.up('Shift')
   await page.screenshot({ path: `${OUT}/${name}.png`, clip: zoom })
+  if (fwd > 0) await page.keyboard.up('KeyW')
   console.log(`[${name}] captured`)
   await page.close()
 }
