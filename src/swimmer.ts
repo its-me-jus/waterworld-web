@@ -74,16 +74,25 @@ function samplePose(keys: Key[], phase: number, out: Pose) {
 
 /**
  * A limb segment hanging along -Y from its joint, plus a group at its far end.
- * High radial count — forearms fill a third of the frame during a stroke.
+ * `openEnd` skips the distal capsule cap so an anatomical hand can own the wrist.
  */
-function limb(length: number, radius: number, material: THREE.Material) {
+function limb(length: number, radius: number, material: THREE.Material, openEnd = false) {
   const root = new THREE.Group()
-  const mesh = new THREE.Mesh(
-    new THREE.CapsuleGeometry(radius, Math.max(0.02, length - radius * 2), 6, 20),
-    material,
-  )
-  mesh.position.y = -length / 2
-  root.add(mesh)
+  if (openEnd) {
+    const mesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius, radius * 0.92, length * 0.92, 20),
+      material,
+    )
+    mesh.position.y = -length * 0.46
+    root.add(mesh)
+  } else {
+    const mesh = new THREE.Mesh(
+      new THREE.CapsuleGeometry(radius, Math.max(0.02, length - radius * 2), 6, 20),
+      material,
+    )
+    mesh.position.y = -length / 2
+    root.add(mesh)
+  }
   const end = new THREE.Group()
   end.position.y = -length
   root.add(end)
@@ -143,7 +152,7 @@ export async function createSwimmer(camera: THREE.Camera) {
 
     const elbow = new THREE.Group()
     upper.end.add(elbow)
-    const fore = limb(0.26, 0.038, skin)
+    const fore = limb(0.26, 0.038, skin, true)
     elbow.add(fore.root)
 
     // Thin cuff sits under the anatomical wrist so the hand stump can bury into it
