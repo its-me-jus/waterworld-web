@@ -414,8 +414,12 @@ function seaFan(size: number) {
 
 // —— flotsam ————————————————————————————————————————————————
 
+/** What this piece of wreckage is worth to someone salvaging it. */
+export type FlotsamKind = 'plank' | 'barrel' | 'crate'
+
 type Flotsam = {
   object: THREE.Object3D
+  kind: FlotsamKind
   x: number
   z: number
   lift: number
@@ -425,7 +429,7 @@ type Flotsam = {
   rest: THREE.Quaternion
 }
 
-function plankObject(length: number, width: number, mat: THREE.Material) {
+export function plankObject(length: number, width: number, mat: THREE.Material) {
   const group = new THREE.Group()
   const body = new THREE.Mesh(new THREE.BoxGeometry(length, 0.09, width), mat)
   group.add(body)
@@ -437,7 +441,7 @@ function plankObject(length: number, width: number, mat: THREE.Material) {
   return group
 }
 
-function barrelObject(wood: THREE.Material, iron: THREE.Material) {
+export function barrelObject(wood: THREE.Material, iron: THREE.Material) {
   const group = new THREE.Group()
   const body = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.31, 0.84, 12), wood)
   group.add(body)
@@ -451,7 +455,7 @@ function barrelObject(wood: THREE.Material, iron: THREE.Material) {
   return group
 }
 
-function crateObject(mat: THREE.Material) {
+export function crateObject(mat: THREE.Material) {
   const group = new THREE.Group()
   group.add(new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.68, 0.72), mat))
   for (const axis of [0, 1]) {
@@ -665,17 +669,25 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   // —— flotsam on the surface, riding the real swell ——
   const flotsam: Flotsam[] = []
   {
-    const add = (object: THREE.Object3D, x: number, z: number, lift: number, spin: number, phase: number) => {
+    const add = (
+      kind: FlotsamKind,
+      object: THREE.Object3D,
+      x: number,
+      z: number,
+      lift: number,
+      spin: number,
+      phase: number,
+    ) => {
       group.add(object)
-      flotsam.push({ object, x, z, lift, spin, phase, rest: object.quaternion.clone() })
+      flotsam.push({ object, kind, x, z, lift, spin, phase, rest: object.quaternion.clone() })
     }
     // The plank he first went overboard clinging to
-    add(plankObject(2.7, 0.36, mat.plank), 5.5, 6.5, 0.04, 0.05, 0)
-    add(plankObject(1.9, 0.28, mat.plank), 11.5, 12.5, 0.03, -0.04, 1.9)
-    add(plankObject(1.4, 0.22, mat.plank), -6.5, 14, 0.03, 0.07, 3.4)
-    add(barrelObject(mat.plank, mat.iron), 8.5, -4.5, 0.12, -0.06, 2.6)
-    add(crateObject(mat.plank), 16, 3.5, 0.16, 0.05, 4.8)
-    add(plankObject(2.2, 0.3, mat.plank), 19.5, -9, 0.03, -0.03, 5.6)
+    add('plank', plankObject(2.7, 0.36, mat.plank), 5.5, 6.5, 0.04, 0.05, 0)
+    add('plank', plankObject(1.9, 0.28, mat.plank), 11.5, 12.5, 0.03, -0.04, 1.9)
+    add('plank', plankObject(1.4, 0.22, mat.plank), -6.5, 14, 0.03, 0.07, 3.4)
+    add('barrel', barrelObject(mat.plank, mat.iron), 8.5, -4.5, 0.12, -0.06, 2.6)
+    add('crate', crateObject(mat.plank), 16, 3.5, 0.16, 0.05, 4.8)
+    add('plank', plankObject(2.2, 0.3, mat.plank), 19.5, -9, 0.03, -0.03, 5.6)
   }
 
   // —— collision ————————————————————————————————————————————
@@ -710,11 +722,9 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
 
   // —— per-frame ————————————————————————————————————————————
   const centre = new THREE.Vector3(opts.x, -12, opts.z)
-  /** A little below the mast head, so the marker sits on spar you can see. */
-  const beacon = mastBase
-    .clone()
-    .addScaledVector(mastDir, mastLength * 0.86)
-    .add(group.position)
+  group.updateMatrixWorld(true)
+  /** Where the deck hatch sits in the world — the one way into the hull. */
+  const hatchAt = hatch.getWorldPosition(new THREE.Vector3())
 
   const waveUp = new THREE.Vector3()
   const tilt = new THREE.Quaternion()
@@ -753,5 +763,5 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     sailGeo.computeVertexNormals()
   }
 
-  return { group, centre, beacon, resolve, update }
+  return { group, centre, hatch: hatchAt, flotsam, resolve, update }
 }

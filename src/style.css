@@ -35,50 +35,6 @@ body.touch-ui canvas {
   cursor: default;
 }
 
-#hud {
-  position: fixed;
-  left: 1rem;
-  top: 1rem;
-  bottom: auto;
-  z-index: 5;
-  max-width: min(26rem, calc(100vw - 2rem));
-  padding: 0.65rem 0.9rem;
-  border: 1px solid rgba(180, 210, 230, 0.2);
-  background: rgba(6, 16, 24, 0.72);
-  color: #d7e6ef;
-  font-size: 0.8rem;
-  line-height: 1.35;
-  pointer-events: none;
-  backdrop-filter: blur(8px);
-}
-
-#hud strong {
-  display: block;
-  margin-bottom: 0.2rem;
-  font-size: 0.9rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #9fd0ff;
-}
-
-#depth {
-  position: fixed;
-  z-index: 5;
-  left: 50%;
-  top: 1rem;
-  transform: translateX(-50%);
-  padding: 0.3rem 0.7rem;
-  border: 1px solid rgba(150, 220, 235, 0.25);
-  background: rgba(4, 30, 38, 0.5);
-  color: #a8e4f2;
-  font-size: 0.75rem;
-  letter-spacing: 0.14em;
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.4s ease;
-}
-
 #crosshair {
   position: fixed;
   z-index: 4;
@@ -98,74 +54,217 @@ body.playing:not(.touch-ui) #crosshair {
   opacity: 1;
 }
 
-/* —— wreck marker —— */
-#marker {
+/* —— survival HUD —— */
+#hud {
   position: fixed;
-  left: 0;
-  top: 0;
+  inset: 0;
   z-index: 5;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.3rem;
-  opacity: 0;
-  pointer-events: none;
-  will-change: transform, opacity;
-  transition: opacity 0.5s ease;
-}
-
-.marker-ring {
-  width: 13px;
-  height: 13px;
-  border: 1.5px solid rgba(225, 240, 250, 0.8);
-  border-radius: 50%;
-  box-shadow: 0 0 8px rgba(10, 25, 35, 0.7);
-}
-
-.marker-ring::after {
-  content: "";
-  display: block;
-  width: 3px;
-  height: 3px;
-  margin: 3.5px auto;
-  border-radius: 50%;
-  background: rgba(230, 245, 255, 0.9);
-}
-
-.marker-range {
-  font-size: 0.65rem;
-  letter-spacing: 0.12em;
-  font-variant-numeric: tabular-nums;
-  color: rgba(225, 242, 250, 0.8);
-  text-shadow: 0 1px 4px rgba(4, 16, 24, 0.9);
-}
-
-#found {
-  position: fixed;
-  z-index: 5;
-  left: 50%;
-  top: 38%;
-  transform: translateX(-50%);
-  text-align: center;
-  opacity: 0;
   pointer-events: none;
   transition: opacity 0.6s ease;
+}
+
+#hud.dim {
+  opacity: 0;
+}
+
+#breath {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 94px;
+  height: 94px;
+  margin: -47px 0 0 -47px;
+  opacity: 0;
+  transform: rotate(-90deg);
+  transition: opacity 0.4s ease;
+}
+
+.breath-track,
+.breath-fill {
+  fill: none;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+.breath-track {
+  stroke: rgba(210, 235, 245, 0.14);
+}
+
+.breath-fill {
+  stroke: rgba(190, 235, 250, 0.85);
+  transition: stroke 0.4s ease;
+}
+
+.breath-fill.low {
+  stroke: rgba(255, 138, 120, 0.95);
+}
+
+/* Top corners, because the bottom belongs to the sticks on every device */
+#vitals {
+  position: absolute;
+  left: max(1.1rem, env(safe-area-inset-left));
+  top: max(1.1rem, env(safe-area-inset-top));
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+}
+
+.vital {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+
+.vital.on {
+  opacity: 1;
+  transform: none;
+}
+
+.vital span {
+  width: 5.2rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(206, 228, 240, 0.72);
+  text-shadow: 0 1px 6px rgba(3, 14, 20, 0.9);
+}
+
+.vital i {
+  display: block;
+  width: 108px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(6, 22, 30, 0.55);
+  overflow: hidden;
+}
+
+.vital b {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  background: rgba(190, 232, 245, 0.8);
+  transition: background 0.5s ease;
+}
+
+.vital b.low {
+  background: rgba(255, 132, 112, 0.92);
+}
+
+#stash {
+  position: absolute;
+  right: max(1.1rem, env(safe-area-inset-right));
+  top: max(1.1rem, env(safe-area-inset-top));
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(214, 234, 244, 0.72);
+  text-shadow: 0 1px 6px rgba(3, 14, 20, 0.9);
+}
+
+#prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 22%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transform: translate(-50%, 6px);
+  opacity: 0;
+  transition: opacity 0.18s ease, transform 0.18s ease;
   text-shadow: 0 2px 10px rgba(3, 14, 20, 0.95);
 }
 
-#found strong {
-  display: block;
-  font-size: 1.35rem;
-  letter-spacing: 0.22em;
+#prompt.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+#prompt.no-key kbd {
+  display: none;
+}
+
+#prompt kbd {
+  font: inherit;
+  font-size: 0.7rem;
+  padding: 0.12rem 0.42rem;
+  border-radius: 4px;
+  border: 1px solid rgba(210, 235, 248, 0.45);
+  color: rgba(230, 245, 255, 0.9);
+}
+
+#prompt span {
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: #eaf6ff;
 }
 
-#found span {
-  font-size: 0.7rem;
+#hurt {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 42%, rgba(120, 12, 12, 0.85) 100%);
+  transition: opacity 0.8s ease;
+}
+
+#death {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  text-align: center;
+  background: rgba(2, 12, 18, 0.82);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 1s ease;
+}
+
+#death.on {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+#death h1 {
+  margin: 0;
+  font-size: 1.7rem;
+  font-weight: 500;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #eaf6ff;
+}
+
+#death p {
+  margin: 0;
+  font-size: 0.72rem;
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: rgba(200, 226, 240, 0.7);
+  color: rgba(200, 226, 240, 0.62);
+}
+
+#death button {
+  margin-top: 0.6rem;
+  padding: 0.6rem 1.6rem;
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #eaf6ff;
+  background: rgba(12, 40, 52, 0.7);
+  border: 1px solid rgba(190, 226, 240, 0.4);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#death button:hover {
+  background: rgba(24, 70, 88, 0.8);
 }
 
 #under-overlay {
@@ -307,6 +406,22 @@ body.underwater #bubbles {
 .touch-btn.active {
   background: rgba(90, 170, 200, 0.55);
   border-color: rgba(255, 255, 255, 0.65);
+}
+
+.touch-use {
+  display: none;
+  width: auto;
+  min-width: 56px;
+  padding: 0 1rem;
+  height: 46px;
+  border-radius: 23px;
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.touch-use.on {
+  display: block;
 }
 
 @media (min-width: 900px) and (pointer: fine) {

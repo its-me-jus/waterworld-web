@@ -24,6 +24,26 @@ export const WAVES: Wave[] = [
 
 export const WAVE_COUNT = WAVES.length
 
+/** Calm-day steepness — storms write back into WAVES from this base. */
+const WAVE_BASE = WAVES.map((w) => w.steepness)
+
+/** Extra wind chop on top of the Gerstners — storms raise this too. */
+export let chopScale = 1
+
+/**
+ * Push the sea into a squall. Short waves take more of the boost than the long
+ * swell, so the surface gets mean without the mesh folding over itself.
+ * Mutates WAVES in place — the ocean shader copies the same numbers each frame.
+ */
+export function applyStormToWaves(storm: number) {
+  const s = Math.max(0, Math.min(1, storm))
+  chopScale = 1 + s * 2.1
+  for (let i = 0; i < WAVES.length; i++) {
+    const short = Math.min(1, 18 / WAVES[i].wavelength)
+    WAVES[i].steepness = WAVE_BASE[i] * (1 + s * (0.35 + 0.95 * short))
+  }
+}
+
 /** Cheap hash noise for chop / caustics (matches GLSL hash vibe). */
 export function hash2(x: number, z: number) {
   const n = Math.sin(x * 127.1 + z * 311.7) * 43758.5453
@@ -88,10 +108,11 @@ export function sampleOcean(x: number, z: number, time: number) {
     binormalZ += -dZ * dZ * wave.steepness * sinF
   }
 
-  // Wind chop — breaks repeating Gerstner ridges
+  // Wind chop — breaks repeating Gerstner ridges; storms raise chopScale
   const chop =
-    (fbm(x * 0.08 + time * 0.07, z * 0.08 - time * 0.05) - 0.5) * 0.55 +
-    (fbm(x * 0.22 - time * 0.11, z * 0.22) - 0.5) * 0.22
+    ((fbm(x * 0.08 + time * 0.07, z * 0.08 - time * 0.05) - 0.5) * 0.55 +
+      (fbm(x * 0.22 - time * 0.11, z * 0.22) - 0.5) * 0.22) *
+    chopScale
   y += chop
 
   const nx = binormalY * tangentZ - binormalZ * tangentY

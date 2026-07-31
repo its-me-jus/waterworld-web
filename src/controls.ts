@@ -55,6 +55,7 @@ export function createTouchControls(parent: HTMLElement) {
   const actions = document.createElement('div')
   actions.className = 'touch-actions'
   actions.innerHTML = `
+    <button type="button" class="touch-btn touch-use" data-act="use"></button>
     <button type="button" class="touch-btn" data-act="rise" aria-label="Swim up">▲</button>
     <button type="button" class="touch-btn" data-act="dive" aria-label="Dive">▼</button>
   `
@@ -62,6 +63,18 @@ export function createTouchControls(parent: HTMLElement) {
 
   let rise = false
   let dive = false
+  let usePending = false
+
+  const useBtn = actions.querySelector('[data-act="use"]') as HTMLButtonElement
+  useBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    usePending = true
+    useBtn.classList.add('active')
+  })
+  const releaseUse = () => useBtn.classList.remove('active')
+  useBtn.addEventListener('pointerup', releaseUse)
+  useBtn.addEventListener('pointercancel', releaseUse)
+  useBtn.addEventListener('pointerleave', releaseUse)
 
   const bindHold = (btn: HTMLButtonElement, set: (v: boolean) => void) => {
     const on = (e: Event) => {
@@ -137,6 +150,10 @@ export function createTouchControls(parent: HTMLElement) {
     input.lookY = -look.dy / look.radius
     input.rise = rise
     input.dive = dive
+    if (usePending) {
+      input.interact = true
+      usePending = false
+    }
   }
 
   function setVisible(on: boolean) {
@@ -144,5 +161,11 @@ export function createTouchControls(parent: HTMLElement) {
     document.body.classList.toggle('touch-ui', on)
   }
 
-  return { apply, setVisible, root: wrap }
+  /** The use button only exists while something is in reach. */
+  function setAction(verb: string | null) {
+    useBtn.textContent = verb ?? ''
+    useBtn.classList.toggle('on', verb !== null)
+  }
+
+  return { apply, setVisible, setAction, root: wrap }
 }

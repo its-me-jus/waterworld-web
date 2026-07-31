@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "shot": "node scripts/shot.mjs",
     "audio": "node scripts/gen-audio.mjs",
-    "audio:lyria": "node scripts/gen-audio-lyria.mjs"
+    "audio:lyria": "node scripts/gen-audio-lyria.mjs",
+    "hands": "node scripts/gen-hands.mjs"
   },
   "devDependencies": {
     "@google/genai": "^2.15.0",

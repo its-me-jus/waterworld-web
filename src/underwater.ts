@@ -570,9 +570,11 @@ void main() {
 const jellyFragment = /* glsl */ `
 uniform vec3 uColor;
 uniform vec3 uCoreColor;
+uniform vec3 uGlowColor;
 uniform vec3 uWaterColor;
 uniform float uFogDensity;
 uniform float uOpacity;
+uniform float uGlow;
 
 varying float vRim;
 varying float vDist;
@@ -596,8 +598,13 @@ void main() {
 
   vec3 col = uColor * (0.78 + vRim * 0.45 + canal * 0.5);
   col = mix(col, uCoreColor, core * 0.5);
+  // Night bioluminescence — canals and core light up; base body dims so the
+  // glow reads as light, not just a brighter white jelly
+  col *= mix(1.0, 0.35, uGlow);
+  col += uGlowColor * (0.55 + core * 1.8 + canal * 1.2 + smoothstep(0.75, 1.0, vRim) * 0.7) * uGlow;
+  alpha = mix(alpha, min(1.0, alpha * 0.7 + 0.65 * uGlow), uGlow);
 
-  float fog = 1.0 - exp(-vDist * uFogDensity);
+  float fog = 1.0 - exp(-vDist * uFogDensity * (1.0 - uGlow * 0.45));
   col = mix(col, uWaterColor, fog);
   alpha *= 1.0 - fog * 0.85;
 
@@ -699,9 +706,11 @@ function createJellyfish(count: number, waterColor: THREE.Color, low: boolean) {
       uTime: { value: 0 },
       uColor: { value: new THREE.Color('#bfe9ff') },
       uCoreColor: { value: new THREE.Color('#f3c9d8') },
+      uGlowColor: { value: new THREE.Color('#7fffd4') },
       uWaterColor: { value: waterColor.clone() },
       uFogDensity: { value: 0.045 },
       uOpacity: { value: 1 },
+      uGlow: { value: 0 },
     },
     vertexShader: jellyVertex,
     fragmentShader: jellyFragment,
@@ -732,7 +741,14 @@ function createJellyfish(count: number, waterColor: THREE.Color, low: boolean) {
   const dummy = new THREE.Object3D()
   let seeded = false
 
-  function update(dt: number, time: number, camera: THREE.Camera, surfaceY: number, fade: number) {
+  function update(
+    dt: number,
+    time: number,
+    camera: THREE.Camera,
+    surfaceY: number,
+    fade: number,
+    biolum = 0,
+  ) {
     if (!seeded) {
       for (const j of jellies) {
         j.x += camera.position.x
@@ -743,6 +759,7 @@ function createJellyfish(count: number, waterColor: THREE.Color, low: boolean) {
 
     material.uniforms.uTime.value = time
     material.uniforms.uOpacity.value = fade
+    material.uniforms.uGlow.value = biolum
 
     for (let i = 0; i < jellies.length; i++) {
       const j = jellies[i]
@@ -826,6 +843,7 @@ export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOption
     submersion: number
     underwater: boolean
     pixelRatio: number
+    biolum?: number
   }) {
     // Ease the whole layer in so surfacing doesn't pop
     const target = ctx.underwater ? 1 : 0
@@ -837,7 +855,7 @@ export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOption
     snow.update(ctx.time, ctx.camera, ctx.pixelRatio, fade)
     plume.update(ctx.time, ctx.camera, ctx.pixelRatio, fade * 0.85)
     fish.update(ctx.dt, ctx.time, ctx.camera, ctx.surfaceY)
-    jellies.update(ctx.dt, ctx.time, ctx.camera, ctx.surfaceY, fade)
+    jellies.update(ctx.dt, ctx.time, ctx.camera, ctx.surfaceY, fade, ctx.biolum ?? 0)
   }
 
   return { group, update }

@@ -44,7 +44,12 @@ async function tryLoadBed(ctx: AudioContext, url: string) {
   try {
     const res = await fetch(url)
     if (!res.ok) return null
-    return ctx.decodeAudioData(await res.arrayBuffer())
+    // The dev server's SPA fallback answers missing files with index.html —
+    // without this gate we try to decode markup and boot() rejects, which
+    // leaves `ready` false and kills the whole procedural layer too
+    const type = res.headers.get('content-type') ?? ''
+    if (!type.startsWith('audio')) return null
+    return await ctx.decodeAudioData(await res.arrayBuffer())
   } catch {
     return null
   }
@@ -85,6 +90,7 @@ export function createOceanAudio() {
 
   let lastSub = 0
   let splashCool = 0
+  let resumeCool = 0
 
   let gSurface = 0
   let gUnder = 0
@@ -232,29 +238,37 @@ export function createOceanAudio() {
    * @param submersion 0 at surface, 1 fully under
    * @param depth metres below the swell
    * @param heave local surface height — drives the close bob layer
+   * @param storm 0..1 squall strength — louder wash, harsher wind band
    */
-  function update(dt: number, submersion: number, depth: number, heave = 0) {
+  function update(dt: number, submersion: number, depth: number, heave = 0, storm = 0) {
     splashCool = Math.max(0, splashCool - dt)
 
     if (ready && ((lastSub < 0.42 && submersion >= 0.55) || (lastSub > 0.55 && submersion <= 0.42))) {
-      playSplash(0.4 + Math.min(0.45, Math.abs(submersion - lastSub)))
+      playSplash(0.4 + Math.min(0.45, Math.abs(submersion - lastSub)) + storm * 0.25)
     }
     lastSub = submersion
 
     if (!ready || !ctx || !master || !surfaceNoise || !underNoise || !bobNoise) return
-    if (ctx.state === 'suspended') void ctx.resume()
+    // Recovery from a mid-session browser suspension — throttled: without a
+    // user gesture every attempt just logs a Chrome warning, per frame
+    resumeCool -= dt
+    if (ctx.state === 'suspended' && resumeCool <= 0) {
+      resumeCool = 1
+      void ctx.resume()
+    }
 
     const underW = Math.min(1, Math.max(0, (submersion - 0.12) / 0.72))
     const surfaceW = 1 - underW
     const bobW =
       Math.max(0, 1 - submersion * 2.4) * (0.28 + Math.min(0.7, Math.abs(heave) * 1.1))
     const murk = Math.min(1, depth / 22)
+    const wind = 1 + storm * 1.35
 
-    gSurface = damp(gSurface, surfaceW * 0.42, 3.4, dt)
+    gSurface = damp(gSurface, surfaceW * 0.42 * wind, 3.4, dt)
     gUnder = damp(gUnder, underW * (0.55 + murk * 0.15), 3.4, dt)
-    gBob = damp(gBob, bobW * 0.5, 5, dt)
-    gMaster = damp(gMaster, 0.9, 2.2, dt)
-    gSurfaceBed = damp(gSurfaceBed, surfaceW * 0.22, 2.5, dt)
+    gBob = damp(gBob, bobW * 0.5 * (1 + storm * 0.4), 5, dt)
+    gMaster = damp(gMaster, 0.9 + storm * 0.08, 2.2, dt)
+    gSurfaceBed = damp(gSurfaceBed, surfaceW * 0.22 * (1 + storm * 0.3), 2.5, dt)
     gUnderBed = damp(gUnderBed, underW * 0.28, 2.5, dt)
     underCutoff = damp(underCutoff, 1050 - murk * 650, 2.6, dt)
 
@@ -268,13 +282,14 @@ export function createOceanAudio() {
     if (surfaceBed) surfaceBed.gain.gain.setTargetAtTime(gSurfaceBed, now, 0.08)
     if (underBed) underBed.gain.gain.setTargetAtTime(gUnderBed, now, 0.08)
 
-    // Swell breathing on the surface filter
+    // Swell breathing on the surface filter — storms push it brighter / windier
     if (surfaceFilter) {
-      const breath = 720 + Math.sin(now * 0.35) * 90 + heave * 40
+      const breath = 720 + Math.sin(now * 0.35) * 90 + heave * 40 + storm * 380
       surfaceFilter.frequency.setTargetAtTime(breath, now, 0.1)
+      surfaceFilter.Q.setTargetAtTime(0.55 + storm * 0.35, now, 0.12)
     }
     if (bobFilter) {
-      bobFilter.frequency.setTargetAtTime(360 + Math.abs(heave) * 80, now, 0.08)
+      bobFilter.frequency.setTargetAtTime(360 + Math.abs(heave) * 80 + storm * 60, now, 0.08)
     }
 
     if (underW > 0.35) {

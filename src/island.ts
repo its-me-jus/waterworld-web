@@ -1,0 +1,332 @@
+import * as THREE from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { fbm, noise2 } from './waves'
+
+/**
+ * A volcanic island, far enough out that it's a smudge you either notice or
+ * don't — there is no marker pointing at it. Reaching it is a decision the
+ * ocean makes expensive.
+ *
+ * The terrain is one deterministic height function. The mesh is sampled from
+ * it and so is collision, so the ground you bump into is the ground you see,
+ * and a future walk mode gets its floor for free.
+ */
+
+export type IslandOptions = {
+  x: number
+  z: number
+  lowPower?: boolean
+  /** Distant land takes the colour of the air between you and it. */
+  hazeColor: THREE.Color
+}
+
+export type Island = {
+  group: THREE.Group
+  centre: THREE.Vector3
+  /** World ground height. Deep negative once you're off the shelf. */
+  heightAt: (x: number, z: number) => number
+  /** Keeps the swimmer out of the rock and lets them wade up the beach. */
+  resolve: (p: { x: number; y: number; z: number }) => void
+  /** Beach-level world positions, for anything that wants to sit on the sand. */
+  shore: THREE.Vector3[]
+  update: (camera: THREE.Camera, underwater: boolean) => void
+  /** Keep aerial perspective matched to the live horizon. */
+  setHaze: (color: THREE.Color) => void
+}
+
+/** Half-width of the terrain patch — well past the shelf, into deep water. */
+const SPAN = 640
+const PEAK = 190
+/** How far the cones are pushed under, which is what carves the coastline. */
+const SEA_CUT = 22
+
+function cone(lx: number, lz: number, cx: number, cz: number, radius: number, height: number, sharp: number) {
+  const d = Math.hypot(lx - cx, lz - cz) / radius
+  if (d >= 1) return 0
+  return height * Math.pow(1 - d, sharp)
+}
+
+/**
+ * Ridges and gullies. Deliberately built from octaves the mesh can resolve —
+ * the shared wave `fbm` runs up to eight times its base frequency, which lands
+ * under one grid cell here and shows up as faceted banding across the slopes.
+ */
+function relief(lx: number, lz: number) {
+  return (
+    (noise2(lx * 0.0042 + 31.7, lz * 0.0042 - 12.3) - 0.5) * 1.0 +
+    (noise2(lx * 0.011 - 4.1, lz * 0.011 + 7.9) - 0.5) * 0.46 +
+    (noise2(lx * 0.026 + 17.3, lz * 0.026 + 2.4) - 0.5) * 0.2
+  )
+}
+
+/** Height above mean sea level, in island-local coordinates. */
+function ground(lx: number, lz: number) {
+  let h =
+    cone(lx, lz, 0, 0, 330, PEAK, 1.45) +
+    cone(lx, lz, 180, -104, 190, 76, 1.4) +
+    cone(lx, lz, -142, 124, 172, 52, 1.4) +
+    cone(lx, lz, 64, 208, 124, 26, 1.35)
+
+  h *= 1 + relief(lx, lz) * 1.15
+  h -= SEA_CUT
+  // The last few metres either side of the waterline flatten into beach and
+  // shallows, instead of the cone driving straight into the sea
+  h *= 0.22 + 0.78 * THREE.MathUtils.smoothstep(Math.abs(h), 3, 40)
+  // Then fall away into deep water so the patch edge isn't a bathtub rim
+  h -= THREE.MathUtils.smoothstep(Math.hypot(lx, lz), 330, 620) * 30
+  return h
+}
+
+/**
+ * Standard shading plus two things three's fog can't do here:
+ *
+ * - Aerial perspective that *saturates* below 1. Scene fog would erase the
+ *   island completely at this range; real distance leaves a silhouette.
+ * - Dropping the underwater flanks when they're far away. The ocean mesh only
+ *   reaches ~350 m, so without this the island's shelf hangs below the horizon
+ *   with nothing but sky behind it.
+ *
+ * `hazeColor` must already be sRGB-encoded: the mix runs after three's
+ * colour-space conversion so that full haze lands exactly on the background.
+ */
+function hazeMaterial(hazeColor: THREE.Color, params: THREE.MeshStandardMaterialParameters) {
+  const material = new THREE.MeshStandardMaterial({ ...params, fog: false })
+
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uHaze = { value: hazeColor }
+    shader.uniforms.uHazeDensity = { value: 0.0016 }
+    shader.uniforms.uHazeMax = { value: 0.88 }
+
+    shader.vertexShader = `varying vec3 vGroundPos;\n${shader.vertexShader}`.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+      vGroundPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
+    )
+
+    shader.fragmentShader = `
+      uniform vec3 uHaze;
+      uniform float uHazeDensity;
+      uniform float uHazeMax;
+      varying vec3 vGroundPos;
+      ${shader.fragmentShader}
+    `.replace(
+      // Sits after the colour-space conversion, so it mixes toward the horizon
+      // in the same encoding the background is drawn in.
+      '#include <fog_fragment>',
+      `float hazeDist = length(vGroundPos - cameraPosition);
+      if (smoothstep(0.0, -6.0, vGroundPos.y) * smoothstep(300.0, 470.0, hazeDist) > 0.45) discard;
+      float haze = min(1.0 - exp(-pow(hazeDist * uHazeDensity, 2.0)), uHazeMax);
+      gl_FragColor.rgb = mix(gl_FragColor.rgb, uHaze, haze);`,
+    )
+  }
+
+  return material
+}
+
+/** One palm: a leaning trunk, a crown of drooping blades, a few nuts. */
+function palm(seed: number) {
+  const rand = (n: number) => fbm(seed * 13.7 + n * 4.3, seed * 7.1 - n * 2.9)
+  const height = 6.5 + rand(1) * 5
+  const lean = (rand(2) - 0.5) * 3.4
+  const facing = rand(3) * Math.PI * 2
+
+  const trunk = new THREE.CylinderGeometry(0.16, 0.34, height, 6, 4)
+  const pos = trunk.attributes.position
+  for (let i = 0; i < pos.count; i++) {
+    const t = (pos.getY(i) + height / 2) / height
+    pos.setX(i, pos.getX(i) + t * t * lean)
+  }
+  trunk.translate(0, height / 2, 0)
+  trunk.rotateY(facing)
+  trunk.computeVertexNormals()
+
+  const crown = new THREE.Vector3(Math.cos(facing) * lean, height, -Math.sin(facing) * lean)
+  const leaves: THREE.BufferGeometry[] = []
+  const blades = 8
+  for (let i = 0; i < blades; i++) {
+    const blade = new THREE.ConeGeometry(0.4, 2.8 + rand(i) * 1.1, 3)
+    blade.translate(0, 1.5, 0)
+    blade.scale(1, 1, 0.26)
+    const tilt = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(1, 0, 0),
+      0.75 + rand(i + 9) * 0.75,
+    )
+    const spin = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0),
+      facing + (i / blades) * Math.PI * 2,
+    )
+    blade.applyMatrix4(
+      new THREE.Matrix4().compose(crown, spin.multiply(tilt), new THREE.Vector3(1, 1, 1)),
+    )
+    leaves.push(blade)
+  }
+
+  const nuts: THREE.BufferGeometry[] = []
+  for (let i = 0; i < 3; i++) {
+    const nut = new THREE.IcosahedronGeometry(0.19, 0)
+    nut.translate(
+      crown.x + Math.cos(i * 2.1 + facing) * 0.28,
+      crown.y - 0.35,
+      crown.z + Math.sin(i * 2.1 + facing) * 0.28,
+    )
+    nuts.push(nut)
+  }
+
+  return { trunk, leaves, nuts }
+}
+
+export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
+  const low = opts.lowPower ?? false
+  const haze = opts.hazeColor.clone().convertLinearToSRGB()
+  const group = new THREE.Group()
+  group.name = 'Island'
+  group.position.set(opts.x, 0, opts.z)
+  scene.add(group)
+
+  const heightAt = (x: number, z: number) => ground(x - opts.x, z - opts.z)
+
+  // —— terrain ————————————————————————————————————————————————
+  const segments = low ? 120 : 184
+  const geometry = new THREE.PlaneGeometry(SPAN * 2, SPAN * 2, segments, segments)
+  geometry.rotateX(-Math.PI / 2)
+
+  const position = geometry.attributes.position
+  for (let i = 0; i < position.count; i++) {
+    position.setY(i, ground(position.getX(i), position.getZ(i)))
+  }
+  geometry.computeVertexNormals()
+
+  // Sand, scrub and basalt painted per vertex — one material, one draw call
+  const normal = geometry.attributes.normal
+  const seabed = new THREE.Color('#5c6a5b')
+  const wetSand = new THREE.Color('#b3a179')
+  const drySand = new THREE.Color('#ddcaa4')
+  const scrub = new THREE.Color('#5c7f42')
+  const bush = new THREE.Color('#3f6135')
+  const rock = new THREE.Color('#79705f')
+  const basalt = new THREE.Color('#4e453d')
+  const shade = new THREE.Color()
+  const growth = new THREE.Color()
+  const stone = new THREE.Color()
+  const colors = new Float32Array(position.count * 3)
+
+  for (let i = 0; i < position.count; i++) {
+    const x = position.getX(i)
+    const y = position.getY(i)
+    const z = position.getZ(i)
+    const mottle = fbm(x * 0.02 + 2.3, z * 0.02 - 5.1)
+
+    shade.copy(seabed).lerp(wetSand, THREE.MathUtils.smoothstep(y, -9, -1))
+    shade.lerp(drySand, THREE.MathUtils.smoothstep(y, -0.5, 4))
+    growth.copy(scrub).lerp(bush, mottle)
+    shade.lerp(growth, THREE.MathUtils.smoothstep(y, 4, 15))
+    // Steep faces shed soil — bare rock on the cliffs and up around the crater.
+    // MathUtils.smoothstep has no inverted range, so the slope ramp is flipped
+    // by hand rather than passing min > max (which silently returns 1).
+    stone.copy(rock).lerp(basalt, mottle)
+    shade.lerp(
+      stone,
+      Math.max(
+        THREE.MathUtils.smoothstep(y, 118, 182),
+        1 - THREE.MathUtils.smoothstep(normal.getY(i), 0.36, 0.62),
+      ),
+    )
+    shade.multiplyScalar(0.92 + mottle * 0.16)
+
+    colors[i * 3] = shade.r
+    colors[i * 3 + 1] = shade.g
+    colors[i * 3 + 2] = shade.b
+  }
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+
+  // Standard shading has no skylight, and the air hemisphere's ground colour is
+  // near-black for the water. Without a small lift, whichever face of the
+  // island you approach from crushes to a silhouette the moment it's not sunlit.
+  const skylight = { emissive: new THREE.Color('#20313a'), emissiveIntensity: 0.5 }
+
+  const terrain = new THREE.Mesh(
+    geometry,
+    hazeMaterial(haze, { vertexColors: true, roughness: 0.98, metalness: 0, ...skylight }),
+  )
+  group.add(terrain)
+
+  // —— shoreline planting ————————————————————————————————————
+  const shore: THREE.Vector3[] = []
+  const trunks: THREE.BufferGeometry[] = []
+  const leaves: THREE.BufferGeometry[] = []
+  const nuts: THREE.BufferGeometry[] = []
+  const wanted = low ? 10 : 20
+
+  for (let i = 0; i < 600 && trunks.length < wanted; i++) {
+    const angle = i * 2.399
+    const radius = 150 + ((i * 13) % 210)
+    const lx = Math.cos(angle) * radius
+    const lz = Math.sin(angle) * radius
+    const h = ground(lx, lz)
+    if (h < 2.4 || h > 13) continue
+    // Palms want flat ground, not a cliff face
+    const slope = Math.abs(ground(lx + 7, lz) - h) + Math.abs(ground(lx, lz + 7) - h)
+    if (slope > 4.5) continue
+
+    const at = new THREE.Vector3(lx, h - 0.3, lz)
+    const tree = palm(i + 1)
+    const place = new THREE.Matrix4().setPosition(at)
+    trunks.push(tree.trunk.applyMatrix4(place))
+    for (const blade of tree.leaves) leaves.push(blade.applyMatrix4(place))
+    for (const nut of tree.nuts) nuts.push(nut.applyMatrix4(place))
+    shore.push(new THREE.Vector3(opts.x + lx, h, opts.z + lz))
+  }
+
+  if (trunks.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(trunks, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, { color: 0x6b563c, roughness: 0.95, ...skylight }),
+      ),
+    )
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(leaves, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, {
+          color: 0x5f8a3e,
+          roughness: 0.85,
+          side: THREE.DoubleSide,
+          ...skylight,
+        }),
+      ),
+    )
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(nuts, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, { color: 0x6d5334, roughness: 1 }),
+      ),
+    )
+  }
+
+  // —— collision ————————————————————————————————————————————
+  function resolve(p: { x: number; y: number; z: number }) {
+    const lx = p.x - opts.x
+    const lz = p.z - opts.z
+    if (Math.abs(lx) > SPAN || Math.abs(lz) > SPAN) return
+    const h = ground(lx, lz)
+    if (h < -40) return
+    // Eye height above the sand. The swim controller still owns the body here,
+    // so wading is approximate until there's a real walk mode to take over.
+    if (p.y < h + 1.45) p.y = h + 1.45
+  }
+
+  const centre = new THREE.Vector3(opts.x, 0, opts.z)
+
+  function update(camera: THREE.Camera, underwater: boolean) {
+    // Nothing is visible 700 m through water. Close in it's the shelf you dive,
+    // so keep it once the island is the thing you're swimming around.
+    group.visible = !underwater || camera.position.distanceToSquared(centre) < 420 * 420
+  }
+
+  /** Keep aerial perspective matched to the live horizon as day and storms move. */
+  function setHaze(color: THREE.Color) {
+    haze.copy(color).convertLinearToSRGB()
+  }
+
+  return { group, centre, heightAt, resolve, shore, update, setHaze }
+}

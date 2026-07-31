@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { WAVES, WAVE_COUNT } from './waves'
+import { WAVES, WAVE_COUNT, chopScale } from './waves'
 
 const noiseGLSL = /* glsl */ `
 float hash(vec2 p) {
@@ -32,6 +32,7 @@ float fbm(vec2 p, int octaves) {
 
 const vertexShader = /* glsl */ `
 uniform float uTime;
+uniform float uChopScale;
 uniform vec4 uWaves[${WAVE_COUNT}];
 uniform vec2 uWaveExtra[${WAVE_COUNT}];
 
@@ -79,7 +80,7 @@ void main() {
   float chop =
     (fbm(world.xz * 0.08 + vec2(uTime * 0.07, -uTime * 0.05), 4) - 0.5) * 0.55 +
     (fbm(world.xz * 0.22 + vec2(-uTime * 0.11, uTime * 0.03), 3) - 0.5) * 0.22;
-  disp.y += chop;
+  disp.y += chop * uChopScale;
 
   world += disp;
 
@@ -102,6 +103,7 @@ uniform vec3 uCameraPos;
 uniform vec3 uHorizonColor;
 uniform float uUnderwater;
 uniform float uTime;
+uniform float uChopScale;
 
 varying vec3 vWorldPos;
 varying vec3 vNormal;
@@ -224,7 +226,8 @@ void main() {
   float streak = fbm(vWorldPos.xz * 0.9 + vec2(uTime * 0.25, -uTime * 0.2), 3);
   float foam = clamp(vCrest * smoothstep(0.45, 0.95, streak), 0.0, 1.0);
   foam *= smoothstep(0.35, 0.8, facing);
-  color = mix(color, vec3(0.88, 0.94, 0.97), foam * 0.5);
+  foam = min(1.0, foam * (1.0 + uChopScale * 0.55));
+  color = mix(color, vec3(0.88, 0.94, 0.97), foam * (0.5 + uChopScale * 0.12));
 
   // Blend to horizon so the mesh edge disappears
   float far = smoothstep(220.0, 430.0, dist);
@@ -256,6 +259,7 @@ export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: O
   const material = new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
+      uChopScale: { value: 1 },
       uWaves: { value: uWaves },
       uWaveExtra: { value: uWaveExtra },
       uEnvMap: { value: null },
@@ -287,5 +291,13 @@ export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: O
     mesh.position.z = Math.round(z / step) * step
   }
 
-  return { mesh, material, follow }
+  /** Pull the live WAVES steepness + chop into the GPU after a storm tick. */
+  function syncWaves() {
+    for (let i = 0; i < WAVES.length; i++) {
+      uWaves[i].z = WAVES[i].steepness
+    }
+    material.uniforms.uChopScale.value = chopScale
+  }
+
+  return { mesh, material, follow, syncWaves }
 }
