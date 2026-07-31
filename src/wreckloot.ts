@@ -4,7 +4,7 @@ import type { Interactions } from './interact'
 import type { PlayerFrame } from './player'
 import type { Shark } from './shark'
 import { buildSpear } from './spear'
-import { bite, wearSuit, type Vitals } from './survival'
+import { bite, eat, wearSuit, type Vitals } from './survival'
 
 /**
  * Wreck loot — the wreck gives up its depth in three stages:
@@ -42,6 +42,10 @@ export type WreckLootDeps = {
   gearState: () => GearState
   pryGear: () => boolean
   takeSuit: () => boolean
+  tinSpot: () => THREE.Vector3 | null
+  takeTin: () => boolean
+  logSpot: () => THREE.Vector3 | null
+  takeLog: () => boolean
   /** Dress the swimmer in survival orange once the suit is on. */
   onSuit: () => void
   shark: Shark
@@ -201,6 +205,39 @@ export function createWreckLoot(
     },
   })
 
+  // The galley tin, rolled into the corner of the same hold. Soldered shut,
+  // so what's in it is a meal rather than a story about one.
+  const tinPos = new THREE.Vector3()
+  deps.interactions.add({
+    position: tinPos,
+    verb: 'Break open',
+    label: 'the bread tin',
+    radius: GEAR_RANGE,
+    available: () => vitals.alive && deps.tinSpot() !== null,
+    use: () => {
+      if (!deps.takeTin()) return
+      eat(vitals, 0.4, 0.05)
+      hud.whisper('Ship’s biscuit, dry as the day it was baked. The tin held.')
+    },
+  })
+
+  // The log under the stern transom. It feeds nothing and arms nothing; it
+  // only answers the question the oilskin started.
+  const logPos = new THREE.Vector3()
+  deps.interactions.add({
+    position: logPos,
+    verb: 'Read',
+    label: 'the ship’s log',
+    radius: 3.1,
+    available: () => vitals.alive && deps.logSpot() !== null,
+    use: () => {
+      if (!deps.takeLog()) return
+      hud.whisper('The oilskin held. The last page is the master’s hand, not yours.')
+      hud.whisper('“Reef uncharted. Mate had the watch and called it. I did not come about.”')
+      hud.whisper('You read it twice. It does not change on the second reading.')
+    },
+  })
+
   // The jab: the prompt rides the shark itself, so it only ever appears while
   // a run is genuinely close — the one prompt that keeps you alive
   const jabPos = new THREE.Vector3()
@@ -251,6 +288,10 @@ export function createWreckLoot(
     if (knife) knifePos.copy(knife)
     lockerPos.copy(deps.lockerSpot())
     gearPos.copy(deps.gearSpot())
+    const tin = deps.tinSpot()
+    if (tin) tinPos.copy(tin)
+    const log = deps.logSpot()
+    if (log) logPos.copy(log)
     if (deps.shark.active) jabPos.copy(deps.shark.position)
 
     // Carried spear: stroke sway, plus the thrust when you answer a run

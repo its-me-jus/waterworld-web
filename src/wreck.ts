@@ -179,8 +179,12 @@ const SAND_Y = -25
  * the way a rock in a river is shelter — conditional, and it knows it.
  */
 const PERCH = {
-  x: -20,
-  z: -17,
+  // Set well off the wreck's port bow. The spire has to be far enough out that
+  // its drowned flanks never reach across the sand the stern and the chest are
+  // lying on — a rock that quietly floors you ten metres above the seabed makes
+  // the deep finds unreachable, and nothing about that failure looks like a bug.
+  x: -30,
+  z: -4,
   /**
    * Shelf height above mean sea level. The swell stacks to roughly five metres
    * in an ordinary sea, so anything lower isn't land — it's a rock you get
@@ -194,9 +198,14 @@ const PERCH = {
   /** Shortest run from the shelf to the sea — the cliff faces. */
   cliffRun: 4,
   /** Extra run on the ramp side, where legs can actually make the climb. */
-  rampRun: 20,
-  /** Which way the climbable ramp faces, in local radians. */
-  rampDir: -0.79,
+  rampRun: 16,
+  /**
+   * Which way the climbable ramp faces, in local radians — out to sea, away
+   * from the wreck. Everything facing the Wanderer is cliff, so hauling out
+   * means swimming round to the far side and finding the one shoulder that
+   * lets you up.
+   */
+  rampDir: 3.0,
   /** How far the flank keeps falling past the waterline, into the sand. */
   flankRun: 6,
 }
@@ -212,7 +221,7 @@ const PERCH = {
 function perchReach(lx: number, lz: number) {
   const angle = Math.atan2(lz - PERCH.z, lx - PERCH.x)
   const lobe = Math.max(0, Math.cos(angle - PERCH.rampDir)) ** 1.5
-  const wobble = 0.84 + fbm(Math.cos(angle) * 2.3 + 11.4, Math.sin(angle) * 2.3 - 5.2) * 0.44
+  const wobble = 0.9 + fbm(Math.cos(angle) * 2.3 + 11.4, Math.sin(angle) * 2.3 - 5.2) * 0.24
   return (PERCH.flat + PERCH.cliffRun + lobe * PERCH.rampRun) * wobble
 }
 
@@ -974,6 +983,36 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   suitHood.scale.set(1, 0.85, 0.8)
   suitHanging.add(suitHood)
 
+  // A bread tin from the galley, rolled into the corner of the hold when she
+  // went over. Soldered shut, which is the only reason it's still food.
+  const tin = new THREE.Group()
+  tin.position.set(-0.9, -2.75, 2.6)
+  tin.rotation.set(1.3, 0.6, 0.2)
+  bow.add(tin)
+  const tinBody = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.34, 12), mat.iron)
+  tin.add(tinBody)
+  for (const ty of [-0.17, 0.17]) {
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.235, 0.02, 5, 14), mat.brass)
+    rim.rotation.x = Math.PI / 2
+    rim.position.y = ty
+    tin.add(rim)
+  }
+
+  // The ship's log, in its oilskin, spilled out of the stern and lying against
+  // her broken ribs. Nothing in it keeps you alive — it only tells you whose
+  // watch this was. Parked on the sand rather than inside the hull, because a
+  // find you can see through a gap but never quite reach is just a taunt.
+  const logBook = new THREE.Group()
+  logBook.position.set(2.4, sandHeight(2.4, -20.6) + 0.16, -20.6)
+  logBook.rotation.set(0.12, 1.1, 0.28)
+  group.add(logBook)
+  const logWrap = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.1, 0.26), mat.leather)
+  logBook.add(logWrap)
+  const logCord = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.014, 5, 14), mat.rope)
+  logCord.rotation.y = Math.PI / 2
+  logCord.scale.set(1, 0.62, 1)
+  logBook.add(logCord)
+
   // The mate's chest: iron-banded, roped shut, settled into the sand a
   // couple of metres off the stern's torn ribs
   const chest = new THREE.Group()
@@ -1161,9 +1200,11 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
 
     // The spire is a floor rather than a wall: swim at it and the rock lifts
     // you up its flank until you're standing on it, which is how hauling out
-    // of a heaving sea actually goes.
+    // of a heaving sea actually goes. Only the part of it that stands above
+    // the reef gets a say — deeper than that the sand is already the floor,
+    // and letting the skirt push as well is how divers get held off the seabed.
     const spire = perchGround(lx, lz)
-    if (spire > -900) p.y = Math.max(p.y, spire + 0.55)
+    if (spire > -14) p.y = Math.max(p.y, spire + 0.55)
   }
 
   /**
@@ -1178,6 +1219,8 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   let knifeTaken = false
   let locker: 'sealed' | 'cut' | 'stripped' = 'sealed'
   let gearState: 'shut' | 'open' | 'stripped' = 'shut'
+  let tinTaken = false
+  let logTaken = false
   /** Time the lashing was cut, so the lid can swing open over a beat. */
   let lidFrom = -1
   /** Time the gear door was pried, so it swings rather than snaps. */
@@ -1185,6 +1228,8 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   const knifeWorld = new THREE.Vector3()
   const lockerWorld = new THREE.Vector3()
   const gearWorld = new THREE.Vector3()
+  const tinWorld = new THREE.Vector3()
+  const logWorld = new THREE.Vector3()
 
   // —— per-frame ————————————————————————————————————————————
   const centre = new THREE.Vector3(opts.x, -12, opts.z)
@@ -1320,6 +1365,30 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     return true
   }
 
+  /** The galley's bread tin in the hold, until it's been opened. */
+  function tinSpot() {
+    return tinTaken ? null : tin.getWorldPosition(tinWorld)
+  }
+
+  function takeTin() {
+    if (tinTaken) return false
+    tinTaken = true
+    tin.visible = false
+    return true
+  }
+
+  /** The ship's log under the stern transom, until it's been read. */
+  function logSpot() {
+    return logTaken ? null : logBook.getWorldPosition(logWorld)
+  }
+
+  function takeLog() {
+    if (logTaken) return false
+    logTaken = true
+    logBook.visible = false
+    return true
+  }
+
   /** A new run: the knife is back on the deck, the locker roped shut, the
    *  provision crate riding the swell again. */
   function reset() {
@@ -1332,6 +1401,10 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     gearFrom = -1
     gearDoor.rotation.y = 0
     suitHanging.visible = true
+    tinTaken = false
+    tin.visible = true
+    logTaken = false
+    logBook.visible = true
     if (lashing.parent !== chest) chest.add(lashing)
     contents.visible = true
     if (provisionItem) {
@@ -1367,6 +1440,10 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     gearSpot,
     pryGear,
     takeSuit,
+    tinSpot,
+    takeTin,
+    logSpot,
+    takeLog,
     reset,
     get lockerState() {
       return locker

@@ -171,6 +171,53 @@ const whisper = (p) => p.evaluate(() => document.querySelector('#whisper')?.text
   await p.close()
 }
 
+// —— the hold's tin and the stern's log ————————————————————————————————
+{
+  const p = await page()
+  await p.goto(`${BASE}/`, { waitUntil: 'load' })
+  await p.waitForTimeout(1500)
+  const spots = await p.evaluate(() => ({
+    tin: window.ww.wreck.tinSpot().toArray(),
+    log: window.ww.wreck.logSpot().toArray(),
+  }))
+
+  for (const [name, at] of Object.entries(spots)) {
+    const sx = at[0] + 1.1
+    const sz = at[2] + 1.1
+    const depth = Math.max(0.5, -at[1])
+    const yaw = Math.atan2(-(at[0] - sx), -(at[2] - sz))
+    await p.goto(
+      `${BASE}/?calm=1&x=${sx.toFixed(1)}&z=${sz.toFixed(1)}&depth=${depth.toFixed(1)}&yaw=${yaw.toFixed(2)}&pitch=-0.3`,
+      { waitUntil: 'load' },
+    )
+    await p.waitForTimeout(1400)
+    // Hold the dive so buoyancy can't lift you off the find mid-reach
+    await p.keyboard.down('ShiftLeft')
+    let used = false
+    for (let i = 0; i < 14 && !used; i++) {
+      await p.waitForTimeout(260)
+      const prompt = await p.evaluate(() => document.querySelector('#prompt')?.textContent ?? '')
+      if (prompt.includes('tin') || prompt.includes('log')) {
+        await p.keyboard.press('KeyF')
+        await p.waitForTimeout(500)
+        used = await p.evaluate(
+          (which) =>
+            which === 'tin'
+              ? window.ww.wreck.tinSpot() === null
+              : window.ww.wreck.logSpot() === null,
+          name,
+        )
+      }
+    }
+    await p.keyboard.up('ShiftLeft')
+    await p.waitForTimeout(900)
+    console.log(`[${name}] taken:`, used, 'whisper:', JSON.stringify(await whisper(p)))
+    if (!used) bad++
+  }
+  await p.screenshot({ path: `${OUT}/deep-finds.png` })
+  await p.close()
+}
+
 // —— weather: long spells, mostly fair ————————————————————————————————
 {
   const p = await page({ width: 640, height: 360 })
