@@ -35,32 +35,6 @@ body.touch-ui canvas {
   cursor: default;
 }
 
-#hud {
-  position: fixed;
-  left: 1rem;
-  top: 1rem;
-  bottom: auto;
-  z-index: 5;
-  max-width: min(26rem, calc(100vw - 2rem));
-  padding: 0.65rem 0.9rem;
-  border: 1px solid rgba(180, 210, 230, 0.2);
-  background: rgba(6, 16, 24, 0.72);
-  color: #d7e6ef;
-  font-size: 0.8rem;
-  line-height: 1.35;
-  pointer-events: none;
-  backdrop-filter: blur(8px);
-}
-
-#hud strong {
-  display: block;
-  margin-bottom: 0.2rem;
-  font-size: 0.9rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #9fd0ff;
-}
-
 #depth {
   position: fixed;
   z-index: 5;

@@ -448,44 +448,56 @@ type BarnacleSurface = {
   seed: number
 }
 
-/** Clustered little cones over an ellipsoidal patch of hull / spar / rock. */
-function barnaclePatch(spec: BarnacleSurface) {
-  const parts: THREE.BufferGeometry[] = []
-  const m = new THREE.Matrix4()
+/**
+ * Clustered little cones over an ellipsoidal patch. Uses InstancedMesh so we
+ * never hit mergeGeometries attribute mismatches (which black-screened the app).
+ */
+function barnacleInstances(spec: BarnacleSurface, material: THREE.Material) {
   const q = new THREE.Quaternion()
   const roll = new THREE.Quaternion()
+  const orient = new THREE.Quaternion()
   const up = new THREE.Vector3(0, 1, 0)
   const v = new THREE.Vector3()
-  const n = new THREE.Vector3()
+  const at = new THREE.Vector3()
+  const scale = new THREE.Vector3()
+  const matrices: THREE.Matrix4[] = []
+
+  q.setFromUnitVectors(up, spec.normal)
 
   for (let i = 0; i < spec.count; i++) {
     const dir = BARNACLE_POINTS[(i * 7 + Math.floor(spec.seed * 13)) % BARNACLE_POINTS.length]
-    n.copy(spec.normal).applyQuaternion(q.setFromUnitVectors(up, spec.normal))
-    v.copy(dir).applyQuaternion(q.setFromUnitVectors(up, spec.normal))
-
-    // Keep shells on the outer hemisphere of the patch
-    if (v.dot(spec.normal) < 0.05) continue
+    v.copy(dir).applyQuaternion(q)
+    if (v.dot(spec.normal) < 0.12 || v.lengthSq() < 1e-8) continue
+    v.normalize()
 
     const jitter = fbm(i * 0.61 + spec.seed, i * 0.37 - spec.seed)
     const size = (0.045 + jitter * 0.085) * spec.radius
-    const cone = new THREE.ConeGeometry(size * 0.62, size, 6)
-    cone.translate(0, size * 0.42, 0)
-
-    const at = new THREE.Vector3(
+    at.set(
       spec.centre.x + v.x * spec.scale[0],
       spec.centre.y + v.y * spec.scale[1],
       spec.centre.z + v.z * spec.scale[2],
     )
     roll.setFromAxisAngle(up, i * 2.399)
-    const orient = new THREE.Quaternion().setFromUnitVectors(up, v).multiply(roll)
-    m.compose(at, orient, new THREE.Vector3(1, 0.7 + jitter * 0.6, 1))
-    parts.push(cone.applyMatrix4(m))
+    orient.setFromUnitVectors(up, v).multiply(roll)
+    // Bake the cone height into the instance scale (unit cone is height 1)
+    scale.set(size * 0.62, size, size * 0.62)
+    matrices.push(new THREE.Matrix4().compose(at, orient, scale))
   }
-  return mergeGeometries(parts, false) as THREE.BufferGeometry | null
+
+  if (!matrices.length) return null
+
+  // Unit cone with tip at +Y — scaled per-instance to barnacle size
+  const geo = new THREE.ConeGeometry(1, 1, 6)
+  geo.translate(0, 0.42, 0)
+  const mesh = new THREE.InstancedMesh(geo, material, matrices.length)
+  for (let i = 0; i < matrices.length; i++) mesh.setMatrixAt(i, matrices[i])
+  mesh.instanceMatrix.needsUpdate = true
+  mesh.frustumCulled = true
+  return mesh
 }
 
-/** One merged mesh of barnacle clusters across the whole wreck. */
-function buildBarnacles(low: boolean) {
+/** Attach barnacle clusters across the wreck. */
+function addBarnacles(parent: THREE.Object3D, material: THREE.Material, low: boolean) {
   const clusters: BarnacleSurface[] = [
     // Bow hull, both flanks and along the snapped rail
     { centre: new THREE.Vector3(-2.4, -12.2, 3.2), normal: new THREE.Vector3(-0.8, 0.45, 0.2).normalize(), radius: 1, scale: [1.6, 1.1, 1.4], count: low ? 14 : 30, seed: 1.7 },
@@ -501,13 +513,10 @@ function buildBarnacles(low: boolean) {
     { centre: new THREE.Vector3(4.2, -22.2, -17.6), normal: new THREE.Vector3(0.4, 0.85, -0.3).normalize(), radius: 1, scale: [1.6, 0.9, 1.3], count: low ? 14 : 26, seed: 5.8 },
   ]
 
-  const parts: THREE.BufferGeometry[] = []
   for (const c of clusters) {
-    const patch = barnaclePatch(c)
-    if (patch) parts.push(patch)
+    const mesh = barnacleInstances(c, material)
+    if (mesh) parent.add(mesh)
   }
-  if (!parts.length) return null
-  return mergeGeometries(parts, false) as THREE.BufferGeometry
 }
 
 // —— flotsam ————————————————————————————————————————————————
@@ -701,8 +710,7 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
 
   // Barnacle crust over wood, spar and iron — what makes her read as sunken
   // for years rather than parked last week
-  const barnacles = buildBarnacles(low)
-  if (barnacles) group.add(new THREE.Mesh(barnacles, mat.barnacle))
+  addBarnacles(group, mat.barnacle, low)
 
   // —— growth and rubble, planted by dropping rays onto the rock ——
   const clumps: { pivot: THREE.Group; phase: number }[] = []

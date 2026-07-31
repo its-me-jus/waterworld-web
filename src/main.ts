@@ -18,14 +18,6 @@ if (!app) throw new Error('#app missing')
 const mobile = preferTouchUI()
 const lowPower = isLowPowerDevice()
 
-if (!mobile) {
-  const hud = document.createElement('div')
-  hud.id = 'hud'
-  hud.innerHTML =
-    '<strong>WaterWorld</strong><span id="hud-hint">WASD · Click canvas to mouse-look · Space/Shift depth</span>'
-  app.appendChild(hud)
-}
-
 const depthReadout = document.createElement('div')
 depthReadout.id = 'depth'
 app.appendChild(depthReadout)
@@ -143,12 +135,6 @@ const desktop = bindKeyboardMouse(renderer.domElement, player, {
   enablePointerLock: !mobile,
   onLockChange: (locked) => {
     document.body.classList.toggle('playing', locked)
-    const hint = document.querySelector('#hud-hint')
-    if (hint && !mobile) {
-      hint.textContent = locked
-        ? 'WASD · Space up · Shift dive · Esc release'
-        : 'Click to look · WASD · Space up · Shift dive'
-    }
   },
 })
 
