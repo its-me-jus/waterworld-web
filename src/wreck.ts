@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { buildSpear } from './spear'
 import { fbm, sampleOcean } from './waves'
 
 /**
@@ -36,7 +37,15 @@ function materials() {
       side: THREE.DoubleSide,
     }),
     sand: new THREE.MeshStandardMaterial({ color: 0xa89e86, roughness: 1 }),
-    iron: new THREE.MeshStandardMaterial({ color: 0x5a5048, roughness: 0.65, metalness: 0.55 }),
+    iron: new THREE.MeshStandardMaterial({
+      color: 0x5a5048,
+      roughness: 0.65,
+      metalness: 0.55,
+      // Bare metal goes black with no env light down deep; a whisper of
+      // emissive reads as sheen in the murk
+      emissive: 0x171a1d,
+      emissiveIntensity: 0.55,
+    }),
     rope: new THREE.MeshStandardMaterial({ color: 0x8d7c5c, roughness: 1 }),
     // Thin canvas glows when the sun is behind it. Standard shading has no
     // transmission, so without an emissive lift the backlit side of the sail
@@ -64,6 +73,16 @@ function materials() {
       color: 0xc7bfae,
       roughness: 0.98,
       metalness: 0.0,
+    }),
+    // Salvage: a sheath of sailors' leather and a little brass that survives it
+    leather: new THREE.MeshStandardMaterial({ color: 0x4a3325, roughness: 0.9 }),
+    brass: new THREE.MeshStandardMaterial({
+      color: 0x8f7a3c,
+      roughness: 0.45,
+      metalness: 0.7,
+      // The glint you spot from two metres out — how you find the knife at all
+      emissive: 0x2e2410,
+      emissiveIntensity: 0.6,
     }),
   }
 }
@@ -716,6 +735,82 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   // for years rather than parked last week
   addBarnacles(group, mat.barnacle, low)
 
+  // —— Phase B salvage: the knife and the sealed locker ————————————————
+  // Two dives, two depths. The knife lies by the capstan on the bow deck —
+  // a working dive at ~13 m. The mate's chest went down with the torn stern
+  // and sits on the sand at ~24 m, where the light gives up: the wreck's
+  // depth is the price of what's inside.
+
+  // A galley knife, still in its sheath, laid flat on the deck planking
+  const knife = new THREE.Group()
+  {
+    const sheath = new THREE.Mesh(new THREE.CapsuleGeometry(0.035, 0.22, 4, 8), mat.leather)
+    sheath.scale.set(1, 1, 0.55)
+    knife.add(sheath)
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.016, 0.032), mat.brass)
+    guard.position.y = 0.135
+    knife.add(guard)
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.024, 0.11, 8), mat.timber)
+    grip.position.y = 0.19
+    knife.add(grip)
+    knife.rotation.set(0.06, 0.9, Math.PI / 2 - 0.1)
+    knife.position.set(0.62, 0.05, 4.35)
+    bow.add(knife)
+  }
+
+  // The mate's chest: iron-banded, roped shut, settled into the sand a
+  // couple of metres off the stern's torn ribs
+  const chest = new THREE.Group()
+  chest.position.set(6.8, sandHeight(6.8, -15.5) + 0.2, -15.5)
+  chest.rotation.set(0.05, 0.5, 0.07)
+  group.add(chest)
+
+  const chestBody = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.42, 0.68), mat.plank)
+  chest.add(chestBody)
+  for (const bx of [-0.38, 0.38]) {
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.44, 0.7), mat.iron)
+    band.position.x = bx
+    chest.add(band)
+  }
+
+  // Lid pivots at the back edge so the knife's work swings it wide
+  const lid = new THREE.Group()
+  lid.position.set(0, 0.21, -0.34)
+  chest.add(lid)
+  const lidSlab = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.09, 0.68), mat.plank)
+  lidSlab.position.set(0, 0.045, 0.34)
+  lid.add(lidSlab)
+  for (const bx of [-0.38, 0.38]) {
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.11, 0.7), mat.iron)
+    band.position.set(bx, 0.045, 0.34)
+    lid.add(band)
+  }
+
+  // The rope lashing — what stands between bare hands and the mate's things
+  const lashing = new THREE.Group()
+  for (const lx of [-0.18, 0.18]) {
+    const wrap = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.028, 6, 18), mat.rope)
+    wrap.rotation.y = Math.PI / 2
+    wrap.scale.set(1, 0.72, 0.82)
+    wrap.position.set(lx, 0, 0)
+    lashing.add(wrap)
+  }
+  chest.add(lashing)
+
+  // What's inside, sitting just proud of the chest's open top: an oilskin
+  // pouch over the mate's spear. Hidden by the closed lid until it's cut.
+  const contents = new THREE.Group()
+  contents.position.y = 0.19
+  chest.add(contents)
+  const spearProp = buildSpear()
+  spearProp.scale.setScalar(0.62)
+  spearProp.rotation.set(0.12, 0.3, Math.PI / 2 - 0.06)
+  contents.add(spearProp)
+  const pouch = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.08, 0.17), mat.leather)
+  pouch.position.set(0.16, 0.06, -0.16)
+  pouch.rotation.y = 0.4
+  contents.add(pouch)
+
   // —— growth and rubble, planted by dropping rays onto the rock ——
   const clumps: { pivot: THREE.Group; phase: number }[] = []
   {
@@ -838,6 +933,14 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     }
   }
 
+  // —— salvage state —————————————————————————————————————————
+  let knifeTaken = false
+  let locker: 'sealed' | 'cut' | 'stripped' = 'sealed'
+  /** Time the lashing was cut, so the lid can swing open over a beat. */
+  let lidFrom = -1
+  const knifeWorld = new THREE.Vector3()
+  const lockerWorld = new THREE.Vector3()
+
   // —— per-frame ————————————————————————————————————————————
   const centre = new THREE.Vector3(opts.x, -12, opts.z)
   /** A little below the mast head, so the marker sits on spar you can see. */
@@ -852,6 +955,14 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   const sailPos = sailGeo.attributes.position
 
   function update(time: number, camera: THREE.Camera) {
+    // Once the lashing parts, the lid swings wide on its own — no hand model,
+    // just the chest giving up its weight to buoyancy and a nudge
+    if (locker !== 'sealed') {
+      if (lidFrom < 0) lidFrom = time
+      const f = Math.min(1, (time - lidFrom) / 1.6)
+      lid.rotation.x = -1.78 * (f * f * (3 - 2 * f))
+    }
+
     for (const item of flotsam) {
       if (item.taken) continue
       const water = sampleOcean(opts.x + item.x, opts.z + item.z, time)
@@ -903,5 +1014,55 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     return true
   }
 
-  return { group, centre, beacon, resolve, update, provisionSpot, takeProvision }
+  /** World position of the knife on the bow deck, or null once it's yours. */
+  function knifeSpot() {
+    return knifeTaken ? null : knife.getWorldPosition(knifeWorld)
+  }
+
+  /** Work the knife free of the deck — one time only. */
+  function takeKnife() {
+    if (knifeTaken) return false
+    knifeTaken = true
+    knife.visible = false
+    return true
+  }
+
+  /** World position of the mate's chest by the stern. */
+  function lockerSpot() {
+    return chest.getWorldPosition(lockerWorld)
+  }
+
+  /** Part the rope lashing: the lid swings wide. Needs the knife, one time. */
+  function cutLashing() {
+    if (locker !== 'sealed') return false
+    locker = 'cut'
+    chest.remove(lashing)
+    return true
+  }
+
+  /** Take the pouch and the spear, leaving the empty chest to the dark. */
+  function stripLocker() {
+    if (locker !== 'cut') return false
+    locker = 'stripped'
+    contents.visible = false
+    return true
+  }
+
+  return {
+    group,
+    centre,
+    beacon,
+    resolve,
+    update,
+    provisionSpot,
+    takeProvision,
+    knifeSpot,
+    takeKnife,
+    lockerSpot,
+    cutLashing,
+    stripLocker,
+    get lockerState() {
+      return locker
+    },
+  }
 }

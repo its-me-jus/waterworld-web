@@ -21,7 +21,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 const damp = (current: number, target: number, lambda: number, dt: number) =>
   current + (target - current) * (1 - Math.exp(-lambda * dt))
 
-export type DeathCause = 'drowned' | 'starved'
+export type DeathCause = 'drowned' | 'starved' | 'taken'
 
 export type VitalsHooks = {
   /** Quiet one-liners ("Your stomach knots."). */
@@ -41,6 +41,14 @@ export function createVitals(app: HTMLElement, hooks: VitalsHooks) {
   let starveClock = 0
   let dead: DeathCause | null = null
 
+  // —— the wound (Phase B) ————————————————————————————————————
+  // A bite you survive is not a number going down — it's bleeding that costs
+  // you strength and appetite until it clots. A second bite while you're
+  // still leaking is the one the ocean keeps.
+  let wounded = false
+  let woundClock = 0
+  const WOUND_TIME = 150
+
   // Whisper latches — each line fires once per decline, re-arms on recovery
   let saidKnot = false
   let saidGnaw = false
@@ -56,8 +64,13 @@ export function createVitals(app: HTMLElement, hooks: VitalsHooks) {
   wearyVeil.id = 'weary-veil'
   app.appendChild(wearyVeil)
 
+  const woundVeil = document.createElement('div')
+  woundVeil.id = 'wound-veil'
+  app.appendChild(woundVeil)
+
   let veilBreath = 0
   let veilWeary = 0
+  let veilWound = 0
 
   const limits: SwimLimits = { speedScale: 1, climbScale: 1, cadenceScale: 1, wobble: 0 }
 
@@ -89,8 +102,18 @@ export function createVitals(app: HTMLElement, hooks: VitalsHooks) {
       breath = Math.min(1, breath + (dt / 2.8) * (0.45 + 0.55 * energy))
     }
 
+    // —— the wound ————————————————————————————————————————————
+    if (wounded) {
+      woundClock += dt
+      if (woundClock > WOUND_TIME) {
+        wounded = false
+        hooks.whisper('The bleeding slows.')
+      }
+    }
+
     // —— hunger ————————————————————————————————————————————
-    hunger = Math.max(0, hunger - dt / 720)
+    // An open wound feeds the sea a little of you too
+    hunger = Math.max(0, hunger - (dt / 720) * (wounded ? 1.35 : 1))
     if (hunger < 0.55 && !saidKnot) {
       saidKnot = true
       hooks.whisper('Your stomach knots.')
@@ -101,8 +124,10 @@ export function createVitals(app: HTMLElement, hooks: VitalsHooks) {
     }
 
     // —— energy ————————————————————————————————————————————
-    // Hunger sets the ceiling: a starving body can't hold strength
-    const cap = hunger < 0.3 ? 0.35 + 0.65 * (hunger / 0.3) : 1
+    // Hunger sets the ceiling: a starving body can't hold strength. Neither
+    // can a bleeding one.
+    let cap = hunger < 0.3 ? 0.35 + 0.65 * (hunger / 0.3) : 1
+    if (wounded) cap = Math.min(cap, 0.6)
     if (hunger <= 0) {
       energy -= dt / 70
     } else {
@@ -151,24 +176,53 @@ export function createVitals(app: HTMLElement, hooks: VitalsHooks) {
     veilWeary = damp(veilWeary, weary, 2.5, dt)
     wearyVeil.style.opacity = veilWeary.toFixed(3)
 
+    veilWound = damp(veilWound, wounded ? 0.6 : 0, wounded ? 4 : 1.2, dt)
+    woundVeil.style.opacity = veilWound.toFixed(3)
+    woundVeil.classList.toggle('bleeding', wounded)
+
     hooks.onBreath?.(breathShortage, submerged)
     hooks.onHunger?.(1 - hunger)
 
     return limits
   }
 
-  /** Tuning hooks for the ?breath / ?hunger URL params. */
-  function debugSet(patch: { breath?: number; hunger?: number }) {
+  /**
+   * The shark's answer when you don't have one. A first bite wounds: bleeding
+   * that taxes strength and appetite until it clots. A second bite while the
+   * wound is still open ends the run — the ocean keeps you.
+   */
+  function bite() {
+    if (dead) return
+    if (wounded) {
+      dead = 'taken'
+      return
+    }
+    wounded = true
+    woundClock = 0
+    energy = Math.min(energy, 0.5)
+    hooks.whisper('Its teeth rake your side. The water tastes of iron.')
+  }
+
+  /** Tuning hooks for the ?breath / ?hunger / ?wound URL params. */
+  function debugSet(patch: { breath?: number; hunger?: number; wound?: boolean }) {
     if (patch.breath !== undefined) breath = clamp(patch.breath, 0, 1)
     if (patch.hunger !== undefined) hunger = clamp(patch.hunger, 0, 1)
+    if (patch.wound) {
+      wounded = true
+      woundClock = 0
+    }
   }
 
   return {
     update,
     feed,
+    bite,
     debugSet,
     get dead() {
       return dead
+    },
+    get wounded() {
+      return wounded
     },
     get breath() {
       return breath

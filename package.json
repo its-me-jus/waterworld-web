@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "shot": "node scripts/shot.mjs",
     "shot:survival": "node scripts/shot-survival.mjs",
+    "shot:salvage": "node scripts/shot-salvage.mjs",
     "audio": "node scripts/gen-audio.mjs",
     "audio:lyria": "node scripts/gen-audio-lyria.mjs"
   },

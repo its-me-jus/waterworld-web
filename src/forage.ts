@@ -73,11 +73,15 @@ export function createForage(app: HTMLElement, hud: Hud, vitals: Vitals, deps: F
     interact()
   })
 
-  function update(dt: number, camera: THREE.PerspectiveCamera, view: PlayerFrame) {
+  /**
+   * `claimed`: another interaction layer (the wreck salvage) has the prompt
+   * and the F key this frame — stay out of its way.
+   */
+  function update(dt: number, camera: THREE.PerspectiveCamera, view: PlayerFrame, claimed = false) {
     cooldown = Math.max(0, cooldown - dt)
     pending = null
 
-    if (!vitals.dead) {
+    if (!vitals.dead && !claimed) {
       // The crate wins the prompt when both are in reach
       const spot = deps.provisionSpot()
       if (spot && view.submersion < 0.7) {
@@ -93,6 +97,13 @@ export function createForage(app: HTMLElement, hud: Hud, vitals: Vitals, deps: F
         const hit = deps.fish.nearest(camera.position, GRAB_RANGE)
         if (hit) pending = { kind: 'fish', index: hit.index }
       }
+    }
+
+    // Salvage owns the prompt and the palm button this frame — leave the
+    // prompt alone, but don't leave our button hanging over theirs
+    if (claimed) {
+      grabBtn.classList.remove('show')
+      return
     }
 
     const key = deps.mobile ? '✋' : 'F'

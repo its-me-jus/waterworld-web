@@ -2,15 +2,21 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 
 /**
- * The shark — a rare event, not an encounter.
+ * The shark — a rare event that becomes a question.
  *
- * Design lock: predators exist in this ocean, but combat stays off until the
- * player chooses it (a spear, Phase B). With permadeath, an unanswerable
- * killer would be cheap. So for now the shark is foreshadowing: every few
- * minutes a big shape slides out of the murk, takes one slow circle through
- * your water — never closer than ~17 m, always below you — and is gone again.
+ * Design lock: predators exist in this ocean, but combat only arrives once
+ * the player can answer it (the mate's spear, Phase B). With permadeath, an
+ * unanswerable killer would be cheap.
  *
- * What it teaches: the deep is not empty, and you are not the top of it.
+ * Unarmed, nothing changes from Phase A: every few minutes a big shape
+ * slides out of the murk, takes one slow circle through your water — never
+ * closer than ~17 m, always below you — and is gone again. Foreshadowing.
+ *
+ * Armed, it treats you as competition: the circle tightens to ~11 m, and
+ * about two passes in three it commits — a fast run straight at you. A spear
+ * jab inside ~4 m turns it (each answer teaches it to stay away longer);
+ * let the run connect and it takes a piece of you. One wound clots. Two
+ * don't.
  */
 
 const TAU = Math.PI * 2
@@ -89,7 +95,15 @@ export type SharkOptions = {
   whisper?: (text: string) => void
   /** Debug/tuning: seconds until the first pass (?shark=8). */
   summonIn?: number
+  /** Debug/tuning: every armed pass commits to a run (?commit=1). */
+  alwaysCommit?: boolean
+  /** It has decided: a fast run straight at the swimmer. Telegraph line. */
+  onCommit?: () => void
+  /** The run connected — nobody answered. Vitals decides what it costs. */
+  onBite?: () => void
 }
+
+type Mode = 'approach' | 'circle' | 'commit' | 'retreat' | 'flee'
 
 export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
   const { root, tail } = buildShark()
@@ -97,15 +111,26 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
 
   let cooldown = opts.summonIn ?? 190 + Math.random() * 160
   let active = false
+  let armed = false
+  let strikes = 0
+
   let elapsed = 0
   let theta = 0
   let radius = 75
+  let mode: Mode = 'approach'
   let saidHello = false
+  let committed = false
+  let runT = 0
+  let runMinDist = Infinity
   let proximity = 0
+  let distance = Infinity
+  let tailBeat = 3.4
 
   const centre = new THREE.Vector3()
   const pos = new THREE.Vector3()
   const heading = new THREE.Vector3()
+  const desired = new THREE.Vector3()
+  const fleeDir = new THREE.Vector3()
   const pushable = { x: 0, y: 0, z: 0 }
 
   const APPROACH = 28
@@ -116,15 +141,60 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
     active = true
     elapsed = 0
     saidHello = false
+    committed = false
     theta = Math.random() * TAU
     radius = 75
+    mode = 'approach'
     centre.copy(camera.position)
     root.visible = true
+  }
+
+  function endEncounter(calm: number) {
+    active = false
+    root.visible = false
+    proximity = 0
+    distance = Infinity
+    const base = armed ? 230 + Math.random() * 170 : 280 + Math.random() * 340
+    cooldown = base * calm
+  }
+
+  function startCommit() {
+    mode = 'commit'
+    runT = 0
+    runMinDist = Infinity
+    opts.onCommit?.()
+  }
+
+  function breakAway(struck: boolean) {
+    mode = 'flee'
+    runT = 0
+    // Away from the swimmer and down — struck ones go harder and erratic
+    fleeDir.subVectors(pos, centre)
+    fleeDir.y = 0
+    if (fleeDir.lengthSq() < 1e-6) fleeDir.set(1, 0, 0)
+    fleeDir.normalize()
+    if (struck) {
+      fleeDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), (Math.random() - 0.5) * 1.2)
+    }
+  }
+
+  /** A spear jab landing: the answer Phase B gives the question. */
+  function strike() {
+    if (!active || mode === 'flee') return false
+    strikes++
+    breakAway(true)
+    return true
+  }
+
+  /** Phase B: the player can answer now, so the question gets sharper. */
+  function arm() {
+    armed = true
   }
 
   function update(dt: number, time: number, camera: THREE.PerspectiveCamera, hasDived: boolean) {
     if (!active) {
       proximity = 0
+      distance = Infinity
       // Never in the first hundred seconds, and never before the player's
       // first dive — the deep earns its reputation after you've seen it.
       // A debug summon skips both courtesies.
@@ -136,28 +206,76 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
     }
 
     elapsed += dt
-    // Approach → one slow circle → leave, all in the radius
-    if (elapsed < APPROACH) {
-      const f = elapsed / APPROACH
-      radius = 75 + (17 - 75) * (f * f * (3 - 2 * f))
-    } else if (elapsed < CIRCLE) {
-      radius = 17
-    } else {
-      radius = 17 + ((elapsed - CIRCLE) / (DURATION - CIRCLE)) * 100
+    const circleR = armed ? 11.5 : 17
+
+    if (mode === 'approach') {
+      const f = Math.min(1, elapsed / APPROACH)
+      radius = 75 + (circleR - 75) * (f * f * (3 - 2 * f))
+      if (elapsed >= APPROACH) mode = 'circle'
+    } else if (mode === 'circle') {
+      radius = circleR
+      // Armed and halfway round: it weighs you up, and usually commits
+      if (armed && !committed && elapsed > APPROACH + (CIRCLE - APPROACH) * 0.55) {
+        committed = true
+        if (opts.alwaysCommit || Math.random() < 0.65) startCommit()
+      }
+      if (elapsed >= CIRCLE) mode = 'retreat'
     }
 
-    // Keep the ring loosely centred on the swimmer during the approach, so
-    // the pass lands close even if they're making way
-    const trail = elapsed < CIRCLE ? 0.05 : 0.01
-    centre.x += (camera.position.x - centre.x) * Math.min(1, dt * trail)
-    centre.z += (camera.position.z - centre.z) * Math.min(1, dt * trail)
+    if (mode === 'commit') {
+      runT += dt
+      // A fast, slightly stiff pursuit curve — you have maybe two seconds
+      desired.subVectors(camera.position, pos).normalize()
+      heading.lerp(desired, Math.min(1, dt * 2.4)).normalize()
+      pos.addScaledVector(heading, 8.4 * dt)
 
-    theta += (3.6 / Math.max(radius, 8)) * dt
-    pos.set(
-      centre.x + Math.cos(theta) * radius,
-      Math.min(-4.5, -9.5 + Math.sin(elapsed * 0.35) * 2.2),
-      centre.z + Math.sin(theta) * radius,
-    )
+      distance = camera.position.distanceTo(pos)
+      runMinDist = Math.min(runMinDist, distance)
+
+      if (distance < 1.9) {
+        opts.onBite?.()
+        breakAway(false)
+      } else if ((runT > 3 && distance > runMinDist + 1.5) || runT > 9) {
+        // Missed — either you slipped it or it thought better of the angle
+        breakAway(false)
+      }
+    } else if (mode === 'flee') {
+      runT += dt
+      const speed = strikes > 0 && runT < 2 ? 12 : 9
+      pos.addScaledVector(fleeDir, speed * dt)
+      pos.y = Math.max(pos.y - dt * (2.2 + strikes), -16)
+      heading.copy(fleeDir)
+      if (runT > 5.5) {
+        // Every answered pass teaches it to leave your water alone longer
+        endEncounter(Math.pow(1.7, strikes) * 0.8)
+        return
+      }
+    } else {
+      // Circle & retreat ride the ring, as they always have
+      if (mode === 'retreat') {
+        radius = circleR + ((elapsed - CIRCLE) / (DURATION - CIRCLE)) * 100
+        if (elapsed > DURATION) {
+          endEncounter(1)
+          return
+        }
+      }
+
+      // Keep the ring loosely centred on the swimmer during the approach, so
+      // the pass lands close even if they're making way
+      const trail = elapsed < CIRCLE ? 0.05 : 0.01
+      centre.x += (camera.position.x - centre.x) * Math.min(1, dt * trail)
+      centre.z += (camera.position.z - centre.z) * Math.min(1, dt * trail)
+
+      theta += (3.6 / Math.max(radius, 8)) * dt
+      pos.set(
+        centre.x + Math.cos(theta) * radius,
+        Math.min(-4.5, -9.5 + Math.sin(elapsed * 0.35) * 2.2),
+        centre.z + Math.sin(theta) * radius,
+      )
+      // Tangent of the circle in the direction theta advances
+      heading.set(-Math.sin(theta), 0, Math.cos(theta))
+      distance = camera.position.distanceTo(pos)
+    }
 
     // Stay out of the reef if the pass happens over the wreck
     if (opts.resolve) {
@@ -169,30 +287,24 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
     }
 
     root.position.copy(pos)
-    // Tangent of the circle in the direction theta advances
-    heading.set(-Math.sin(theta), 0, Math.cos(theta))
-    root.lookAt(pos.x + heading.x, pos.y, pos.z + heading.z)
+    root.lookAt(pos.x + heading.x, pos.y + heading.y, pos.z + heading.z)
 
-    tail.rotation.y = Math.sin(time * 3.4) * 0.4
+    const tailTarget = mode === 'flee' ? 11 : mode === 'commit' ? 7.5 : 3.4
+    tailBeat += (tailTarget - tailBeat) * Math.min(1, dt * 3)
+    tail.rotation.y = Math.sin(time * tailBeat) * (mode === 'flee' ? 0.55 : 0.4)
     root.rotation.z = Math.sin(time * 0.9) * 0.06
 
-    const dist = camera.position.distanceTo(pos)
-    proximity = Math.max(0, 1 - dist / 55)
-    if (!saidHello && dist < 32) {
+    proximity = Math.max(0, 1 - distance / 55)
+    if (!saidHello && distance < 32) {
       saidHello = true
       opts.whisper?.('Something large passes below.')
-    }
-
-    if (elapsed > DURATION) {
-      active = false
-      root.visible = false
-      proximity = 0
-      cooldown = 280 + Math.random() * 340
     }
   }
 
   return {
     update,
+    strike,
+    arm,
     /** 0 far/absent → 1 right under you. Feeds the low audio pulse. */
     get proximity() {
       return proximity
@@ -200,5 +312,21 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
     get active() {
       return active
     },
+    get armed() {
+      return armed
+    },
+    get mode() {
+      return mode
+    },
+    /** Metres from the swimmer's eye — jab range checks and tuning hooks. */
+    get distance() {
+      return distance
+    },
+    /** Live world position (internal vector, valid until next update). */
+    get position() {
+      return pos
+    },
   }
 }
+
+export type Shark = ReturnType<typeof createShark>

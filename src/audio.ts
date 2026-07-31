@@ -282,6 +282,50 @@ export function createOceanAudio() {
     src.start(0)
   }
 
+  /** A hard contact underwater — the spear finding flesh, or teeth finding you. */
+  function impact(intensity: number) {
+    if (!ctx || !master) return
+    const now = ctx.currentTime
+
+    // The blow itself: a fast low drop you feel in the jaw
+    const osc = ctx.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(120, now)
+    osc.frequency.exponentialRampToValueAtTime(34, now + 0.16)
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, now)
+    g.gain.exponentialRampToValueAtTime(0.75 * intensity, now + 0.012)
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.26)
+    osc.connect(g)
+    g.connect(master)
+    osc.start(now)
+    osc.stop(now + 0.3)
+
+    // The water the hit shoves aside
+    const length = Math.floor(ctx.sampleRate * 0.3)
+    const buffer = ctx.createBuffer(1, length, ctx.sampleRate)
+    const data = buffer.getChannelData(0)
+    let last = 0
+    for (let i = 0; i < length; i++) {
+      const t = i / length
+      const white = Math.random() * 2 - 1
+      last = (last + 0.05 * white) / 1.05
+      data[i] = last * 3.2 * Math.exp(-t * 7)
+    }
+    const src = ctx.createBufferSource()
+    src.buffer = buffer
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.frequency.value = 300
+    filter.Q.value = 0.8
+    const ng = ctx.createGain()
+    ng.gain.value = 0.5 * intensity
+    src.connect(filter)
+    filter.connect(ng)
+    ng.connect(master)
+    src.start(now)
+  }
+
   /** Vitals, once per frame: breath shortage drives the heartbeat, hunger the growls. */
   function setVitals(shortage: { breath: number; hunger: number }) {
     breathShortage = shortage.breath
@@ -410,5 +454,5 @@ export function createOceanAudio() {
 
   bindUnlock()
 
-  return { unlock, update, setVitals, setSeaWeight, setDanger, dim }
+  return { unlock, update, setVitals, setSeaWeight, setDanger, dim, impact }
 }
