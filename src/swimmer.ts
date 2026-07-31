@@ -637,6 +637,22 @@ export function createSwimmer(camera: THREE.Camera) {
   let prone = 0
   let kick = 0
 
+  /**
+   * The ship's immersion suit, pulled on over the dive kit. Survival orange is
+   * the one colour the murk doesn't take, so the change reads instantly at any
+   * depth — and it's the only cue the run gives that the cold slowed down.
+   */
+  function setSurvivalSuit(on: boolean) {
+    suit.color.set(on ? 0xd4691f : 0x27384a)
+    suitPanel.color.set(on ? 0xb2531a : 0x33495e)
+    suit.emissive.set(on ? 0x2a1004 : 0x000000)
+    suit.emissiveIntensity = on ? 0.45 : 0
+    suitPanel.emissive.set(on ? 0x230d03 : 0x000000)
+    suitPanel.emissiveIntensity = on ? 0.4 : 0
+    // Sealed cuffs and a heavier glove — the suit swallows the wrist seam
+    glove.color.set(on ? 0x16191f : 0x1b222b)
+  }
+
   function update(dt: number, time: number, frame: PlayerFrame, pitch: number, roll: number) {
     // Head can look anywhere; the body only partly follows
     rig.rotation.x = -pitch * 0.72
@@ -758,5 +774,5 @@ export function createSwimmer(camera: THREE.Camera) {
     }
   }
 
-  return { rig, update }
+  return { rig, update, setSurvivalSuit }
 }

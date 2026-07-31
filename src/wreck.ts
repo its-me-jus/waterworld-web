@@ -762,6 +762,64 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     bow.add(knife)
   }
 
+  // —— the bow hold: the gear locker ————————————————————————————
+  // One deck down, in the dark under the planking, where a ship keeps the
+  // things nobody expects to need. The door swelled shut years ago; the knife
+  // is what gets it open. Inside hangs the mate's immersion suit — the reason
+  // the water stops being a clock.
+  const gear = new THREE.Group()
+  gear.position.set(1.15, -2.35, 1.4)
+  gear.rotation.set(0.06, -0.42, 0.03)
+  bow.add(gear)
+
+  const gearCase = new THREE.Mesh(new THREE.BoxGeometry(0.92, 1.36, 0.62), mat.plank)
+  gear.add(gearCase)
+  for (const gy of [-0.52, 0.52]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.1, 0.68), mat.timber)
+    rail.position.y = gy
+    gear.add(rail)
+  }
+
+  // Door hinged on its left stile, so prying it swings the dark open at you
+  const gearDoor = new THREE.Group()
+  gearDoor.position.set(-0.44, 0, 0.31)
+  gear.add(gearDoor)
+  const gearPanel = new THREE.Mesh(new THREE.BoxGeometry(0.86, 1.3, 0.07), mat.plank)
+  gearPanel.position.x = 0.43
+  gearDoor.add(gearPanel)
+  const gearLatch = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.06), mat.iron)
+  gearLatch.position.set(0.8, 0.02, 0.05)
+  gearDoor.add(gearLatch)
+
+  // What hangs inside: bright survival neoprene, the one colour down here that
+  // the murk can't fully take
+  const suitFabric = new THREE.MeshStandardMaterial({
+    color: 0xd4691f,
+    roughness: 0.72,
+    emissive: 0x2a1004,
+    emissiveIntensity: 0.7,
+  })
+  const suitHanging = new THREE.Group()
+  suitHanging.position.set(0.08, -0.05, 0.02)
+  gear.add(suitHanging)
+  const suitTorso = new THREE.Mesh(new THREE.CapsuleGeometry(0.2, 0.5, 4, 10), suitFabric)
+  suitTorso.scale.set(1, 1, 0.55)
+  suitTorso.position.y = 0.16
+  suitHanging.add(suitTorso)
+  for (const sx of [-1, 1]) {
+    const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.07, 0.42, 3, 8), suitFabric)
+    sleeve.position.set(sx * 0.2, -0.06, 0)
+    sleeve.rotation.z = sx * 0.22
+    suitHanging.add(sleeve)
+    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.085, 0.44, 3, 8), suitFabric)
+    leg.position.set(sx * 0.1, -0.52, 0)
+    suitHanging.add(leg)
+  }
+  const suitHood = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), suitFabric)
+  suitHood.position.y = 0.5
+  suitHood.scale.set(1, 0.85, 0.8)
+  suitHanging.add(suitHood)
+
   // The mate's chest: iron-banded, roped shut, settled into the sand a
   // couple of metres off the stern's torn ribs
   const chest = new THREE.Group()
@@ -951,10 +1009,14 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   // —— salvage state —————————————————————————————————————————
   let knifeTaken = false
   let locker: 'sealed' | 'cut' | 'stripped' = 'sealed'
+  let gearState: 'shut' | 'open' | 'stripped' = 'shut'
   /** Time the lashing was cut, so the lid can swing open over a beat. */
   let lidFrom = -1
+  /** Time the gear door was pried, so it swings rather than snaps. */
+  let gearFrom = -1
   const knifeWorld = new THREE.Vector3()
   const lockerWorld = new THREE.Vector3()
+  const gearWorld = new THREE.Vector3()
 
   // —— per-frame ————————————————————————————————————————————
   const centre = new THREE.Vector3(opts.x, -12, opts.z)
@@ -976,6 +1038,13 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
       if (lidFrom < 0) lidFrom = time
       const f = Math.min(1, (time - lidFrom) / 1.6)
       lid.rotation.x = -1.78 * (f * f * (3 - 2 * f))
+    }
+
+    // The hold door, once the knife has persuaded it
+    if (gearState !== 'shut') {
+      if (gearFrom < 0) gearFrom = time
+      const f = Math.min(1, (time - gearFrom) / 1.9)
+      gearDoor.rotation.y = 1.42 * (f * f * (3 - 2 * f))
     }
 
     for (const item of flotsam) {
@@ -1063,6 +1132,26 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     return true
   }
 
+  /** World position of the gear locker in the bow hold. */
+  function gearSpot() {
+    return gear.getWorldPosition(gearWorld)
+  }
+
+  /** Force the swollen door. Needs the knife; one time only. */
+  function pryGear() {
+    if (gearState !== 'shut') return false
+    gearState = 'open'
+    return true
+  }
+
+  /** Take the immersion suit off its hook — the locker keeps nothing else. */
+  function takeSuit() {
+    if (gearState !== 'open') return false
+    gearState = 'stripped'
+    suitHanging.visible = false
+    return true
+  }
+
   /** A new run: the knife is back on the deck, the locker roped shut, the
    *  provision crate riding the swell again. */
   function reset() {
@@ -1071,6 +1160,10 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     locker = 'sealed'
     lidFrom = -1
     lid.rotation.x = 0
+    gearState = 'shut'
+    gearFrom = -1
+    gearDoor.rotation.y = 0
+    suitHanging.visible = true
     if (lashing.parent !== chest) chest.add(lashing)
     contents.visible = true
     if (provisionItem) {
@@ -1094,9 +1187,15 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     lockerSpot,
     cutLashing,
     stripLocker,
+    gearSpot,
+    pryGear,
+    takeSuit,
     reset,
     get lockerState() {
       return locker
+    },
+    get gearLockerState() {
+      return gearState
     },
   }
 }

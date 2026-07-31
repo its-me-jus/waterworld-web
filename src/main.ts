@@ -222,12 +222,18 @@ loot = createWreckLoot(app, camera, hud, vitals, {
   lockerState: () => wreck.lockerState,
   cutLashing: wreck.cutLashing,
   stripLocker: wreck.stripLocker,
+  gearSpot: wreck.gearSpot,
+  gearState: () => wreck.gearLockerState,
+  pryGear: wreck.pryGear,
+  takeSuit: wreck.takeSuit,
+  onSuit: () => swimmer.setSurvivalSuit(true),
   shark,
   thump: (i) => oceanAudio.impact(i),
 })
-// ?knife=1 skips the deck dive, ?spear=1 starts armed — both for tuning
+// ?knife=1 skips the deck dive, ?spear=1 starts armed, ?suit=1 already dressed
 if (params.has('knife')) loot.grant('knife')
 if (params.has('spear')) loot.grant('spear')
+if (params.has('suit')) loot.grant('suit')
 
 const forage = createForage(hud, vitals, {
   interactions,
@@ -242,6 +248,7 @@ function restart() {
   salvage.reset(new THREE.Vector3(player.x, player.y, player.z))
   wreck.reset()
   loot.reset()
+  swimmer.setSurvivalSuit(false)
   hud.clearDead()
   hud.setPrompt(null)
   touch.setAction(null)

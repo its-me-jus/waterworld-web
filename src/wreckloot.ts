@@ -4,13 +4,16 @@ import type { Interactions } from './interact'
 import type { PlayerFrame } from './player'
 import type { Shark } from './shark'
 import { buildSpear } from './spear'
-import { bite, type Vitals } from './survival'
+import { bite, wearSuit, type Vitals } from './survival'
 
 /**
  * Wreck loot — the wreck gives up its depth in three stages:
  *
  *  - The knife (~13 m): a galley knife in its sheath, lying by the capstan
  *    on the bow deck. A working dive. It cuts rope; that's all you ask of it.
+ *  - The gear locker (~17 m): one deck down in the bow hold, a door swollen
+ *    shut. The knife forces it. Inside hangs the ship's immersion suit, and
+ *    with it on, the cold stops being the thing that ends every run.
  *  - The sealed locker (~24 m): the mate's chest, roped shut on the sand by
  *    the torn stern, where the light gives up. The knife parts the lashing;
  *    inside are an oilskin pouch and the mate's spear.
@@ -25,6 +28,8 @@ import { bite, type Vitals } from './survival'
 
 export type LockerState = 'sealed' | 'cut' | 'stripped'
 
+export type GearState = 'shut' | 'open' | 'stripped'
+
 export type WreckLootDeps = {
   interactions: Interactions
   knifeSpot: () => THREE.Vector3 | null
@@ -33,6 +38,12 @@ export type WreckLootDeps = {
   lockerState: () => LockerState
   cutLashing: () => boolean
   stripLocker: () => boolean
+  gearSpot: () => THREE.Vector3
+  gearState: () => GearState
+  pryGear: () => boolean
+  takeSuit: () => boolean
+  /** Dress the swimmer in survival orange once the suit is on. */
+  onSuit: () => void
   shark: Shark
   /** Contact sound: the spear landing, or the bite you didn't answer. */
   thump: (intensity: number) => void
@@ -40,6 +51,7 @@ export type WreckLootDeps = {
 
 const KNIFE_RANGE = 2.6
 const LOCKER_RANGE = 2.9
+const GEAR_RANGE = 2.4
 const JAB_RANGE = 4.2
 
 const UP = new THREE.Vector3(0, 1, 0)
@@ -148,6 +160,47 @@ export function createWreckLoot(
     },
   })
 
+  // The gear locker: same three-state shape as the chest — a door you can't
+  // move, a door the knife moves, and what's hanging behind it
+  const gearPos = new THREE.Vector3()
+  const gearNear = () =>
+    vitals.alive &&
+    deps.gearState() !== 'stripped' &&
+    camera.position.distanceTo(deps.gearSpot()) < GEAR_RANGE
+
+  deps.interactions.add({
+    position: gearPos,
+    verb: 'Haul at',
+    label: 'the hold door',
+    radius: GEAR_RANGE,
+    available: () => gearNear() && deps.gearState() === 'shut' && !hasKnife,
+    use: () => hud.whisper('Swollen shut, and years of it. You need an edge.'),
+  })
+  deps.interactions.add({
+    position: gearPos,
+    verb: 'Pry open',
+    label: 'the hold door',
+    radius: GEAR_RANGE,
+    available: () => gearNear() && deps.gearState() === 'shut' && hasKnife,
+    use: () => {
+      if (!deps.pryGear()) return
+      hud.whisper('The door gives, trailing a slow gout of trapped air.')
+    },
+  })
+  deps.interactions.add({
+    position: gearPos,
+    verb: 'Take',
+    label: 'the immersion suit',
+    radius: GEAR_RANGE,
+    available: () => gearNear() && deps.gearState() === 'open',
+    use: () => {
+      if (!deps.takeSuit()) return
+      wearSuit(vitals, hud.whisper)
+      deps.onSuit()
+      hud.whisper('Ship’s issue, never worn. The sea will have to work harder.')
+    },
+  })
+
   // The jab: the prompt rides the shark itself, so it only ever appears while
   // a run is genuinely close — the one prompt that keeps you alive
   const jabPos = new THREE.Vector3()
@@ -173,8 +226,15 @@ export function createWreckLoot(
     deps.thump(vitals.alive ? 0.85 : 1.2)
   }
 
-  /** URL tuning: ?knife=1 starts with the knife, ?spear=1 fully armed. */
-  function grant(what: 'knife' | 'spear') {
+  /** URL tuning: ?knife=1, ?spear=1 fully armed, ?suit=1 already dressed. */
+  function grant(what: 'knife' | 'spear' | 'suit') {
+    if (what === 'suit') {
+      deps.pryGear()
+      deps.takeSuit()
+      wearSuit(vitals)
+      deps.onSuit()
+      return
+    }
     if (what === 'spear') {
       hasKnife = true
       deps.takeKnife()
@@ -190,6 +250,7 @@ export function createWreckLoot(
     const knife = deps.knifeSpot()
     if (knife) knifePos.copy(knife)
     lockerPos.copy(deps.lockerSpot())
+    gearPos.copy(deps.gearSpot())
     if (deps.shark.active) jabPos.copy(deps.shark.position)
 
     // Carried spear: stroke sway, plus the thrust when you answer a run
