@@ -607,13 +607,16 @@ console.log('—— Your run (wreck loot → swim for island) ——————
 }
 
 console.log('')
-console.log('Path ranking by warmth margin on arrival (then reach rate):')
+console.log('Path ranking by warmth margin on arrival (then freeze grace):')
 table
   .filter((t) => t.path.id !== 'wreck-camp')
   .sort((a, b) => {
     const aw = a.s.avgWarmthOnArrival ?? -1
     const bw = b.s.avgWarmthOnArrival ?? -1
     if (bw !== aw) return bw - aw
+    const ag = a.s.avgFreezeGrace ?? 999
+    const bg = b.s.avgFreezeGrace ?? 999
+    if (ag !== bg) return bg - ag
     return b.s.reachRate - a.s.reachRate
   })
   .forEach((t, i) => {
