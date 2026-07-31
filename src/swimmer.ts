@@ -74,101 +74,234 @@ function samplePose(keys: Key[], phase: number, out: Pose) {
 // —— hands ————————————————————————————————————————————————
 
 const X_AXIS = new THREE.Vector3(1, 0, 0)
+const Y_AXIS = new THREE.Vector3(0, 1, 0)
 const Z_AXIS = new THREE.Vector3(0, 0, 1)
 
-/** One bone in a finger: [end-to-end length, radius, extra curl at its joint]. */
-type Bone = [number, number, number]
-
-/** Index → pinky, laid out across the palm away from the thumb. */
-const FINGERS: { x: number; fan: number; bones: Bone[] }[] = [
-  { x: -0.03, fan: -0.11, bones: [[0.044, 0.0118, 0.2], [0.032, 0.0104, 0.3]] },
-  { x: -0.01, fan: -0.03, bones: [[0.048, 0.012, 0.17], [0.035, 0.0106, 0.28]] },
-  { x: 0.01, fan: 0.05, bones: [[0.045, 0.0113, 0.19], [0.032, 0.01, 0.32]] },
-  { x: 0.029, fan: 0.14, bones: [[0.036, 0.0098, 0.24], [0.026, 0.0088, 0.36]] },
+/** Finger: root x, fan angle, [total length, base radius, tip radius, cup curl]. */
+const FINGERS: { x: number; fan: number; length: number; r0: number; r1: number; curl: number }[] = [
+  { x: -0.03, fan: -0.09, length: 0.092, r0: 0.0116, r1: 0.0078, curl: 0.28 },
+  { x: -0.01, fan: -0.02, length: 0.1, r0: 0.0122, r1: 0.0082, curl: 0.24 },
+  { x: 0.01, fan: 0.045, length: 0.094, r0: 0.0114, r1: 0.0076, curl: 0.28 },
+  { x: 0.029, fan: 0.12, length: 0.074, r0: 0.0096, r1: 0.0064, curl: 0.34 },
 ]
 
+type HandParts = { body: THREE.BufferGeometry; nails: THREE.BufferGeometry }
+
 /**
- * A hand with actual fingers, merged down to one geometry. Canonical form is the
- * right hand: wrist at the origin, fingers down -Y, palm facing +Z, thumb toward
- * -X so it sits inboard the way a swimmer's thumbs face each other. Held in a
- * slight cup, which is both what a swimmer does and what keeps the silhouette
- * from reading as a mitten when a hand sweeps past the camera.
+ * Build a tapered tube along `curve` by lofting ellipses — continuous skin, no
+ * capsule seams. Cross-section is flattened (palm-thin) so fingers read as hands.
  */
-function handGeometry() {
-  const parts: THREE.BufferGeometry[] = []
-  const matrix = new THREE.Matrix4()
-  const unit = new THREE.Vector3(1, 1, 1)
-  const joint = new THREE.Vector3()
-  const dir = new THREE.Vector3()
-  const mid = new THREE.Vector3()
-  const q = new THREE.Quaternion()
-  const step = new THREE.Quaternion()
+function taperedTube(
+  curve: THREE.Curve<THREE.Vector3>,
+  r0: number,
+  r1: number,
+  segs = 18,
+  radial = 12,
+  flat = 0.7,
+) {
+  const positions: number[] = []
+  const normals: number[] = []
+  const indices: number[] = []
+  const normal = new THREE.Vector3()
+  const binormal = new THREE.Vector3()
+  const tangent = new THREE.Vector3()
+  const pos = new THREE.Vector3()
+  const frameN = new THREE.Vector3()
+  const frameB = new THREE.Vector3()
 
-  /** Capsule of exact end-to-end `length`, placed by matrix. */
-  const place = (
-    length: number,
-    radius: number,
-    radial: number,
-    at: THREE.Vector3,
-    rot: THREE.Quaternion,
-    scale: THREE.Vector3 = unit,
-  ) => {
-    const geo = new THREE.CapsuleGeometry(radius, Math.max(0.002, length - radius * 2), 3, radial)
-    matrix.compose(at, rot, scale)
-    parts.push(geo.applyMatrix4(matrix))
-  }
+  // Parallel-transport a frame along the curve so the tube doesn't twist oddly
+  const frames = curve.computeFrenetFrames(segs, false)
 
-  /** Walk a chain of bones from `base`, each one bending further toward the palm. */
-  const chain = (base: THREE.Vector3, root: THREE.Quaternion, bones: Bone[], radial: number) => {
-    q.copy(root)
-    joint.copy(base)
-    for (const [length, radius, curl] of bones) {
-      // Fingers close toward +Z, so the curl is a negative turn about X
-      q.multiply(step.setFromAxisAngle(X_AXIS, -curl))
-      dir.set(0, -1, 0).applyQuaternion(q)
-      mid.copy(joint).addScaledVector(dir, length * 0.5)
-      place(length, radius, radial, mid, q)
-      joint.addScaledVector(dir, length)
+  for (let i = 0; i <= segs; i++) {
+    const t = i / segs
+    curve.getPointAt(t, pos)
+    tangent.copy(frames.tangents[i])
+    frameN.copy(frames.normals[i])
+    frameB.copy(frames.binormals[i])
+    const r = r0 + (r1 - r0) * t
+    for (let j = 0; j < radial; j++) {
+      const a = (j / radial) * Math.PI * 2
+      // Flatten along binormal (roughly palm thickness)
+      const cx = Math.cos(a) * r
+      const cy = Math.sin(a) * r * flat
+      normal.copy(frameN).multiplyScalar(cx).addScaledVector(frameB, cy)
+      positions.push(pos.x + normal.x, pos.y + normal.y, pos.z + normal.z)
+      binormal.copy(normal).normalize()
+      normals.push(binormal.x, binormal.y, binormal.z)
     }
   }
 
-  // Palm: flattened front-to-back, knuckles ending around y = -0.1
-  const palm = new THREE.CapsuleGeometry(0.03, 0.05, 4, 10)
-  palm.scale(1.38, 1, 0.5)
-  palm.translate(0, -0.05, 0)
-  parts.push(palm)
+  for (let i = 0; i < segs; i++) {
+    for (let j = 0; j < radial; j++) {
+      const a = i * radial + j
+      const b = i * radial + ((j + 1) % radial)
+      const c = (i + 1) * radial + j
+      const d = (i + 1) * radial + ((j + 1) % radial)
+      // CCW when viewed from outside
+      indices.push(a, b, c, b, d, c)
+    }
+  }
 
-  // Thenar pad — the fleshy wedge at the base of the thumb
-  place(
-    0.066,
-    0.019,
-    8,
-    new THREE.Vector3(-0.02, -0.048, 0.005),
-    q.setFromAxisAngle(Z_AXIS, -0.4),
-    new THREE.Vector3(1, 1, 0.62),
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+  geo.setIndex(indices)
+  return geo
+}
+
+/**
+ * Anatomical right hand: wrist at the origin, fingers down -Y, palm facing +Z,
+ * thumb toward -X. Fingers are single tapered tubes (not stacked capsules) so a
+ * close pass doesn't read as toy segments. Nails are separate for a gloss pass.
+ */
+function handGeometry(): HandParts {
+  const bodyParts: THREE.BufferGeometry[] = []
+  const nailParts: THREE.BufferGeometry[] = []
+  const matrix = new THREE.Matrix4()
+  const q = new THREE.Quaternion()
+  const tip = new THREE.Vector3()
+  const nailAt = new THREE.Vector3()
+  const back = new THREE.Vector3()
+  const nailQ = new THREE.Quaternion()
+
+  const lump = (at: THREE.Vector3, sx: number, sy: number, sz: number, segs = 14) => {
+    const geo = new THREE.SphereGeometry(1, segs, segs)
+    geo.scale(sx, sy, sz)
+    geo.translate(at.x, at.y, at.z)
+    bodyParts.push(geo)
+  }
+
+  const placeCap = (
+    length: number,
+    radius: number,
+    at: THREE.Vector3,
+    rot: THREE.Quaternion,
+    scale: THREE.Vector3,
+    radial = 14,
+  ) => {
+    const geo = new THREE.CapsuleGeometry(radius, Math.max(0.002, length - radius * 2), 5, radial)
+    matrix.compose(at, rot, scale)
+    bodyParts.push(geo.applyMatrix4(matrix))
+  }
+
+  /** Curved finger from knuckle, with nail on the dorsal tip. */
+  const addFinger = (
+    knuckle: THREE.Vector3,
+    root: THREE.Quaternion,
+    length: number,
+    r0: number,
+    r1: number,
+    curl: number,
+    withNail: boolean,
+  ) => {
+    const p0 = knuckle.clone()
+    const p1 = new THREE.Vector3(0, -length * 0.38, length * 0.04 * curl).applyQuaternion(root).add(knuckle)
+    const p2 = new THREE.Vector3(0, -length * 0.72, length * 0.14 * curl).applyQuaternion(root).add(knuckle)
+    const p3 = new THREE.Vector3(0, -length, length * 0.22 * curl).applyQuaternion(root).add(knuckle)
+    const curve = new THREE.CatmullRomCurve3([p0, p1, p2, p3])
+    bodyParts.push(taperedTube(curve, r0, r1, 20, 14, 0.68))
+    // Soft fingertip
+    lump(p3, r1 * 1.05, r1 * 1.15, r1 * 0.85, 12)
+
+    if (withNail) {
+      tip.copy(p3)
+      const tangent = curve.getTangentAt(1).normalize()
+      // Dorsal = roughly -Z in hand space, bent with the finger
+      back.set(0, 0, -1).applyQuaternion(root).normalize()
+      nailAt.copy(tip).addScaledVector(tangent, -r1 * 1.2).addScaledVector(back, -r1 * 0.9)
+      const xAxis = new THREE.Vector3().crossVectors(tangent, back).normalize()
+      // If tangent ≈ back, fall back to hand-local axes
+      if (xAxis.lengthSq() < 1e-6) xAxis.set(1, 0, 0).applyQuaternion(root).normalize()
+      const yAxis = tangent.clone()
+      const zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize()
+      nailQ.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis))
+      const plate = new THREE.BoxGeometry(r0 * 1.35, length * 0.22, r1 * 0.28)
+      matrix.compose(nailAt, nailQ, new THREE.Vector3(1, 1, 1))
+      nailParts.push(plate.applyMatrix4(matrix))
+      // Rounded free edge
+      const edge = new THREE.SphereGeometry(r1 * 0.55, 10, 10)
+      edge.scale(1.4, 0.7, 0.45)
+      matrix.compose(
+        tip.clone().addScaledVector(tangent, -r1 * 0.15).addScaledVector(back, -r1 * 0.75),
+        nailQ,
+        new THREE.Vector3(1, 1, 1),
+      )
+      nailParts.push(edge.applyMatrix4(matrix))
+    }
+  }
+
+  // Wrist flare into the palm
+  placeCap(
+    0.03,
+    0.02,
+    new THREE.Vector3(0, -0.012, 0.002),
+    q.identity(),
+    new THREE.Vector3(1.15, 1, 0.8),
+    16,
   )
 
+  // Palm core + pads
+  const palm = new THREE.CapsuleGeometry(0.035, 0.05, 7, 18)
+  palm.scale(1.5, 1, 0.56)
+  palm.translate(0, -0.056, 0.007)
+  bodyParts.push(palm)
+  lump(new THREE.Vector3(0.02, -0.04, 0.017), 0.021, 0.035, 0.016, 14)
+  lump(new THREE.Vector3(-0.021, -0.042, 0.019), 0.025, 0.037, 0.018, 14)
+  lump(new THREE.Vector3(0, -0.072, 0.015), 0.032, 0.026, 0.015, 12)
+  placeCap(
+    0.055,
+    0.0165,
+    new THREE.Vector3(-0.021, -0.052, 0.011),
+    q.setFromAxisAngle(Z_AXIS, -0.4),
+    new THREE.Vector3(1.1, 1, 0.7),
+    14,
+  )
+
+  // Knuckle mounds + fingers
   for (const finger of FINGERS) {
-    chain(
-      new THREE.Vector3(finger.x, -0.096, 0.001),
+    const knuckle = new THREE.Vector3(finger.x, -0.1, 0.004)
+    lump(new THREE.Vector3(finger.x, -0.095, -0.001), 0.0125, 0.011, 0.012, 12)
+    addFinger(
+      knuckle,
       new THREE.Quaternion().setFromAxisAngle(Z_AXIS, finger.fan),
-      finger.bones,
-      8,
+      finger.length,
+      finger.r0,
+      finger.r1,
+      finger.curl,
+      true,
     )
   }
 
-  // Thumb: splayed out to -X, then swung forward so it opposes the fingers
+  // Thumb — opposed, slightly shorter tube
   const thumbRoot = new THREE.Quaternion()
-    .setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.75)
-    .multiply(new THREE.Quaternion().setFromAxisAngle(Z_AXIS, -0.62))
-  chain(
-    new THREE.Vector3(-0.032, -0.044, 0.008),
-    thumbRoot,
-    [[0.038, 0.0138, 0.18], [0.031, 0.0116, 0.34]],
-    9,
-  )
+    .setFromAxisAngle(Y_AXIS, 0.8)
+    .multiply(new THREE.Quaternion().setFromAxisAngle(Z_AXIS, -0.56))
+    .multiply(new THREE.Quaternion().setFromAxisAngle(X_AXIS, -0.1))
+  const thumbKnuckle = new THREE.Vector3(-0.036, -0.036, 0.015)
+  lump(thumbKnuckle.clone().add(new THREE.Vector3(0.004, 0.006, -0.004)), 0.015, 0.014, 0.013, 12)
+  addFinger(thumbKnuckle, thumbRoot, 0.078, 0.0134, 0.0092, 0.4, true)
 
-  return mergeGeometries(parts, false) ?? parts[0]
+  const body = mergeGeometries(
+    bodyParts.map((g) => {
+      g.deleteAttribute('uv')
+      return g
+    }),
+    false,
+  ) ?? bodyParts[0]
+  // Keep authored normals — recomputing across overlapping pads flattens the form
+  const nails =
+    nailParts.length > 0
+      ? (mergeGeometries(
+          nailParts.map((g) => {
+            g.deleteAttribute('uv')
+            return g
+          }),
+          false,
+        ) ?? nailParts[0])
+      : new THREE.BufferGeometry()
+  if (nailParts.length > 0) nails.computeVertexNormals()
+
+  return { body, nails }
 }
 
 /**
@@ -188,18 +321,27 @@ function mirrorX(geometry: THREE.BufferGeometry) {
     tri[i + 2] = first
   }
   index.needsUpdate = true
+  out.computeVertexNormals()
   return out
+}
+
+function mirrorHand(hand: HandParts): HandParts {
+  return {
+    body: mirrorX(hand.body),
+    nails: hand.nails.getAttribute('position')
+      ? mirrorX(hand.nails)
+      : hand.nails.clone(),
+  }
 }
 
 /**
  * A limb segment hanging along -Y from its joint, plus a group at its far end.
- * Generously segmented: forearms fill a third of the frame during a stroke, and
- * at that size an octagonal cross-section is obvious.
+ * High radial count — forearms fill a third of the frame during a stroke.
  */
 function limb(length: number, radius: number, material: THREE.Material) {
   const root = new THREE.Group()
   const mesh = new THREE.Mesh(
-    new THREE.CapsuleGeometry(radius, Math.max(0.02, length - radius * 2), 4, 16),
+    new THREE.CapsuleGeometry(radius, Math.max(0.02, length - radius * 2), 6, 20),
     material,
   )
   mesh.position.y = -length / 2
@@ -221,15 +363,28 @@ type Arm = {
 type Leg = { hip: THREE.Group; knee: THREE.Group }
 
 export function createSwimmer(camera: THREE.Camera) {
-  const skin = new THREE.MeshStandardMaterial({
-    color: 0xb87f56,
-    roughness: 0.58,
-    metalness: 0.02,
+  // Wet skin — warm sheen reads as subsurface; clearcoat as a damp film
+  const skin = new THREE.MeshPhysicalMaterial({
+    color: 0xcc9470,
+    roughness: 0.48,
+    metalness: 0,
+    clearcoat: 0.32,
+    clearcoatRoughness: 0.5,
+    sheen: 0.85,
+    sheenRoughness: 0.65,
+    sheenColor: new THREE.Color(0xe8a888),
+  })
+  const nail = new THREE.MeshPhysicalMaterial({
+    color: 0xe8c4b8,
+    roughness: 0.22,
+    metalness: 0.06,
+    clearcoat: 1,
+    clearcoatRoughness: 0.12,
   })
   const gear = new THREE.MeshStandardMaterial({
-    color: 0x5a4433,
-    roughness: 0.85,
-    metalness: 0.05,
+    color: 0x6b5344,
+    roughness: 0.8,
+    metalness: 0.04,
   })
 
   const rig = new THREE.Group()
@@ -242,7 +397,19 @@ export function createSwimmer(camera: THREE.Camera) {
   rig.add(armRoot)
 
   const rightHand = handGeometry()
-  const leftHand = mirrorX(rightHand)
+  const leftHand = mirrorHand(rightHand)
+
+  function makeHand(parts: HandParts) {
+    const group = new THREE.Group()
+    group.add(new THREE.Mesh(parts.body, skin))
+    if (parts.nails.getAttribute('position')) {
+      group.add(new THREE.Mesh(parts.nails, nail))
+    }
+    // Palm faces +Z locally, so a little wrist extension points it back along the
+    // pull rather than up at the sky during the catch
+    group.rotation.x = -0.12
+    return group
+  }
 
   function makeArm(sign: number, offset: number): Arm {
     // Shoulders sit low and behind the eyes, so the upper arm is foreshortened
@@ -259,17 +426,13 @@ export function createSwimmer(camera: THREE.Camera) {
     const fore = limb(0.3, 0.038, skin)
     elbow.add(fore.root)
 
-    const bracer = new THREE.Mesh(new THREE.CylinderGeometry(0.043, 0.041, 0.04, 16), gear)
-    bracer.position.y = -0.23
+    const bracer = new THREE.Mesh(new THREE.CylinderGeometry(0.039, 0.037, 0.022, 24), gear)
+    bracer.position.y = -0.215
     fore.root.add(bracer)
 
     const wrist = new THREE.Group()
     fore.end.add(wrist)
-    const hand = new THREE.Mesh(sign > 0 ? rightHand : leftHand, skin)
-    // Palm faces +Z locally, so a little wrist extension points it back along the
-    // pull rather than up at the sky during the catch
-    hand.rotation.x = -0.12
-    wrist.add(hand)
+    wrist.add(makeHand(sign > 0 ? rightHand : leftHand))
 
     return { shoulder, elbow, wrist, sign, offset }
   }
