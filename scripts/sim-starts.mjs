@@ -34,6 +34,10 @@ const BREATH_REFILL = 7
 const STAMINA_BURN = 115
 const STAMINA_REFILL = 32
 const WARMTH_IN_WATER = 900
+const WARMTH_ON_LAND = 3000
+const WARMTH_REFILL = 420
+const SUIT_WARMTH = 0.32
+const SUIT_DRAG = 0.92
 const THIRST = 1500
 const HUNGER = 2600
 const DROWNING = 11
@@ -171,6 +175,7 @@ function createVitals(patch = {}) {
     cause: null,
     elapsed: 0,
     wounded: false,
+    suited: patch.suited ?? false,
   }
 }
 
@@ -198,10 +203,13 @@ function updateVitals(v, dt, ctx) {
   else v.stamina = fill(v.stamina, dt * (v.food > 0.05 ? 1 : 0.4), STAMINA_REFILL)
 
   const cold = ctx.cold ?? 1
+  const suit = v.suited ? SUIT_WARMTH : 1
+  const shelter = ctx.shelter ?? 1
   if (ctx.onLand) {
-    // land refill path not used on open-water legs
+    v.warmth = fill(v.warmth, (dt * shelter) / Math.max(0.55, 1.35 - cold * 0.2), WARMTH_REFILL)
+    v.warmth = drain(v.warmth, dt * cold * suit, WARMTH_ON_LAND)
   } else {
-    v.warmth = drain(v.warmth, dt * (ctx.submerged ? 1.35 : 1) * cold, WARMTH_IN_WATER)
+    v.warmth = drain(v.warmth, dt * (ctx.submerged ? 1.35 : 1) * cold * suit, WARMTH_IN_WATER)
   }
 
   v.water = drain(v.water, dt * (1 + ctx.effort * 0.5), THIRST)
@@ -228,7 +236,7 @@ function updateVitals(v, dt, ctx) {
 function swimLimits(v) {
   const cap = Math.min(1, v.wounded ? 0.6 : 1, v.food < 0.3 ? 0.35 + 0.65 * (v.food / 0.3) : 1)
   const strength = Math.min(v.stamina, cap)
-  return { speedScale: 0.55 + 0.45 * strength }
+  return { speedScale: (0.55 + 0.45 * strength) * (v.suited ? SUIT_DRAG : 1) }
 }
 
 function eat(v, food, water = 0) {
@@ -310,6 +318,29 @@ function wait(v, climate, seconds, effort = 0) {
 }
 
 /**
+ * Sit out of the water. `shelter` is 0.42 on the wreck's reef spire (wave-washed
+ * rock) and ~1 up a dry beach. Optionally hold until warmth reaches a mark.
+ */
+function rest(v, climate, seconds, shelter = 1, until = null) {
+  const dt = 0.1
+  let left = seconds
+  while (left > 0 && v.alive) {
+    if (until !== null && v.warmth >= until) break
+    const weather = climate.update(dt)
+    updateVitals(v, dt, {
+      submerged: false,
+      depth: 0,
+      effort: 0,
+      onLand: true,
+      shelter,
+      cold: weather.cold,
+      swimCost: weather.swimCost,
+    })
+    left -= dt
+  }
+}
+
+/**
  * A dive: descend, hang at depth, ascend. Breath is the limiter.
  * Returns false if you drown mid-dive.
  */
@@ -330,9 +361,12 @@ function dive(v, climate, depth, bottomSeconds) {
       swimCost: weather.swimCost,
     })
   }
-  // work on the bottom
+  // Work on the bottom, but leave with enough air to get back up. A player
+  // watches the breath ring and bails; a sim that doesn't drowns on every
+  // deep dive and makes the whole path look unplayable.
+  const ascentAir = 0.1 + depth * 0.012
   let left = bottomSeconds
-  while (left > 0 && v.alive) {
+  while (left > 0 && v.alive && v.breath > ascentAir) {
     const weather = climate.update(dt)
     updateVitals(v, dt, {
       submerged: true,
@@ -357,8 +391,19 @@ function dive(v, climate, depth, bottomSeconds) {
       swimCost: weather.swimCost,
     })
   }
-  // gasp
-  wait(v, climate, 4, 0)
+  // Gasp at the surface until the lungs are most of the way back
+  const dt2 = 0.1
+  for (let i = 0; i < 400 && v.alive && v.breath < 0.92; i++) {
+    const weather = climate.update(dt2)
+    updateVitals(v, dt2, {
+      submerged: false,
+      depth: 0,
+      effort: 0,
+      onLand: false,
+      cold: weather.cold,
+      swimCost: weather.swimCost,
+    })
+  }
   return v.alive
 }
 
@@ -448,6 +493,73 @@ const PATHS = [
     },
   },
   {
+    id: 'suited-island',
+    name: 'Knife → suit → island (the new route)',
+    run(rng) {
+      const v = createVitals()
+      const climate = createClimate(rng)
+      let leg = swimDistance(v, climate, DIST_SPAWN_WRECK)
+      if (!leg.ok) return finish(v, leg, {})
+      wait(v, climate, 15, 0.3)
+      eat(v, 0.5, 0.15) // provision crate
+      if (!dive(v, climate, 13, 8)) return finish(v, { ok: false, remaining: DIST_WRECK_ISLAND }, {})
+      wait(v, climate, 12, 0)
+      // Gear locker one deck down: pry the door, pull the suit on
+      if (!dive(v, climate, 17, 14)) return finish(v, { ok: false, remaining: DIST_WRECK_ISLAND }, {})
+      v.suited = true
+      wait(v, climate, 14, 0)
+      leg = swimDistance(v, climate, DIST_WRECK_ISLAND)
+      return finish(v, leg, { provision: true, knife: true, suited: true })
+    },
+  },
+  {
+    id: 'suited-full-wreck',
+    name: 'Suit, full wreck (spear + log), then island',
+    run(rng) {
+      const v = createVitals()
+      const climate = createClimate(rng)
+      let leg = swimDistance(v, climate, DIST_SPAWN_WRECK)
+      if (!leg.ok) return finish(v, leg, {})
+      wait(v, climate, 15, 0.3)
+      eat(v, 0.5, 0.15)
+      if (!dive(v, climate, 13, 8)) return finish(v, { ok: false, remaining: DIST_WRECK_ISLAND }, {})
+      wait(v, climate, 12, 0)
+      if (!dive(v, climate, 17, 14)) return finish(v, { ok: false, remaining: DIST_WRECK_ISLAND }, {})
+      v.suited = true
+      eat(v, 0.4, 0.05) // the bread tin, same hold
+      wait(v, climate, 16, 0)
+      if (!dive(v, climate, 24, 14)) return finish(v, { ok: false, remaining: DIST_WRECK_ISLAND }, { suited: true })
+      wait(v, climate, 14, 0)
+      if (!dive(v, climate, 24, 10)) return finish(v, { ok: false, remaining: DIST_WRECK_ISLAND }, { suited: true })
+      wait(v, climate, 20, 0)
+      leg = swimDistance(v, climate, DIST_WRECK_ISLAND)
+      return finish(v, leg, { provision: true, knife: true, spear: true, suited: true })
+    },
+  },
+  {
+    id: 'spire-camp',
+    name: 'Work the wreck from the spire — 25 min, no island',
+    run(rng) {
+      const v = createVitals()
+      const climate = createClimate(rng)
+      const leg = swimDistance(v, climate, DIST_SPAWN_WRECK)
+      if (!leg.ok) return finish(v, leg, {})
+      eat(v, 0.5, 0.15)
+      eat(v, 0.45, 0.4) // hatch stash
+      const target = 25 * 60
+      let dives = 0
+      while (v.alive && v.elapsed < target) {
+        // Haul out on the spire and get some heat back before the next dive
+        rest(v, climate, 400, 0.42, 0.72)
+        if (!v.alive) break
+        dive(v, climate, 10 + rng() * 8, 10)
+        dives++
+        if (rng() < 0.55) eat(v, 0.14, 0.02) // a fish, sometimes
+      }
+      return finish(v, { ok: v.alive, remaining: 0 }, { camped: true, dives })
+    },
+  },
+  {
     id: 'wreck-camp',
     name: 'Stay at the wreck (no island) — survive 20 min',
     run(rng) {
@@ -479,6 +591,7 @@ const PATHS = [
         fish,
         camped: true,
       })
+      // (kept as the control: no spire, no suit — the sea just takes you)
     },
   },
   {
@@ -615,7 +728,8 @@ console.log('')
   console.log('')
 }
 
-const table = []
+  const table = []
+
 
 for (const path of PATHS) {
   const results = []
@@ -626,7 +740,8 @@ for (const path of PATHS) {
   const s = summarize(results)
   table.push({ path, s, sample: results[0] })
 
-  const reachPct = (s.reachRate * 100).toFixed(0)
+  const camped = path.id.endsWith('camp')
+  const reachPct = camped ? '  —' : (s.reachRate * 100).toFixed(0)
   const livePct = (s.surviveRate * 100).toFixed(0)
   const causeStr = Object.keys(s.causes).length
     ? Object.entries(s.causes)
@@ -644,7 +759,9 @@ for (const path of PATHS) {
 
   console.log(`▸ ${path.name}`)
   console.log(
-    `    reach island ${reachPct}%  ·  alive ${livePct}%  ·  avg time ${timeStr}  ·  warmth left ${warmStr}${shortStr}${freezeStr}`,
+    camped
+      ? `    survived the stay ${livePct}%`
+      : `    reach island ${reachPct}%  ·  alive ${livePct}%  ·  avg time ${timeStr}  ·  warmth left ${warmStr}${shortStr}${freezeStr}`,
   )
   console.log(`    deaths: ${causeStr}`)
   console.log('')
@@ -671,18 +788,33 @@ console.log('—— Your run (wreck loot → swim for island) ——————
         ? ` — about ${s.avgFreezeGrace.toFixed(0)}s of freeze-grace left to crawl above the wash.`
         : '.'),
   )
+  const suited = table.find((t) => t.path.id === 'suited-island')
+  if (suited) {
+    console.log(
+      `Find the immersion suit first and that changes: ~${((suited.s.avgWarmthOnArrival ?? 0) * 100).toFixed(0)}% warmth on arrival,` +
+        ` ${(suited.s.freezeArrivalRate * 100).toFixed(0)}% freezing. The crossing stops being a coin flip.`,
+    )
+  }
   console.log(
-    'Coconuts on the sand refill water; dry ground refills warmth. Miss the beach and exposure finishes the run.',
+    'Ashore, rain pools refill water and dry ground refills warmth. Miss the beach and exposure finishes the run.',
   )
   console.log(
-    'Linger at the wreck into the next night before leaving → 0% reach. Leave while the sky is still lit.',
+    'Linger in open water into the next night before leaving → 0% reach. Leave while the sky is still lit.',
   )
 }
 
 console.log('')
+console.log('Staying put (no crossing):')
+table
+  .filter((t) => t.path.id.endsWith('camp'))
+  .forEach((t) => {
+    console.log(`  ${(t.s.surviveRate * 100).toFixed(0).padStart(3)}% survived  —  ${t.path.name}`)
+  })
+
+console.log('')
 console.log('Path ranking by warmth margin on arrival (then freeze grace):')
 table
-  .filter((t) => t.path.id !== 'wreck-camp')
+  .filter((t) => !t.path.id.endsWith('camp'))
   .sort((a, b) => {
     const aw = a.s.avgWarmthOnArrival ?? -1
     const bw = b.s.avgWarmthOnArrival ?? -1
@@ -703,5 +835,6 @@ table
   })
 
 console.log('')
-console.log('Note: the wreck is not a camp. onLand only fires on the island beach,')
-console.log('so lingering in open water always drains warmth — exposure ends long stays.')
+console.log('Note: treading water is never a camp — exposure ends every long stay in')
+console.log('open sea. Getting out of the water is the whole game: the reef spire by')
+console.log('the wreck, or the beach a kilometre away.')
