@@ -43,13 +43,15 @@ app.appendChild(underOverlay)
 const marker = document.createElement('div')
 marker.id = 'marker'
 marker.innerHTML = '<span class="marker-ring"></span><span class="marker-range"></span>'
-app.appendChild(marker)
+// Discovery: no pip, no range label — the mast is the landmark
+// app.appendChild(marker)
 const markerRange = marker.querySelector<HTMLElement>('.marker-range')
 
 const found = document.createElement('div')
 found.id = 'found'
 found.innerHTML = '<strong>The Wanderer</strong><span>Dive the hull</span>'
-app.appendChild(found)
+// Discovery: no title card when you arrive
+// app.appendChild(found)
 
 const bubblesLayer = document.createElement('div')
 bubblesLayer.id = 'bubbles'
@@ -110,8 +112,7 @@ let prevSurfaceForAudio = Number.NaN
 // you already feel.
 const hud = createHud(app)
 const sea = createSeaState({
-  onGlassOff: () => hud.whisper('The swell lies down.'),
-  onSwellUp: () => hud.whisper('The sea gets up again.'),
+  // Discovery: the sea changes; it doesn't announce itself
 })
 
 let breathShort = 0
@@ -147,7 +148,7 @@ const shark = createShark(scene, {
   summonIn: urlParams.has('shark') ? Number(urlParams.get('shark')) : undefined,
   // ?commit=1 makes every armed pass run at you — combat tuning
   alwaysCommit: urlParams.has('commit'),
-  onCommit: () => hud.whisper('It turns in toward you.'),
+  onCommit: () => {},
   onBite: () => salvage?.onBite(),
 })
 
@@ -226,13 +227,7 @@ function beginDeath(cause: DeathCause, now: number) {
   window.addEventListener('pointerdown', restart)
 }
 
-// Amnesia opener — two quiet lines, then the ocean leaves you alone
-window.setTimeout(() => {
-  if (!vitals.dead) hud.whisper('Cold. Salt. You don’t remember the fall.')
-}, 6000)
-window.setTimeout(() => {
-  if (!vitals.dead) hud.whisper('The mast is still standing. Things float near it.')
-}, 20000)
+// Discovery: no amnesia openers, no mast tip-offs — you wake in the water
 
 // Capture the sky (and clouds) into a cube map so the water reflects the real sky
 const envRT = new THREE.WebGLCubeRenderTarget(lowPower ? 128 : 256)
@@ -370,8 +365,12 @@ let foundAt = -1
  * Pin a small pip on the wreck's mast head — clamped to the screen edge when
  * it's behind you — so an ocean with no features still has a direction in it.
  * Fades out once you're on top of it and back in if you wander off.
+ *
+ * Discovery mode: the marker and title card stay off. The mast itself is the
+ * landmark. Logic is kept so we can flip it back for a guided mode later.
  */
 function updateMarker(time: number) {
+  if (!marker.isConnected) return
   const range = camera.position.distanceTo(wreck.centre)
 
   if (range < 26 && foundAt < 0) foundAt = time
