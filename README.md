@@ -41,10 +41,8 @@ is the one the ocean keeps.
 The surface tells its own story: a provision crate still floating by the wreck
 is a first meal; after that, hang still underwater and grab fish by hand. The
 debris that drifts by — planks, barrels, crates, rope, canvas — goes in the
-stash, and it will build a raft yet.
-
-Survival arcs (island swim, wreck→raft, and what's next): [`docs/paths.md`](docs/paths.md).
-Re-check the opening math with `npm run sim:starts`.
+stash. What that stash is *for* is still open — see the path options in
+[`docs/paths.md`](docs/paths.md). Opening-run math: `npm run sim:starts`.
 
 ## The island
 
