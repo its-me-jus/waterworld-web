@@ -24,6 +24,13 @@ export const WAVES: Wave[] = [
 
 export const WAVE_COUNT = WAVES.length
 
+/**
+ * Shared sea state, written once per frame by main (see sea.ts). Every CPU
+ * consumer of the swell — player, flotsam, splash — samples through this so
+ * calm spells flatten the whole world at once, not just the shader.
+ */
+export const oceanState = { amp: 1 }
+
 /** Cheap hash noise for chop / caustics (matches GLSL hash vibe). */
 export function hash2(x: number, z: number) {
   const n = Math.sin(x * 127.1 + z * 311.7) * 43758.5453
@@ -56,7 +63,7 @@ export function fbm(x: number, z: number) {
   return v
 }
 
-export function sampleOcean(x: number, z: number, time: number) {
+export function sampleOcean(x: number, z: number, time: number, amp = oceanState.amp) {
   let y = 0
   let tangentX = 1
   let tangentY = 0
@@ -73,25 +80,27 @@ export function sampleOcean(x: number, z: number, time: number) {
     const k = (Math.PI * 2) / wave.wavelength
     const c = Math.sqrt(9.8 / k) * wave.speed
     const f = k * (dX * x + dZ * z - c * time) + wave.phase
-    const a = wave.steepness / k
+    const steepness = wave.steepness * amp
+    const a = steepness / k
     const cosF = Math.cos(f)
     const sinF = Math.sin(f)
 
     y += a * sinF
 
-    tangentX += -dX * dX * wave.steepness * sinF
-    tangentY += dX * wave.steepness * cosF
-    tangentZ += -dX * dZ * wave.steepness * sinF
+    tangentX += -dX * dX * steepness * sinF
+    tangentY += dX * steepness * cosF
+    tangentZ += -dX * dZ * steepness * sinF
 
-    binormalX += -dX * dZ * wave.steepness * sinF
-    binormalY += dZ * wave.steepness * cosF
-    binormalZ += -dZ * dZ * wave.steepness * sinF
+    binormalX += -dX * dZ * steepness * sinF
+    binormalY += dZ * steepness * cosF
+    binormalZ += -dZ * dZ * steepness * sinF
   }
 
-  // Wind chop — breaks repeating Gerstner ridges
+  // Wind chop — breaks repeating Gerstner ridges. Scales down with the swell
+  // so a glass-off reads as oiled water, not flat waves under rough chop.
   const chop =
-    (fbm(x * 0.08 + time * 0.07, z * 0.08 - time * 0.05) - 0.5) * 0.55 +
-    (fbm(x * 0.22 - time * 0.11, z * 0.22) - 0.5) * 0.22
+    (fbm(x * 0.08 + time * 0.07, z * 0.08 - time * 0.05) - 0.5) * 0.55 * amp +
+    (fbm(x * 0.22 - time * 0.11, z * 0.22) - 0.5) * 0.22 * amp
   y += chop
 
   const nx = binormalY * tangentZ - binormalZ * tangentY
