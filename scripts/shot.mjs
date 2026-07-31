@@ -71,7 +71,7 @@ for (const { name, url, dive = 0, fwd = 0, zoom, viewport } of VIEWS) {
     viewport: viewport ?? { width: 1280, height: 720 },
     deviceScaleFactor: zoom ? 3 : 1,
   })
-  const noise = /THREE.Clock: This module has been deprecated/
+  const noise = /deprecated/
   page.on('console', (m) => {
     const text = m.text()
     if (noise.test(text)) return

@@ -140,7 +140,8 @@ const desktop = bindKeyboardMouse(renderer.domElement, player, {
 
 if (mobile) document.body.classList.add('playing')
 
-const clock = new THREE.Clock()
+const timer = new THREE.Timer()
+timer.connect(document)
 let bubbleTimer = 0
 let envTimer = 0
 
@@ -232,8 +233,9 @@ function updateMarker(time: number) {
 }
 
 function frame() {
-  const dt = Math.min(clock.getDelta(), 0.05)
-  const t = clock.elapsedTime
+  timer.update()
+  const dt = Math.min(timer.getDelta(), 0.05)
+  const t = timer.getElapsed()
 
   touch.apply(input)
   desktop.mergeKeys(input)
