@@ -14,6 +14,8 @@ import { createWreck } from './wreck'
 import { createOceanAudio } from './audio'
 import { createForage } from './forage'
 import { createHud } from './hud'
+import { createSalvage } from './salvage'
+import type { Salvage } from './salvage'
 import { createSeaState } from './sea'
 import { createShark } from './shark'
 import { createVitals } from './vitals'
@@ -133,12 +135,36 @@ const forage = createForage(app, hud, vitals, {
   mobile,
 })
 
+// —— salvage layer (Phase B) —————————————————————————————————
+// The wreck gives up its depth in stages: the knife on the bow deck, the
+// mate's sealed locker in the dark by the stern, and in it the first memory
+// and the spear — the shark's question finally has an answer.
+let salvage: Salvage
 const shark = createShark(scene, {
   resolve: wreck.resolve,
   whisper: hud.whisper,
   // ?shark=8 summons the first pass in eight seconds, for tuning
   summonIn: urlParams.has('shark') ? Number(urlParams.get('shark')) : undefined,
+  // ?commit=1 makes every armed pass run at you — combat tuning
+  alwaysCommit: urlParams.has('commit'),
+  onCommit: () => hud.whisper('It turns in toward you.'),
+  onBite: () => salvage?.onBite(),
 })
+
+salvage = createSalvage(app, camera, hud, vitals, {
+  knifeSpot: wreck.knifeSpot,
+  takeKnife: wreck.takeKnife,
+  lockerSpot: wreck.lockerSpot,
+  lockerState: () => wreck.lockerState,
+  cutLashing: wreck.cutLashing,
+  stripLocker: wreck.stripLocker,
+  shark,
+  thump: (i) => oceanAudio.impact(i),
+  mobile,
+})
+// ?knife=1 skips the deck dive, ?spear=1 starts armed — both for tuning
+if (urlParams.has('knife')) salvage.grant('knife')
+if (urlParams.has('spear')) salvage.grant('spear')
 if (urlParams.has('shark')) {
   ;(window as unknown as { __shark: unknown }).__shark = shark
 }
@@ -169,7 +195,11 @@ function beginDeath(cause: DeathCause, now: number) {
   dying = true
   survived = now
   deathCause.textContent =
-    cause === 'drowned' ? 'You never make the surface.' : 'You simply run out of strength.'
+    cause === 'drowned'
+      ? 'You never make the surface.'
+      : cause === 'taken'
+        ? 'You answered once. Once was not enough.'
+        : 'You simply run out of strength.'
 
   const minutes = Math.floor(survived / 60)
   const lasted =
@@ -234,12 +264,37 @@ const player = createPlayer()
   player.y = surface + (depth > 0 ? -depth : 1.5)
   if (depth > 0) player.pitch = 0.5
   player.pitch = num('pitch', player.pitch)
-  // ?calm=1 pins a glass-off; ?breath / ?hunger pre-set vitals for tuning
+  // ?calm=1 pins a glass-off; ?breath / ?hunger / ?wound pre-set vitals for tuning
   if (urlParams.has('calm')) sea.pinCalm()
   vitals.debugSet({
     breath: urlParams.has('breath') ? Number(urlParams.get('breath')) : undefined,
     hunger: urlParams.has('hunger') ? Number(urlParams.get('hunger')) : undefined,
+    wound: urlParams.has('wound') ? true : undefined,
   })
+}
+
+// Salvage world spots, for the headless shot suite and tuning sessions
+{
+  const expose: Record<string, unknown> = {}
+  const k = wreck.knifeSpot()
+  if (k) expose.knife = k.toArray()
+  expose.locker = wreck.lockerSpot().toArray()
+  ;(window as unknown as { __spots: unknown }).__spots = expose
+}
+
+if (urlParams.has('shark') || urlParams.has('debug')) {
+  ;(window as unknown as { __player: unknown }).__player = player
+  // Aim the swimmer's eye at the shark — headless combat tests and tuning
+  ;(window as unknown as { __faceShark: unknown }).__faceShark = () => {
+    if (!shark.active) return false
+    const p = shark.position
+    const dx = p.x - camera.position.x
+    const dy = p.y - camera.position.y
+    const dz = p.z - camera.position.z
+    player.yaw = Math.atan2(-dx, -dz)
+    player.pitch = Math.atan2(dy, Math.hypot(dx, dz))
+    return true
+  }
 }
 
 const input = createInputState()
@@ -380,7 +435,8 @@ function frame() {
   // Vitals read this frame's exertion; their limits reach the swim model next
   // frame. One frame of lag on a minutes-long decline is nothing.
   if (!dying) swimLimits = vitals.update(dt, view)
-  forage.update(dt, camera, view)
+  const claimed = salvage.update(dt, view)
+  forage.update(dt, camera, view, claimed)
   shark.update(dt, t, camera, hasDived)
   oceanAudio.setDanger(shark.proximity)
 
