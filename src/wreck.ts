@@ -58,6 +58,13 @@ function materials() {
       roughness: 0.85,
       side: THREE.DoubleSide,
     }),
+    // Barnacle clusters — pale cones that make the sunken wood read as
+    // colonised, not freshly varnished
+    barnacle: new THREE.MeshStandardMaterial({
+      color: 0xc7bfae,
+      roughness: 0.98,
+      metalness: 0.0,
+    }),
   }
 }
 
@@ -412,6 +419,97 @@ function seaFan(size: number) {
   return geo
 }
 
+// —— barnacles ————————————————————————————————————————————————
+
+/**
+ * Golden-angle shell of a unit sphere. Shared across the whole wreck, then
+ * placed piece by piece — thousands of shells all face slightly different ways,
+ * which is exactly how a real encrustation reads.
+ */
+const BARNACLE_POINTS: THREE.Vector3[] = (() => {
+  const pts: THREE.Vector3[] = []
+  const N = 240
+  const ga = Math.PI * (3 - Math.sqrt(5))
+  for (let i = 0; i < N; i++) {
+    const y = 1 - (2 * i + 1) / N
+    const r = Math.sqrt(Math.max(0, 1 - y * y))
+    const a = i * ga
+    pts.push(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r))
+  }
+  return pts
+})()
+
+type BarnacleSurface = {
+  centre: THREE.Vector3
+  normal: THREE.Vector3
+  radius: number
+  scale: [number, number, number]
+  count: number
+  seed: number
+}
+
+/** Clustered little cones over an ellipsoidal patch of hull / spar / rock. */
+function barnaclePatch(spec: BarnacleSurface) {
+  const parts: THREE.BufferGeometry[] = []
+  const m = new THREE.Matrix4()
+  const q = new THREE.Quaternion()
+  const roll = new THREE.Quaternion()
+  const up = new THREE.Vector3(0, 1, 0)
+  const v = new THREE.Vector3()
+  const n = new THREE.Vector3()
+
+  for (let i = 0; i < spec.count; i++) {
+    const dir = BARNACLE_POINTS[(i * 7 + Math.floor(spec.seed * 13)) % BARNACLE_POINTS.length]
+    n.copy(spec.normal).applyQuaternion(q.setFromUnitVectors(up, spec.normal))
+    v.copy(dir).applyQuaternion(q.setFromUnitVectors(up, spec.normal))
+
+    // Keep shells on the outer hemisphere of the patch
+    if (v.dot(spec.normal) < 0.05) continue
+
+    const jitter = fbm(i * 0.61 + spec.seed, i * 0.37 - spec.seed)
+    const size = (0.045 + jitter * 0.085) * spec.radius
+    const cone = new THREE.ConeGeometry(size * 0.62, size, 6)
+    cone.translate(0, size * 0.42, 0)
+
+    const at = new THREE.Vector3(
+      spec.centre.x + v.x * spec.scale[0],
+      spec.centre.y + v.y * spec.scale[1],
+      spec.centre.z + v.z * spec.scale[2],
+    )
+    roll.setFromAxisAngle(up, i * 2.399)
+    const orient = new THREE.Quaternion().setFromUnitVectors(up, v).multiply(roll)
+    m.compose(at, orient, new THREE.Vector3(1, 0.7 + jitter * 0.6, 1))
+    parts.push(cone.applyMatrix4(m))
+  }
+  return mergeGeometries(parts, false) as THREE.BufferGeometry | null
+}
+
+/** One merged mesh of barnacle clusters across the whole wreck. */
+function buildBarnacles(low: boolean) {
+  const clusters: BarnacleSurface[] = [
+    // Bow hull, both flanks and along the snapped rail
+    { centre: new THREE.Vector3(-2.4, -12.2, 3.2), normal: new THREE.Vector3(-0.8, 0.45, 0.2).normalize(), radius: 1, scale: [1.6, 1.1, 1.4], count: low ? 14 : 30, seed: 1.7 },
+    { centre: new THREE.Vector3(0.8, -11.6, 5.6), normal: new THREE.Vector3(0.85, 0.5, -0.1).normalize(), radius: 1, scale: [1.3, 1.0, 1.6], count: low ? 14 : 28, seed: 4.1 },
+    { centre: new THREE.Vector3(-0.6, -10.8, 1.8), normal: new THREE.Vector3(0.15, 1, 0.1).normalize(), radius: 1, scale: [1.5, 0.7, 1.8], count: low ? 12 : 24, seed: 8.3 },
+    // Mast, from waterline down
+    { centre: new THREE.Vector3(3.4, -6.5, 1.2), normal: new THREE.Vector3(0.4, 0.1, 0.9).normalize(), radius: 1, scale: [0.5, 2.2, 0.5], count: low ? 10 : 20, seed: 2.9 },
+    // Yard and the capstan crown
+    { centre: new THREE.Vector3(4.4, 1.2, -0.2), normal: new THREE.Vector3(0.2, 0.3, 0.93).normalize(), radius: 1, scale: [1.4, 0.4, 0.4], count: low ? 8 : 14, seed: 6.6 },
+    { centre: new THREE.Vector3(0, 0.6, 5.4), normal: new THREE.Vector3(0.2, 1, 0.15).normalize(), radius: 1, scale: [0.45, 0.3, 0.45], count: low ? 8 : 14, seed: 9.4 },
+    // Anchor and the stern lying on the sand
+    { centre: new THREE.Vector3(7, sandHeight(7, -22) + 0.9, -22), normal: new THREE.Vector3(0.3, 0.9, 0.3).normalize(), radius: 1, scale: [1.2, 0.8, 0.7], count: low ? 12 : 22, seed: 3.2 },
+    { centre: new THREE.Vector3(4.2, -22.2, -17.6), normal: new THREE.Vector3(0.4, 0.85, -0.3).normalize(), radius: 1, scale: [1.6, 0.9, 1.3], count: low ? 14 : 26, seed: 5.8 },
+  ]
+
+  const parts: THREE.BufferGeometry[] = []
+  for (const c of clusters) {
+    const patch = barnaclePatch(c)
+    if (patch) parts.push(patch)
+  }
+  if (!parts.length) return null
+  return mergeGeometries(parts, false) as THREE.BufferGeometry
+}
+
 // —— flotsam ————————————————————————————————————————————————
 
 type Flotsam = {
@@ -600,6 +698,11 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     mat.iron,
   )
   group.add(chain)
+
+  // Barnacle crust over wood, spar and iron — what makes her read as sunken
+  // for years rather than parked last week
+  const barnacles = buildBarnacles(low)
+  if (barnacles) group.add(new THREE.Mesh(barnacles, mat.barnacle))
 
   // —— growth and rubble, planted by dropping rays onto the rock ——
   const clumps: { pivot: THREE.Group; phase: number }[] = []
