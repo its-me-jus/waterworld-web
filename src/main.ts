@@ -87,7 +87,7 @@ const { mesh: ocean, material: oceanMat, follow } = createOcean({
 oceanMat.uniforms.uHorizonColor.value.copy(skyRig.horizonColor)
 scene.add(ocean)
 
-const swimmer = createSwimmer(camera)
+const swimmer = await createSwimmer(camera)
 
 const underwaterWorld = createUnderwaterWorld(scene, {
   waterColor: new THREE.Color('#0c5c6b'),
