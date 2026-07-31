@@ -329,7 +329,7 @@ function frame() {
   wreck.update(t, camera)
   updateMarker(t)
 
-  splash.update(dt, camera.position.y, surfaceY, view.moving)
+  splash.update(dt, camera.position.y, surfaceY, view.moving, view.submersion)
 
   if (underwater) {
     bubbleTimer -= dt
