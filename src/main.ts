@@ -344,7 +344,9 @@ function frame() {
   const weather = climate.update(dt)
   applyStormToWaves(weather.storm)
   syncWaves()
-  // The sea breathes under the squalls — glass-offs oil the chop down
+  // The sea breathes under the squalls — glass-offs oil the chop down, and
+  // they only come while the sky is settled
+  sea.setFair(weather.fair)
   sea.update(dt, t)
   oceanAudio.setSeaWeight(sea.weight)
 

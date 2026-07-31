@@ -44,11 +44,19 @@ const MENDING = 190
 
 // —— climate (src/climate.ts) ——————————————————————————————————
 const DAY_LENGTH = 480
-const STORM_FIRST = 95
-const STORM_GAP = 155
-const STORM_HOLD = 48
-const STORM_RAMP = 22
 const START_HOUR = 9.5
+
+/** Weather spells — must mirror SPELLS in src/climate.ts. */
+const SPELLS = [
+  { name: 'glass', storm: [0.0, 0.04], hold: [150, 300], weight: 20 },
+  { name: 'fair', storm: [0.02, 0.12], hold: [240, 460], weight: 36 },
+  { name: 'breezy', storm: [0.16, 0.32], hold: [140, 280], weight: 22 },
+  { name: 'unsettled', storm: [0.38, 0.56], hold: [90, 170], weight: 13 },
+  { name: 'squall', storm: [0.7, 0.92], hold: [45, 105], weight: 8 },
+  { name: 'gale', storm: [0.94, 1.0], hold: [70, 130], weight: 1 },
+]
+const FOUL = 0.35
+const FRONT = [26, 52]
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v)
 const smooth = (a, b, t) => {
@@ -66,20 +74,33 @@ function sunElevation(phase) {
   return -18
 }
 
-function stormEnvelope(age) {
-  if (age < 0) return 0
-  if (age < STORM_RAMP) return smooth(0, STORM_RAMP, age)
-  if (age < STORM_RAMP + STORM_HOLD) return 1
-  if (age < STORM_RAMP * 2 + STORM_HOLD) {
-    return 1 - smooth(STORM_RAMP + STORM_HOLD, STORM_RAMP * 2 + STORM_HOLD, age)
-  }
-  return 0
-}
-
 function createClimate(rng) {
   let elapsed = (START_HOUR / 24) * DAY_LENGTH
-  let stormAge = -STORM_FIRST
-  let nextGap = STORM_GAP
+
+  const pick = (from) => {
+    let total = 0
+    for (const s of from) total += s.weight
+    let roll = rng() * total
+    for (const s of from) {
+      roll -= s.weight
+      if (roll <= 0) return s
+    }
+    return from[from.length - 1]
+  }
+  const range = ([lo, hi]) => lo + rng() * (hi - lo)
+  const nextSpell = (previous) => {
+    const settled = previous && previous.storm[1] > FOUL
+    return pick(settled ? SPELLS.filter((s) => s.storm[1] <= FOUL) : SPELLS)
+  }
+
+  let spell = SPELLS[1]
+  let target = range(SPELLS[1].storm)
+  let from = target
+  let holdLeft = range([200, 320])
+  let frontLeft = 0
+  let frontLength = 1
+  let storm = target
+
   return {
     update(dt) {
       elapsed += dt
@@ -88,22 +109,54 @@ function createClimate(rng) {
       const day = clamp01((elev + 6) / 48)
       const daylight = day * day * (3 - 2 * day)
 
-      stormAge += dt
-      const pulse = stormEnvelope(stormAge)
-      if (stormAge > STORM_RAMP * 2 + STORM_HOLD + nextGap) {
-        stormAge = 0
-        nextGap = STORM_GAP + (rng() - 0.5) * 50
+      if (frontLeft > 0) {
+        frontLeft -= dt
+        const f = smooth(0, 1, 1 - Math.max(0, frontLeft) / frontLength)
+        storm = from + (target - from) * f
+        if (frontLeft <= 0) storm = target
+      } else {
+        holdLeft -= dt
+        const wander = Math.sin(elapsed * 0.021) * 0.5 + Math.sin(elapsed * 0.0073 + 2.1) * 0.5
+        const band = (spell.storm[1] - spell.storm[0]) * 0.5
+        storm = clamp01(target + wander * band * 0.35)
+        if (holdLeft <= 0) {
+          spell = nextSpell(spell)
+          from = storm
+          target = range(spell.storm)
+          holdLeft = range(spell.hold)
+          frontLength = range(FRONT)
+          frontLeft = frontLength
+        }
       }
-      const storm = pulse * (0.85 + (1 - daylight) * 0.25)
+
+      const live = clamp01(storm * (0.9 + (1 - daylight) * 0.18))
       return {
         daylight,
-        storm,
-        swimCost: 1 + storm * 0.85,
-        cold: 1 + (1 - daylight) * 1.6 + storm * 0.55,
+        storm: live,
+        regime: spell.name,
+        fair: 1 - clamp01((live - 0.15) / 0.7),
+        swimCost: 1 + live * 0.85,
+        cold: 1 + (1 - daylight) * 1.6 + live * 0.55,
         hour: phase * 24,
       }
     },
   }
+}
+
+/** How much of a long run is weather you'd actually want to swim in. */
+function weatherShare(rng, minutes = 60) {
+  const climate = createClimate(rng)
+  const dt = 1
+  const tally = {}
+  let good = 0
+  let steps = 0
+  for (let t = 0; t < minutes * 60; t += dt) {
+    const w = climate.update(dt)
+    tally[w.regime] = (tally[w.regime] || 0) + dt
+    if (w.storm <= FOUL) good += dt
+    steps += dt
+  }
+  return { goodShare: good / steps, tally, seconds: steps }
 }
 
 function createVitals(patch = {}) {
@@ -539,8 +592,28 @@ console.log(`  warmth empty:    ${(WARMTH_IN_WATER / 60).toFixed(1)} min  (+ ${(
 console.log(`  thirst empty:    ${(THIRST / 60).toFixed(1)} min`)
 console.log(`  hunger empty:    ${(HUNGER / 60).toFixed(1)} min`)
 console.log(`  stamina empty:   ${(STAMINA_BURN / 60).toFixed(1)} min continuous stroke`)
-console.log(`  first squall:    ~${STORM_FIRST}s in`)
 console.log('')
+
+{
+  // Weather balance — long spells, more good than bad
+  const hours = 12
+  const totals = {}
+  let good = 0
+  let seconds = 0
+  for (let i = 0; i < hours; i++) {
+    const w = weatherShare(mulberry32(seed0 + i * 7919), 60)
+    good += w.goodShare * w.seconds
+    seconds += w.seconds
+    for (const [k, v] of Object.entries(w.tally)) totals[k] = (totals[k] || 0) + v
+  }
+  console.log(`Weather balance (${hours} simulated hours):`)
+  console.log(`  swimmable (storm ≤ ${FOUL}): ${((good / seconds) * 100).toFixed(0)}% of the time`)
+  const parts = Object.entries(totals)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k} ${((v / seconds) * 100).toFixed(0)}%`)
+  console.log(`  spells: ${parts.join(' · ')}`)
+  console.log('')
+}
 
 const table = []
 
