@@ -216,8 +216,11 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
   }
 
   // —— the wreck's flotsam, now worth swimming out for ————————————
-  for (const { object, kind } of opts.wreckFlotsam) {
-    register(object, 'Take', STASH_LABEL[kind].one, (find) => take(find, kind))
+  // Named pieces (the provision crate) belong to the wreck's own loot
+  // chain, not the stash pool
+  for (const item of opts.wreckFlotsam) {
+    if ((item as { id?: string }).id) continue
+    register(item.object, 'Take', STASH_LABEL[item.kind].one, (find) => take(find, item.kind))
   }
 
   // —— the wreck itself ————————————————————————————————————————

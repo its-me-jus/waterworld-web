@@ -33,6 +33,7 @@ float fbm(vec2 p, int octaves) {
 const vertexShader = /* glsl */ `
 uniform float uTime;
 uniform float uChopScale;
+uniform float uAmp;
 uniform vec4 uWaves[${WAVE_COUNT}];
 uniform vec2 uWaveExtra[${WAVE_COUNT}];
 
@@ -43,7 +44,7 @@ varying float vCrest;
 ${noiseGLSL}
 
 vec3 gerstner(vec2 p, vec4 wave, vec2 extra, inout vec3 tangent, inout vec3 binormal) {
-  float steepness = wave.z;
+  float steepness = wave.z * uAmp;
   float wavelength = wave.w;
   float k = 6.28318530718 / wavelength;
   float c = sqrt(9.8 / k) * extra.y;
@@ -77,9 +78,11 @@ void main() {
     disp += gerstner(world.xz, uWaves[i], uWaveExtra[i], tangent, binormal);
   }
 
+  // Chop rides the sea state's amp (glass-offs oil it down) and the storm's
+  // chopScale (squalls whip it up) — the two multipliers stay independent
   float chop =
-    (fbm(world.xz * 0.08 + vec2(uTime * 0.07, -uTime * 0.05), 4) - 0.5) * 0.55 +
-    (fbm(world.xz * 0.22 + vec2(-uTime * 0.11, uTime * 0.03), 3) - 0.5) * 0.22;
+    (fbm(world.xz * 0.08 + vec2(uTime * 0.07, -uTime * 0.05), 4) - 0.5) * 0.55 * uAmp +
+    (fbm(world.xz * 0.22 + vec2(-uTime * 0.11, uTime * 0.03), 3) - 0.5) * 0.22 * uAmp;
   disp.y += chop * uChopScale;
 
   world += disp;
@@ -260,6 +263,7 @@ export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: O
     uniforms: {
       uTime: { value: 0 },
       uChopScale: { value: 1 },
+      uAmp: { value: 1 },
       uWaves: { value: uWaves },
       uWaveExtra: { value: uWaveExtra },
       uEnvMap: { value: null },

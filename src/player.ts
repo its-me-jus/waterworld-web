@@ -4,7 +4,8 @@ import { WAVES, sampleOcean } from './waves'
 
 const TAU = Math.PI * 2
 const LOOK_SENS_MOUSE = 0.0022
-const LOOK_SENS_STICK = 2.4
+/** Touch-drag look — a touch higher than mouse so a thumb swipe feels responsive. */
+const LOOK_SENS_TOUCH = 0.0032
 
 const SURFACE_SPEED = 5.2
 const SUBMERGED_SPEED = 6.6
@@ -74,6 +75,28 @@ export type PlayerState = {
 
 /** Shoves the swimmer out of solid geometry, in place, after they've moved. */
 export type Collider = (position: { x: number; y: number; z: number }) => void
+
+/**
+ * How much body the swimmer has left this frame, fed in by vitals. All 1 when
+ * they're strong; a starving, exhausted swimmer keeps maybe half of each.
+ */
+export type SwimLimits = {
+  /** Multiplies top speed. */
+  speedScale: number
+  /** Multiplies deliberate vertical swim power (and wave-recovery authority). */
+  climbScale: number
+  /** Multiplies stroke cadence — tired arms turn over slower. */
+  cadenceScale: number
+  /** 0..1 tremor folded into head roll — low breath, spent muscles. */
+  wobble: number
+}
+
+export const FULL_STRENGTH: SwimLimits = {
+  speedScale: 1,
+  climbScale: 1,
+  cadenceScale: 1,
+  wobble: 0,
+}
 
 export type PlayerFrame = {
   underwater: boolean
@@ -201,10 +224,11 @@ export function updatePlayer(
   time: number,
   collide?: Collider,
   groundAt?: (x: number, z: number) => number,
+  limits: SwimLimits = FULL_STRENGTH,
 ): PlayerFrame {
-  if (Math.abs(input.lookX) > 0.02 || Math.abs(input.lookY) > 0.02) {
-    player.yaw += input.lookX * LOOK_SENS_STICK * dt
-    player.pitch = clamp(player.pitch + input.lookY * LOOK_SENS_STICK * dt, -1.45, 1.45)
+  if (Math.abs(input.lookDeltaX) > 0.01 || Math.abs(input.lookDeltaY) > 0.01) {
+    player.yaw -= input.lookDeltaX * LOOK_SENS_TOUCH
+    player.pitch = clamp(player.pitch - input.lookDeltaY * LOOK_SENS_TOUCH, -1.45, 1.45)
   }
 
   const forwardX = -Math.sin(player.yaw)
@@ -265,6 +289,11 @@ export function updatePlayer(
   let bobY = 0
   let bobSide = 0
 
+  // Tremor when the body's running out — two incommensurate sines so it never
+  // reads as a steady oscillation
+  const tremor =
+    (Math.sin(time * 6.9) * 0.055 + Math.sin(time * 12.7 + 1.3) * 0.03) * limits.wobble
+
   if (player.mode === 'walk') {
     // —— on foot ———————————————————————————————————————————
     // Ground slope by central differences: climbs cost pace, descents carry
@@ -285,11 +314,17 @@ export function updatePlayer(
     const climb = mx * gx + mz * gz
     const slopeFactor = clamp(1 - climb * 0.8, 0.3, 1.15)
 
-    // Walking burns less than swimming; a climb burns more than a stroll
+    // Walking burns less than swimming; a climb burns more than a stroll.
+    // Spent legs are slower legs, same as spent arms.
     player.effort = damp(player.effort, Math.min(1, planar * 0.55 * (1 + Math.max(0, climb) * 1.5)), 5, dt)
     player.moving = damp(player.moving, planar, 4.5, dt)
 
-    player.speed = damp(player.speed, planar * WALK_SPEED * slopeFactor, planar > 0.02 ? 9 : 7, dt)
+    player.speed = damp(
+      player.speed,
+      planar * WALK_SPEED * slopeFactor * limits.speedScale,
+      planar > 0.02 ? 9 : 7,
+      dt,
+    )
     // One swing cycle per stride, driven by ground actually covered
     player.stroke = (player.stroke + (player.speed / STRIDE) * dt) % 1
 
@@ -321,7 +356,7 @@ export function updatePlayer(
 
     // Level head on land — a hint of lean, and the step bob carries the motion
     const sway = Math.sin(player.stroke * TAU * 2) * 0.014 * player.moving
-    player.roll = damp(player.roll, -input.moveStrafe * 0.045 + sway, 8, dt)
+    player.roll = damp(player.roll, -input.moveStrafe * 0.045 + sway + tremor * 0.5, 8, dt)
     player.viewPitch = damp(player.viewPitch, 0, 8, dt)
 
     bobY = Math.abs(Math.sin(player.stroke * TAU)) * 0.045 * player.moving
@@ -333,7 +368,7 @@ export function updatePlayer(
     player.effort = damp(player.effort, Math.min(1, Math.max(planar, vertical)), 5, dt)
     player.moving = damp(player.moving, planar, 4.5, dt)
 
-    const cadence = 0.28 + (wasUnder > 0.5 ? 0.4 : 0.6) * player.effort
+    const cadence = (0.28 + (wasUnder > 0.5 ? 0.4 : 0.6) * player.effort) * limits.cadenceScale
     player.stroke = (player.stroke + cadence * dt) % 1
 
     // Thrust arrives in pulses — one per arm at the surface, one per sweep below
@@ -343,7 +378,8 @@ export function updatePlayer(
         : 0.84 + 0.32 * Math.sin(player.stroke * TAU * 2)
     const surge = 1 + (pulse - 1) * player.effort
 
-    const maxSpeed = SURFACE_SPEED + (SUBMERGED_SPEED - SURFACE_SPEED) * wasUnder
+    const maxSpeed =
+      (SURFACE_SPEED + (SUBMERGED_SPEED - SURFACE_SPEED) * wasUnder) * limits.speedScale
     player.speed = damp(player.speed, planar * maxSpeed * surge, planar > 0.02 ? 3.6 : 1.5, dt)
 
     if (len > 0.02) {
@@ -369,12 +405,15 @@ export function updatePlayer(
     const climbing = input.rise && depth > 0.05
 
     if (climbing || input.dive) {
-      const target = (climbing ? SWIM_VERTICAL : 0) - (input.dive ? SWIM_VERTICAL : 0)
+      const target =
+        ((climbing ? SWIM_VERTICAL : 0) - (input.dive ? SWIM_VERTICAL : 0)) * limits.climbScale
       player.vy = damp(player.vy, target, 6, dt)
     } else {
       // Plenty of authority to climb back out of a wave that washed over us, but
       // it tapers off with depth so a dive still lets you hang and look around.
-      const climbCap = 1.0 + 6.5 * clamp(1 - depth / 6, 0, 1)
+      // Exhaustion takes the edge off the cap too — spent, you ride the swell
+      // more than you fight it.
+      const climbCap = (1.0 + 6.5 * clamp(1 - depth / 6, 0, 1)) * (0.35 + 0.65 * limits.climbScale)
       const target = clamp((floatEye - player.y) * 7, -3.5, climbCap) + surfaceVel * ride
       player.vy = damp(player.vy, target, 13, dt)
     }
@@ -396,7 +435,8 @@ export function updatePlayer(
 
     const strafeLean = -input.moveStrafe * 0.06
     const strokeRoll = Math.sin(player.stroke * TAU) * 0.09 * player.effort
-    const targetRoll = (-slopeRight * 0.8 + strafeLean + strokeRoll) * (0.3 + 0.7 * ride)
+    const targetRoll =
+      (-slopeRight * 0.8 + strafeLean + strokeRoll) * (0.3 + 0.7 * ride) + tremor
     player.roll = damp(player.roll, targetRoll, 6, dt)
     player.viewPitch = damp(player.viewPitch, -slopeForward * 0.2 * ride, 5, dt)
 

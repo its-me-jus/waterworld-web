@@ -8,6 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "shot": "node scripts/shot.mjs",
+    "shot:survival": "node scripts/shot-survival.mjs",
+    "shot:salvage": "node scripts/shot-salvage.mjs",
+    "smoke": "node scripts/smoke.mjs",
     "audio": "node scripts/gen-audio.mjs",
     "audio:lyria": "node scripts/gen-audio-lyria.mjs",
     "hands": "node scripts/gen-hands.mjs"

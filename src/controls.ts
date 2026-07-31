@@ -47,10 +47,14 @@ export function createTouchControls(parent: HTMLElement) {
   wrap.id = 'touch-controls'
   parent.appendChild(wrap)
 
+  // Full-screen drag surface for look — sits under the move stick & dive buttons
+  const lookPad = document.createElement('div')
+  lookPad.className = 'look-pad'
+  lookPad.setAttribute('aria-label', 'Look')
+  wrap.appendChild(lookPad)
+
   const move = makeStick('move', 'MOVE')
-  const look = makeStick('look', 'LOOK')
   wrap.appendChild(move.root)
-  wrap.appendChild(look.root)
 
   const actions = document.createElement('div')
   actions.className = 'touch-actions'
@@ -64,6 +68,11 @@ export function createTouchControls(parent: HTMLElement) {
   let rise = false
   let dive = false
   let usePending = false
+  let lookDeltaX = 0
+  let lookDeltaY = 0
+  let lookId: number | null = null
+  let lookLastX = 0
+  let lookLastY = 0
 
   const useBtn = actions.querySelector('[data-act="use"]') as HTMLButtonElement
   useBtn.addEventListener('pointerdown', (e) => {
@@ -100,8 +109,6 @@ export function createTouchControls(parent: HTMLElement) {
     dive = v
   })
 
-  const sticks = [move, look]
-
   const startStick = (stick: Stick, e: PointerEvent) => {
     const rect = stick.root.getBoundingClientRect()
     stick.active = true
@@ -126,28 +133,51 @@ export function createTouchControls(parent: HTMLElement) {
     setKnob(stick)
   }
 
-  for (const stick of sticks) {
-    stick.root.addEventListener('pointerdown', (e) => {
-      e.preventDefault()
-      startStick(stick, e)
-    })
-    stick.root.addEventListener('pointermove', (e) => {
-      e.preventDefault()
-      moveStick(stick, e)
-    })
-    const end = (e: PointerEvent) => {
-      if (stick.id === e.pointerId) resetStick(stick)
-    }
-    stick.root.addEventListener('pointerup', end)
-    stick.root.addEventListener('pointercancel', end)
+  move.root.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    startStick(move, e)
+  })
+  move.root.addEventListener('pointermove', (e) => {
+    e.preventDefault()
+    moveStick(move, e)
+  })
+  const endMove = (e: PointerEvent) => {
+    if (move.id === e.pointerId) resetStick(move)
   }
+  move.root.addEventListener('pointerup', endMove)
+  move.root.addEventListener('pointercancel', endMove)
+
+  lookPad.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    // One look finger at a time; extra fingers are ignored
+    if (lookId !== null) return
+    lookId = e.pointerId
+    lookLastX = e.clientX
+    lookLastY = e.clientY
+    lookPad.setPointerCapture(e.pointerId)
+  })
+  lookPad.addEventListener('pointermove', (e) => {
+    if (lookId !== e.pointerId) return
+    e.preventDefault()
+    lookDeltaX += e.clientX - lookLastX
+    lookDeltaY += e.clientY - lookLastY
+    lookLastX = e.clientX
+    lookLastY = e.clientY
+  })
+  const endLook = (e: PointerEvent) => {
+    if (lookId === e.pointerId) lookId = null
+  }
+  lookPad.addEventListener('pointerup', endLook)
+  lookPad.addEventListener('pointercancel', endLook)
 
   /** Merge touch into input (call before keyboard merge). */
   function apply(input: InputState) {
     input.moveStrafe = move.dx / move.radius
     input.moveForward = -move.dy / move.radius
-    input.lookX = -look.dx / look.radius
-    input.lookY = -look.dy / look.radius
+    input.lookDeltaX = lookDeltaX
+    input.lookDeltaY = lookDeltaY
+    lookDeltaX = 0
+    lookDeltaY = 0
     input.rise = rise
     input.dive = dive
     if (usePending) {

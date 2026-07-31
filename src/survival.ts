@@ -6,7 +6,7 @@
  * numbers below read as "how long have I got".
  */
 
-export type Cause = 'drowned' | 'exposure' | 'thirst' | 'hunger'
+export type Cause = 'drowned' | 'exposure' | 'thirst' | 'hunger' | 'taken'
 
 export type Vitals = {
   breath: number
@@ -19,6 +19,15 @@ export type Vitals = {
   cause: Cause | null
   /** Seconds survived this run. */
   elapsed: number
+  /** The shark's mark: bleeding until it clots. A second bite ends the run. */
+  wounded: boolean
+  woundClock: number
+  /** Whisper latches — each line fires once per decline, re-arms on recovery. */
+  saidKnot: boolean
+  saidGnaw: boolean
+  saidSalt: boolean
+  saidLead: boolean
+  saidCold: boolean
 }
 
 /** Seconds, from full to empty, under the stated conditions. */
@@ -39,6 +48,9 @@ const DEHYDRATION = 170
 const STARVATION = 260
 const MENDING = 190
 
+/** Seconds for a bite to clot. Until then it taxes strength and appetite. */
+const WOUND_CLOT = 150
+
 export type VitalsContext = {
   submerged: boolean
   depth: number
@@ -49,6 +61,8 @@ export type VitalsContext = {
   cold?: number
   /** Storm swim-cost multiplier — effort burns stamina faster. */
   swimCost?: number
+  /** Quiet one-liners ("Your stomach knots.") — fired once per decline. */
+  whisper?: (text: string) => void
 }
 
 export function createVitals(): Vitals {
@@ -62,6 +76,13 @@ export function createVitals(): Vitals {
     alive: true,
     cause: null,
     elapsed: 0,
+    wounded: false,
+    woundClock: 0,
+    saidKnot: false,
+    saidGnaw: false,
+    saidSalt: false,
+    saidLead: false,
+    saidCold: false,
   }
 }
 
@@ -98,8 +119,49 @@ export function updateVitals(v: Vitals, dt: number, ctx: VitalsContext) {
   else v.warmth = drain(v.warmth, dt * (ctx.submerged ? 1.35 : 1) * cold, WARMTH_IN_WATER)
   if (ctx.onLand) v.warmth = drain(v.warmth, dt * cold, WARMTH_ON_LAND)
 
+  // An open wound feeds the sea a little of you too, and caps how strong
+  // you can get until it clots
   v.water = drain(v.water, dt * (1 + ctx.effort * 0.5), THIRST)
-  v.food = drain(v.food, dt * (1 + ctx.effort * 0.35), HUNGER)
+  v.food = drain(v.food, dt * (1 + ctx.effort * 0.35) * (v.wounded ? 1.35 : 1), HUNGER)
+
+  // —— the wound ————————————————————————————————————————————
+  if (v.wounded) {
+    v.woundClock += dt
+    if (v.woundClock > WOUND_CLOT) {
+      v.wounded = false
+      ctx.whisper?.('The bleeding slows.')
+    }
+  }
+
+  // —— whispers: the body names what the tanks won't ————————————
+  if (v.food < 0.55 && !v.saidKnot) {
+    v.saidKnot = true
+    ctx.whisper?.('Your stomach knots.')
+  }
+  if (v.food < 0.25 && !v.saidGnaw) {
+    v.saidGnaw = true
+    ctx.whisper?.('Hunger gnaws at you.')
+  }
+  if (v.water < 0.4 && !v.saidSalt) {
+    v.saidSalt = true
+    ctx.whisper?.('Your mouth is full of salt.')
+  }
+  if (v.stamina < 0.22 && !v.saidLead) {
+    v.saidLead = true
+    ctx.whisper?.('Your arms are turning to lead.')
+  } else if (v.stamina > 0.5) {
+    v.saidLead = false
+  }
+  if (v.warmth < 0.3 && !v.saidCold) {
+    v.saidCold = true
+    ctx.whisper?.('You are cold to the bone.')
+  }
+  if (v.food > 0.55) {
+    v.saidKnot = false
+    v.saidGnaw = false
+  }
+  if (v.water > 0.5) v.saidSalt = false
+  if (v.warmth > 0.45) v.saidCold = false
 
   let harm = 0
   if (v.breath <= 0) harm += dt / DROWNING
@@ -119,9 +181,54 @@ export function updateVitals(v: Vitals, dt: number, ctx: VitalsContext) {
   }
 }
 
-/** Exhaustion throttles the stroke rather than stopping it dead. */
-export function strokeThrottle(v: Vitals) {
-  return 0.45 + 0.55 * Math.min(1, v.stamina / 0.35)
+/**
+ * What the body has left for the swim model. Starving and bleeding cap how
+ * much strength you can hold; low breath and spent muscles shake the stroke.
+ */
+export function swimLimits(v: Vitals) {
+  const cap = Math.min(1, v.wounded ? 0.6 : 1, v.food < 0.3 ? 0.35 + 0.65 * (v.food / 0.3) : 1)
+  const strength = Math.min(v.stamina, cap)
+  const breathShort = v.breath < 0.35 ? (0.35 - v.breath) / 0.35 : 0
+  const spentShake = v.stamina < 0.18 ? ((0.18 - v.stamina) / 0.18) * 0.5 : 0
+  return {
+    speedScale: 0.55 + 0.45 * strength,
+    climbScale: 0.45 + 0.55 * strength,
+    cadenceScale: 0.68 + 0.32 * strength,
+    wobble: Math.min(1, breathShort + spentShake),
+  }
+}
+
+/**
+ * The shark's answer when you don't have one. A first bite wounds: bleeding
+ * that taxes strength and appetite until it clots. A second bite while the
+ * wound is still open ends the run — the ocean keeps you.
+ */
+export function bite(v: Vitals, whisper?: (text: string) => void) {
+  if (!v.alive) return
+  if (v.wounded) {
+    v.alive = false
+    v.cause = 'taken'
+    return
+  }
+  v.wounded = true
+  v.woundClock = 0
+  v.stamina = Math.min(v.stamina, 0.5)
+  whisper?.('Its teeth rake your side. The water tastes of iron.')
+}
+
+/** Tuning hooks for the ?breath / ?food / ?wound URL params. */
+export function debugSetVitals(
+  v: Vitals,
+  patch: { breath?: number; food?: number; water?: number; warmth?: number; wound?: boolean },
+) {
+  if (patch.breath !== undefined) v.breath = Math.min(1, Math.max(0, patch.breath))
+  if (patch.food !== undefined) v.food = Math.min(1, Math.max(0, patch.food))
+  if (patch.water !== undefined) v.water = Math.min(1, Math.max(0, patch.water))
+  if (patch.warmth !== undefined) v.warmth = Math.min(1, Math.max(0, patch.warmth))
+  if (patch.wound) {
+    v.wounded = true
+    v.woundClock = 0
+  }
 }
 
 export function eat(v: Vitals, food: number, water = 0) {

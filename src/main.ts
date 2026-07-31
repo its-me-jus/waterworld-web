@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { createOceanAudio } from './audio'
 import { createClimate } from './climate'
 import { createTouchControls } from './controls'
+import { createForage } from './forage'
 import { createHud } from './hud'
 import { createInputState, isLowPowerDevice, preferTouchUI } from './input'
 import { createInteractions } from './interact'
@@ -10,20 +11,33 @@ import { createIsland } from './island'
 import { createOcean } from './ocean'
 import { bindKeyboardMouse, createPlayer, updatePlayer } from './player'
 import { createSalvage } from './salvage'
+import { createSeaState } from './sea'
+import { createShark } from './shark'
 import { createShoreSurf } from './shore'
 import { createSky } from './sky'
 import { createSplashLayer } from './splash'
 import { createSwimmer } from './swimmer'
-import { createVitals, resetVitals, strokeThrottle, updateVitals } from './survival'
+import {
+  createVitals,
+  debugSetVitals,
+  resetVitals,
+  swimLimits,
+  updateVitals,
+} from './survival'
 import { createUnderwaterWorld } from './underwater'
-import { applyStormToWaves, sampleOcean } from './waves'
+import { applyStormToWaves, oceanState, sampleOcean } from './waves'
 import { createWreck } from './wreck'
+import { createWreckLoot } from './wreckloot'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('#app missing')
 
 const mobile = preferTouchUI()
 const lowPower = isLowPowerDevice()
+
+const depthReadout = document.createElement('div')
+depthReadout.id = 'depth'
+app.appendChild(depthReadout)
 
 const crosshair = document.createElement('div')
 crosshair.id = 'crosshair'
@@ -110,7 +124,7 @@ let prevSurfaceForAudio = Number.NaN
 
 // ?depth=6&pitch=-0.2 spawns submerged, ?x=&z=&yaw= spawns somewhere specific —
 // both handy when tuning the underwater look, the wreck, or the island.
-// ?hour=18 starts at dusk, ?storm=1 locks a full squall.
+// ?hour=18 starts at dusk, ?storm=1 locks a full squall, ?calm=1 a glass-off.
 const params = new URLSearchParams(location.search)
 const num = (key: string, fallback: number) =>
   params.has(key) ? Number(params.get(key)) : fallback
@@ -119,6 +133,10 @@ const climate = createClimate({
   hour: num('hour', 9.5),
   storm: params.has('storm') ? Number(params.get('storm')) : undefined,
 })
+
+// The sea's slow breathing — seasons and glass-offs, stacked under the squalls
+const sea = createSeaState()
+if (params.has('calm')) sea.pinCalm()
 
 // Capture the sky (and clouds) into a cube map so the water reflects the real sky
 const envRT = new THREE.WebGLCubeRenderTarget(lowPower ? 128 : 256)
@@ -151,6 +169,15 @@ function spawn() {
 spawn()
 
 const vitals = createVitals()
+// ?breath / ?food / ?water / ?warmth / ?wound pre-set the body, for tuning
+debugSetVitals(vitals, {
+  breath: params.has('breath') ? Number(params.get('breath')) : undefined,
+  food: params.has('food') ? Number(params.get('food')) : undefined,
+  water: params.has('water') ? Number(params.get('water')) : undefined,
+  warmth: params.has('warmth') ? Number(params.get('warmth')) : undefined,
+  wound: params.has('wound') ? true : undefined,
+})
+
 const interactions = createInteractions()
 const salvage = createSalvage(scene, {
   interactions,
@@ -169,15 +196,58 @@ touch.setVisible(true)
 
 const hud = createHud(app, { touch: mobile, onRestart: restart })
 let dead = false
+let deathT = 0
+let hasDived = false
+
+// —— the shark, and the wreck's answer to it ————————————————————————
+// The fin is a rare event until you've dived the wreck; the mate's spear,
+// once found, makes a run a question you can answer.
+let loot: ReturnType<typeof createWreckLoot>
+const shark = createShark(scene, {
+  resolve: wreck.resolve,
+  whisper: hud.whisper,
+  // ?shark=8 summons the first pass in eight seconds, for tuning
+  summonIn: params.has('shark') ? Number(params.get('shark')) : undefined,
+  // ?commit=1 makes every armed pass run at you — combat tuning
+  alwaysCommit: params.has('commit'),
+  onCommit: () => {},
+  onBite: () => loot.onBite(),
+})
+
+loot = createWreckLoot(app, camera, hud, vitals, {
+  interactions,
+  knifeSpot: wreck.knifeSpot,
+  takeKnife: wreck.takeKnife,
+  lockerSpot: wreck.lockerSpot,
+  lockerState: () => wreck.lockerState,
+  cutLashing: wreck.cutLashing,
+  stripLocker: wreck.stripLocker,
+  shark,
+  thump: (i) => oceanAudio.impact(i),
+})
+// ?knife=1 skips the deck dive, ?spear=1 starts armed — both for tuning
+if (params.has('knife')) loot.grant('knife')
+if (params.has('spear')) loot.grant('spear')
+
+const forage = createForage(hud, vitals, {
+  interactions,
+  provisionSpot: wreck.provisionSpot,
+  takeProvision: wreck.takeProvision,
+  fish: underwaterWorld.fish,
+})
 
 function restart() {
   spawn()
   resetVitals(vitals)
   salvage.reset(new THREE.Vector3(player.x, player.y, player.z))
+  wreck.reset()
+  loot.reset()
   hud.clearDead()
   hud.setPrompt(null)
   touch.setAction(null)
   dead = false
+  deathT = 0
+  hasDived = false
 }
 
 const desktop = bindKeyboardMouse(renderer.domElement, player, {
@@ -191,12 +261,32 @@ if (mobile) document.body.classList.add('playing')
 
 // Dev-only handle, for poking at state from the console or a headless run
 if (import.meta.env.DEV) {
-  Object.assign(window as unknown as Record<string, unknown>, {
-    ww: { player, camera, vitals, interactions, salvage, island, wreck, climate, shore },
+  const w = window as unknown as Record<string, unknown>
+  // Loot world spots, for the headless shot suite and tuning sessions
+  const spots: Record<string, unknown> = { locker: wreck.lockerSpot().toArray() }
+  const knife = wreck.knifeSpot()
+  if (knife) spots.knife = knife.toArray()
+
+  Object.assign(w, {
+    ww: { player, camera, vitals, interactions, salvage, island, wreck, climate, shore, shark, loot },
+    __shark: shark,
+    __spots: spots,
+    // Aim the swimmer's eye at the shark — headless combat tests and tuning
+    __faceShark: () => {
+      if (!shark.active) return false
+      const p = shark.position
+      const dx = p.x - camera.position.x
+      const dy = p.y - camera.position.y
+      const dz = p.z - camera.position.z
+      player.yaw = Math.atan2(-dx, -dz)
+      player.pitch = Math.atan2(dy, Math.hypot(dx, dz))
+      return true
+    },
   })
 }
 
-const clock = new THREE.Clock()
+const timer = new THREE.Timer()
+timer.connect(document)
 let bubbleTimer = 0
 let envTimer = 0
 
@@ -247,12 +337,16 @@ const underHemiSky = new THREE.Color('#6fc6d8')
 const underHemiNight = new THREE.Color('#1a3a48')
 
 function frame() {
-  const dt = Math.min(clock.getDelta(), 0.05)
-  const t = clock.elapsedTime
+  timer.update()
+  const dt = Math.min(timer.getDelta(), 0.05)
+  const t = timer.getElapsed()
 
   const weather = climate.update(dt)
   applyStormToWaves(weather.storm)
   syncWaves()
+  // The sea breathes under the squalls — glass-offs oil the chop down
+  sea.update(dt, t)
+  oceanAudio.setSeaWeight(sea.weight)
 
   input.interact = false
   touch.apply(input)
@@ -261,8 +355,8 @@ function frame() {
   if (
     input.moveForward ||
     input.moveStrafe ||
-    input.lookX ||
-    input.lookY ||
+    input.lookDeltaX ||
+    input.lookDeltaY ||
     input.rise ||
     input.dive
   ) {
@@ -277,14 +371,17 @@ function frame() {
     input.dive = false
     input.interact = false
   } else {
-    // Exhaustion throttles the stroke rather than stopping it dead
-    const throttle = strokeThrottle(vitals) / weather.swimCost
-    input.moveForward *= throttle
-    input.moveStrafe *= throttle
+    // A squall taxes every stroke; exhaustion is handled inside the swim model
+    input.moveForward /= weather.swimCost
+    input.moveStrafe /= weather.swimCost
   }
 
-  const view = updatePlayer(player, camera, input, dt, t, collide, island.heightAt)
+  // Last frame's tanks drive this frame's body — one frame of lag on a
+  // minutes-long decline is nothing
+  const limits = swimLimits(vitals)
+  const view = updatePlayer(player, camera, input, dt, t, collide, island.heightAt, limits)
   const { underwater, surfaceY, depth } = view
+  if (depth > 1) hasDived = true
 
   // Ashore and on dry ground — wading the shallows still counts as in the sea
   const onLand = view.walking && view.groundY > 0.3
@@ -295,12 +392,22 @@ function frame() {
     onLand,
     cold: weather.cold,
     swimCost: weather.swimCost,
+    whisper: hud.whisper,
+  })
+  // Heartbeat and stomach, off the same tanks the HUD reads
+  oceanAudio.setVitals({
+    breath: vitals.breath < 0.35 ? (0.35 - vitals.breath) / 0.35 : 0,
+    hunger: 1 - vitals.food,
   })
 
   if (!vitals.alive && !dead) {
     dead = true
     hud.setDead(vitals.cause, vitals.elapsed)
     if (document.pointerLockElement) document.exitPointerLock()
+  }
+  if (dead) {
+    deathT += dt
+    oceanAudio.dim(Math.min(1, deathT / 3.2))
   }
 
   if (Number.isNaN(prevSurfaceForAudio)) prevSurfaceForAudio = surfaceY
@@ -316,10 +423,19 @@ function frame() {
   skyRig.sky.position.set(camera.position.x, 0, camera.position.z)
   skyRig.clouds.position.set(camera.position.x, 0, camera.position.z)
   skyRig.stars.position.set(camera.position.x, 0, camera.position.z)
+  // A heavy sea carries more cloud; a glass-off opens the sky up — on top of
+  // whatever the squall clock is already doing
+  const cover = skyRig.clouds.material as THREE.ShaderMaterial
+  cover.uniforms.uCover.value = THREE.MathUtils.clamp(
+    cover.uniforms.uCover.value + (0.5 - sea.weight) * 0.14,
+    0.1,
+    0.7,
+  )
   follow(camera.position.x, camera.position.z)
   island.setHaze(skyRig.horizonColor)
 
   oceanMat.uniforms.uTime.value = t
+  oceanMat.uniforms.uAmp.value = oceanState.amp
   oceanMat.uniforms.uCameraPos.value.copy(camera.position)
   oceanMat.uniforms.uSunDir.value.copy(skyRig.sunDir)
   oceanMat.uniforms.uHorizonColor.value.copy(skyRig.horizonColor)
@@ -360,6 +476,8 @@ function frame() {
 
   document.body.classList.toggle('underwater', underwater)
   underOverlay.style.opacity = String(view.submersion)
+  depthReadout.textContent = underwater ? `${depth.toFixed(1)} m` : ''
+  depthReadout.style.opacity = underwater ? '1' : '0'
 
   underwaterWorld.update({
     dt,
@@ -370,21 +488,26 @@ function frame() {
     underwater,
     pixelRatio: renderer.getPixelRatio(),
     biolum: weather.biolum,
+    effort: view.effort,
   })
 
   wreck.update(t, camera)
   island.update(camera, underwater)
   shore.update(t, camera, underwater)
   salvage.update(t, camera.position)
+  loot.update(dt, view)
+  forage.update(camera, view)
+  shark.update(dt, t, camera, hasDived)
+  oceanAudio.setDanger(shark.proximity)
 
   const reachable = vitals.alive ? interactions.find(camera) : null
   if (reachable && input.interact) reachable.use()
   hud.setPrompt(reachable ? { verb: reachable.verb, label: reachable.label } : null)
   touch.setAction(reachable ? reachable.verb : null)
   hud.setStash(salvage.stash, salvage.labels)
-  hud.update(vitals, view.submersion > 0.85)
+  hud.update(vitals, view.submersion > 0.85, dt)
 
-  splash.update(dt, camera.position.y, surfaceY, view.moving)
+  splash.update(dt, camera.position.y, surfaceY, view.moving, view.submersion)
 
   if (underwater) {
     bubbleTimer -= dt
@@ -411,6 +534,7 @@ function frame() {
   const weather = climate.update(0)
   applyStormToWaves(weather.storm)
   syncWaves()
+  sea.update(0, 0)
   skyRig.update(0, weather)
   island.setHaze(skyRig.horizonColor)
   scene.background.copy(skyRig.horizonColor)

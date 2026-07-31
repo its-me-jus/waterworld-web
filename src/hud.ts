@@ -6,12 +6,22 @@ import type { Stash, StashKind } from './salvage'
  * or what exists. A vital only draws itself once it's worth worrying about, the
  * breath ring only shows while you're holding it, and the action prompt only
  * appears when something is already within arm's reach.
+ *
+ * Two quiet layers on top of that:
+ *
+ *  - Whispers: one fading line that names what the body already told you
+ *    ("Your stomach knots."). Queued so a run of them can't stomp each other.
+ *  - Veils: diegetic vignettes — the closing dark of a held breath, the grey
+ *    weariness of an empty belly, the red pulse of an open wound.
  */
 
 export type Prompt = { verb: string; label: string } | null
 
 const RING_RADIUS = 30
 const RING = 2 * Math.PI * RING_RADIUS
+
+const damp = (current: number, target: number, lambda: number, dt: number) =>
+  current + (target - current) * (1 - Math.exp(-lambda * dt))
 
 const ROWS: { key: keyof Vitals; label: string; from: number }[] = [
   { key: 'health', label: 'Condition', from: 0.99 },
@@ -26,6 +36,7 @@ const DEATH_TITLE: Record<Cause, string> = {
   exposure: 'The cold took you',
   thirst: 'You died of thirst',
   hunger: 'You starved',
+  taken: 'The ocean kept you',
 }
 
 export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: () => void }) {
@@ -42,6 +53,20 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     <div id="hurt"></div>
   `
   app.appendChild(root)
+
+  const whisperBox = document.createElement('div')
+  whisperBox.id = 'whisper'
+  app.appendChild(whisperBox)
+
+  const breathVeil = document.createElement('div')
+  breathVeil.id = 'breath-veil'
+  app.appendChild(breathVeil)
+  const wearyVeil = document.createElement('div')
+  wearyVeil.id = 'weary-veil'
+  app.appendChild(wearyVeil)
+  const woundVeil = document.createElement('div')
+  woundVeil.id = 'wound-veil'
+  app.appendChild(woundVeil)
 
   const breath = root.querySelector('#breath') as SVGSVGElement
   const breathFill = root.querySelector('.breath-fill') as SVGCircleElement
@@ -80,8 +105,26 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
   let lastPrompt = ''
   let lastStash = ''
 
-  function setPrompt(prompt: Prompt) {
-    const text = prompt ? `${prompt.verb} ${prompt.label.toLowerCase()}` : ''
+  const whisperQueue: string[] = []
+  let whisperT = 0
+  let whisperOn = false
+
+  let veilBreath = 0
+  let veilWeary = 0
+  let veilWound = 0
+
+  /** A quiet one-liner, queued so several can't stomp each other. */
+  function whisper(text: string) {
+    if (whisperQueue.length < 5) whisperQueue.push(text)
+  }
+
+  function setPrompt(prompt: Prompt | string | null) {
+    const text =
+      typeof prompt === 'string'
+        ? prompt
+        : prompt
+          ? `${prompt.verb} ${prompt.label.toLowerCase()}`
+          : ''
     if (text === lastPrompt) return
     lastPrompt = text
     promptText.textContent = text
@@ -100,7 +143,7 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     stashBox.textContent = text
   }
 
-  function update(vitals: Vitals, submerged: boolean) {
+  function update(vitals: Vitals, submerged: boolean, dt: number) {
     const showBreath = submerged || vitals.breath < 0.995
     breath.style.opacity = showBreath ? '1' : '0'
     if (showBreath) {
@@ -116,11 +159,50 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     }
 
     hurt.style.opacity = String(Math.max(0, 1 - vitals.health / 0.55) * 0.55)
+
+    // —— whispers ————————————————————————————————————————————
+    whisperT -= dt
+    if (whisperT <= 0) {
+      const next = whisperQueue.shift()
+      if (next) {
+        whisperBox.textContent = next
+        whisperBox.classList.add('on')
+        whisperOn = true
+        whisperT = 3.6
+      } else if (whisperOn) {
+        whisperBox.classList.remove('on')
+        whisperOn = false
+      }
+    }
+
+    // —— veils: the body as readout ———————————————————————————
+    const breathShort = vitals.breath < 0.35 ? (0.35 - vitals.breath) / 0.35 : 0
+    veilBreath = damp(veilBreath, breathShort * (submerged ? 1 : 0.35), 5, dt)
+    breathVeil.style.opacity = veilBreath.toFixed(3)
+    breathVeil.classList.toggle('critical', submerged && vitals.breath < 0.18)
+    if (!submerged && vitals.breath >= 0.99) breathVeil.style.opacity = '0'
+
+    const weary =
+      Math.max(vitals.food < 0.3 ? (0.3 - vitals.food) / 0.3 : 0, 1 - vitals.stamina) * 0.55
+    veilWeary = damp(veilWeary, weary, 2.5, dt)
+    wearyVeil.style.opacity = veilWeary.toFixed(3)
+
+    veilWound = damp(veilWound, vitals.wounded ? 0.6 : 0, vitals.wounded ? 4 : 1.2, dt)
+    woundVeil.style.opacity = veilWound.toFixed(3)
+    woundVeil.classList.toggle('bleeding', vitals.wounded)
   }
 
   function setDead(cause: Cause | null, elapsed: number) {
     deathTitle.textContent = cause ? DEATH_TITLE[cause] : 'You died'
-    deathLine.textContent = `Survived ${formatRun(elapsed)} · no save, no shortcut back`
+    let line = `Survived ${formatRun(elapsed)} · no save, no shortcut back`
+    try {
+      const best = Math.max(elapsed, Number(localStorage.getItem('ww.best') ?? 0))
+      localStorage.setItem('ww.best', String(best))
+      if (best > elapsed + 1) line += ` · longest drift ${formatRun(best)}`
+    } catch {
+      // Private-mode storage is a nice-to-have, never a reason to lose the ending
+    }
+    deathLine.textContent = line
     death.classList.add('on')
     root.classList.add('dim')
   }
@@ -128,9 +210,21 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
   function clearDead() {
     death.classList.remove('on')
     root.classList.remove('dim')
+    whisperQueue.length = 0
+    whisperT = 0
   }
 
-  return { update, setPrompt, setStash, setDead, clearDead }
+  return {
+    update,
+    whisper,
+    setPrompt,
+    setStash,
+    setDead,
+    clearDead,
+    get promptShowing() {
+      return promptBox.classList.contains('on')
+    },
+  }
 }
 
 export type Hud = ReturnType<typeof createHud>

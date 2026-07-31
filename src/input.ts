@@ -5,8 +5,10 @@ export type InputState = {
   moveForward: number
   /** -1..1 strafe (A/D or left stick X) */
   moveStrafe: number
-  lookX: number
-  lookY: number
+  /** Touch-drag look pixels this frame (screen X). */
+  lookDeltaX: number
+  /** Touch-drag look pixels this frame (screen Y). */
+  lookDeltaY: number
   rise: boolean
   dive: boolean
   /** One-shot: set on the frame the use key/button goes down, cleared by the game. */
@@ -17,8 +19,8 @@ export function createInputState(): InputState {
   return {
     moveForward: 0,
     moveStrafe: 0,
-    lookX: 0,
-    lookY: 0,
+    lookDeltaX: 0,
+    lookDeltaY: 0,
     rise: false,
     dive: false,
     interact: false,

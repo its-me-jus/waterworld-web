@@ -34,6 +34,10 @@ export let chopScale = 1
  * Push the sea into a squall. Short waves take more of the boost than the long
  * swell, so the surface gets mean without the mesh folding over itself.
  * Mutates WAVES in place — the ocean shader copies the same numbers each frame.
+ *
+ * Composes with the sea state's slow `amp` (below): storms are the minutes-fast
+ * squall, `amp` is the hours-slow breathing. Sample-time multiply keeps them
+ * independent.
  */
 export function applyStormToWaves(storm: number) {
   const s = Math.max(0, Math.min(1, storm))
@@ -43,6 +47,13 @@ export function applyStormToWaves(storm: number) {
     WAVES[i].steepness = WAVE_BASE[i] * (1 + s * (0.35 + 0.95 * short))
   }
 }
+
+/**
+ * Shared sea state, written once per frame by main (see sea.ts). Every CPU
+ * consumer of the swell — player, flotsam, splash — samples through this so
+ * calm spells flatten the whole world at once, not just the shader.
+ */
+export const oceanState = { amp: 1 }
 
 /** Cheap hash noise for chop / caustics (matches GLSL hash vibe). */
 export function hash2(x: number, z: number) {
@@ -76,7 +87,7 @@ export function fbm(x: number, z: number) {
   return v
 }
 
-export function sampleOcean(x: number, z: number, time: number) {
+export function sampleOcean(x: number, z: number, time: number, amp = oceanState.amp) {
   let y = 0
   let tangentX = 1
   let tangentY = 0
@@ -93,26 +104,29 @@ export function sampleOcean(x: number, z: number, time: number) {
     const k = (Math.PI * 2) / wave.wavelength
     const c = Math.sqrt(9.8 / k) * wave.speed
     const f = k * (dX * x + dZ * z - c * time) + wave.phase
-    const a = wave.steepness / k
+    const steepness = wave.steepness * amp
+    const a = steepness / k
     const cosF = Math.cos(f)
     const sinF = Math.sin(f)
 
     y += a * sinF
 
-    tangentX += -dX * dX * wave.steepness * sinF
-    tangentY += dX * wave.steepness * cosF
-    tangentZ += -dX * dZ * wave.steepness * sinF
+    tangentX += -dX * dX * steepness * sinF
+    tangentY += dX * steepness * cosF
+    tangentZ += -dX * dZ * steepness * sinF
 
-    binormalX += -dX * dZ * wave.steepness * sinF
-    binormalY += dZ * wave.steepness * cosF
-    binormalZ += -dZ * dZ * wave.steepness * sinF
+    binormalX += -dX * dZ * steepness * sinF
+    binormalY += dZ * steepness * cosF
+    binormalZ += -dZ * dZ * steepness * sinF
   }
 
-  // Wind chop — breaks repeating Gerstner ridges; storms raise chopScale
+  // Wind chop — breaks repeating Gerstner ridges. Storms raise chopScale;
+  // the sea state's amp oils it down on a glass-off so calm reads as calm.
   const chop =
     ((fbm(x * 0.08 + time * 0.07, z * 0.08 - time * 0.05) - 0.5) * 0.55 +
       (fbm(x * 0.22 - time * 0.11, z * 0.22) - 0.5) * 0.22) *
-    chopScale
+    chopScale *
+    amp
   y += chop
 
   const nx = binormalY * tangentZ - binormalZ * tangentY

@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { buildSpear } from './spear'
 import { fbm, sampleOcean } from './waves'
 
 /**
@@ -36,7 +37,15 @@ function materials() {
       side: THREE.DoubleSide,
     }),
     sand: new THREE.MeshStandardMaterial({ color: 0xa89e86, roughness: 1 }),
-    iron: new THREE.MeshStandardMaterial({ color: 0x5a5048, roughness: 0.65, metalness: 0.55 }),
+    iron: new THREE.MeshStandardMaterial({
+      color: 0x5a5048,
+      roughness: 0.65,
+      metalness: 0.55,
+      // Bare metal goes black with no env light down deep; a whisper of
+      // emissive reads as sheen in the murk
+      emissive: 0x171a1d,
+      emissiveIntensity: 0.55,
+    }),
     rope: new THREE.MeshStandardMaterial({ color: 0x8d7c5c, roughness: 1 }),
     // Thin canvas glows when the sun is behind it. Standard shading has no
     // transmission, so without an emissive lift the backlit side of the sail
@@ -57,6 +66,23 @@ function materials() {
       color: 0x93526f,
       roughness: 0.85,
       side: THREE.DoubleSide,
+    }),
+    // Barnacle clusters — pale cones that make the sunken wood read as
+    // colonised, not freshly varnished
+    barnacle: new THREE.MeshStandardMaterial({
+      color: 0xc7bfae,
+      roughness: 0.98,
+      metalness: 0.0,
+    }),
+    // Salvage: a sheath of sailors' leather and a little brass that survives it
+    leather: new THREE.MeshStandardMaterial({ color: 0x4a3325, roughness: 0.9 }),
+    brass: new THREE.MeshStandardMaterial({
+      color: 0x8f7a3c,
+      roughness: 0.45,
+      metalness: 0.7,
+      // The glint you spot from two metres out — how you find the knife at all
+      emissive: 0x2e2410,
+      emissiveIntensity: 0.6,
     }),
   }
 }
@@ -412,6 +438,106 @@ function seaFan(size: number) {
   return geo
 }
 
+// —— barnacles ————————————————————————————————————————————————
+
+/**
+ * Golden-angle shell of a unit sphere. Shared across the whole wreck, then
+ * placed piece by piece — thousands of shells all face slightly different ways,
+ * which is exactly how a real encrustation reads.
+ */
+const BARNACLE_POINTS: THREE.Vector3[] = (() => {
+  const pts: THREE.Vector3[] = []
+  const N = 240
+  const ga = Math.PI * (3 - Math.sqrt(5))
+  for (let i = 0; i < N; i++) {
+    const y = 1 - (2 * i + 1) / N
+    const r = Math.sqrt(Math.max(0, 1 - y * y))
+    const a = i * ga
+    pts.push(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r))
+  }
+  return pts
+})()
+
+type BarnacleSurface = {
+  centre: THREE.Vector3
+  normal: THREE.Vector3
+  radius: number
+  scale: [number, number, number]
+  count: number
+  seed: number
+}
+
+/**
+ * Clustered little cones over an ellipsoidal patch. Uses InstancedMesh so we
+ * never hit mergeGeometries attribute mismatches (which black-screened the app).
+ */
+function barnacleInstances(spec: BarnacleSurface, material: THREE.Material) {
+  const q = new THREE.Quaternion()
+  const roll = new THREE.Quaternion()
+  const orient = new THREE.Quaternion()
+  const up = new THREE.Vector3(0, 1, 0)
+  const v = new THREE.Vector3()
+  const at = new THREE.Vector3()
+  const scale = new THREE.Vector3()
+  const matrices: THREE.Matrix4[] = []
+
+  q.setFromUnitVectors(up, spec.normal)
+
+  for (let i = 0; i < spec.count; i++) {
+    const dir = BARNACLE_POINTS[(i * 7 + Math.floor(spec.seed * 13)) % BARNACLE_POINTS.length]
+    v.copy(dir).applyQuaternion(q)
+    if (v.dot(spec.normal) < 0.12 || v.lengthSq() < 1e-8) continue
+    v.normalize()
+
+    const jitter = fbm(i * 0.61 + spec.seed, i * 0.37 - spec.seed)
+    const size = (0.045 + jitter * 0.085) * spec.radius
+    at.set(
+      spec.centre.x + v.x * spec.scale[0],
+      spec.centre.y + v.y * spec.scale[1],
+      spec.centre.z + v.z * spec.scale[2],
+    )
+    roll.setFromAxisAngle(up, i * 2.399)
+    orient.setFromUnitVectors(up, v).multiply(roll)
+    // Bake the cone height into the instance scale (unit cone is height 1)
+    scale.set(size * 0.62, size, size * 0.62)
+    matrices.push(new THREE.Matrix4().compose(at, orient, scale))
+  }
+
+  if (!matrices.length) return null
+
+  // Unit cone with tip at +Y — scaled per-instance to barnacle size
+  const geo = new THREE.ConeGeometry(1, 1, 6)
+  geo.translate(0, 0.42, 0)
+  const mesh = new THREE.InstancedMesh(geo, material, matrices.length)
+  for (let i = 0; i < matrices.length; i++) mesh.setMatrixAt(i, matrices[i])
+  mesh.instanceMatrix.needsUpdate = true
+  mesh.frustumCulled = true
+  return mesh
+}
+
+/** Attach barnacle clusters across the wreck. */
+function addBarnacles(parent: THREE.Object3D, material: THREE.Material, low: boolean) {
+  const clusters: BarnacleSurface[] = [
+    // Bow hull, both flanks and along the snapped rail
+    { centre: new THREE.Vector3(-2.4, -12.2, 3.2), normal: new THREE.Vector3(-0.8, 0.45, 0.2).normalize(), radius: 1, scale: [1.6, 1.1, 1.4], count: low ? 14 : 30, seed: 1.7 },
+    { centre: new THREE.Vector3(0.8, -11.6, 5.6), normal: new THREE.Vector3(0.85, 0.5, -0.1).normalize(), radius: 1, scale: [1.3, 1.0, 1.6], count: low ? 14 : 28, seed: 4.1 },
+    { centre: new THREE.Vector3(-0.6, -10.8, 1.8), normal: new THREE.Vector3(0.15, 1, 0.1).normalize(), radius: 1, scale: [1.5, 0.7, 1.8], count: low ? 12 : 24, seed: 8.3 },
+    // Mast, from waterline down
+    { centre: new THREE.Vector3(3.4, -6.5, 1.2), normal: new THREE.Vector3(0.4, 0.1, 0.9).normalize(), radius: 1, scale: [0.5, 2.2, 0.5], count: low ? 10 : 20, seed: 2.9 },
+    // Yard and the capstan crown
+    { centre: new THREE.Vector3(4.4, 1.2, -0.2), normal: new THREE.Vector3(0.2, 0.3, 0.93).normalize(), radius: 1, scale: [1.4, 0.4, 0.4], count: low ? 8 : 14, seed: 6.6 },
+    { centre: new THREE.Vector3(0, 0.6, 5.4), normal: new THREE.Vector3(0.2, 1, 0.15).normalize(), radius: 1, scale: [0.45, 0.3, 0.45], count: low ? 8 : 14, seed: 9.4 },
+    // Anchor and the stern lying on the sand
+    { centre: new THREE.Vector3(7, sandHeight(7, -22) + 0.9, -22), normal: new THREE.Vector3(0.3, 0.9, 0.3).normalize(), radius: 1, scale: [1.2, 0.8, 0.7], count: low ? 12 : 22, seed: 3.2 },
+    { centre: new THREE.Vector3(4.2, -22.2, -17.6), normal: new THREE.Vector3(0.4, 0.85, -0.3).normalize(), radius: 1, scale: [1.6, 0.9, 1.3], count: low ? 14 : 26, seed: 5.8 },
+  ]
+
+  for (const c of clusters) {
+    const mesh = barnacleInstances(c, material)
+    if (mesh) parent.add(mesh)
+  }
+}
+
 // —— flotsam ————————————————————————————————————————————————
 
 /** What this piece of wreckage is worth to someone salvaging it. */
@@ -427,6 +553,10 @@ type Flotsam = {
   phase: number
   /** How the item lies in the water, before the swell tilts it. */
   rest: THREE.Quaternion
+  /** Named items the survival loop can interact with. */
+  id?: string
+  /** Once pried open, it stops riding the swell. */
+  taken?: boolean
 }
 
 export function plankObject(length: number, width: number, mat: THREE.Material) {
@@ -605,6 +735,86 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   )
   group.add(chain)
 
+  // Barnacle crust over wood, spar and iron — what makes her read as sunken
+  // for years rather than parked last week
+  addBarnacles(group, mat.barnacle, low)
+
+  // —— Phase B salvage: the knife and the sealed locker ————————————————
+  // Two dives, two depths. The knife lies by the capstan on the bow deck —
+  // a working dive at ~13 m. The mate's chest went down with the torn stern
+  // and sits on the sand at ~24 m, where the light gives up: the wreck's
+  // depth is the price of what's inside.
+
+  // A galley knife, still in its sheath, laid flat on the deck planking
+  const knife = new THREE.Group()
+  {
+    const sheath = new THREE.Mesh(new THREE.CapsuleGeometry(0.035, 0.22, 4, 8), mat.leather)
+    sheath.scale.set(1, 1, 0.55)
+    knife.add(sheath)
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.016, 0.032), mat.brass)
+    guard.position.y = 0.135
+    knife.add(guard)
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.024, 0.11, 8), mat.timber)
+    grip.position.y = 0.19
+    knife.add(grip)
+    knife.rotation.set(0.06, 0.9, Math.PI / 2 - 0.1)
+    knife.position.set(0.62, 0.05, 4.35)
+    bow.add(knife)
+  }
+
+  // The mate's chest: iron-banded, roped shut, settled into the sand a
+  // couple of metres off the stern's torn ribs
+  const chest = new THREE.Group()
+  chest.position.set(6.8, sandHeight(6.8, -15.5) + 0.2, -15.5)
+  chest.rotation.set(0.05, 0.5, 0.07)
+  group.add(chest)
+
+  const chestBody = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.42, 0.68), mat.plank)
+  chest.add(chestBody)
+  for (const bx of [-0.38, 0.38]) {
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.44, 0.7), mat.iron)
+    band.position.x = bx
+    chest.add(band)
+  }
+
+  // Lid pivots at the back edge so the knife's work swings it wide
+  const lid = new THREE.Group()
+  lid.position.set(0, 0.21, -0.34)
+  chest.add(lid)
+  const lidSlab = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.09, 0.68), mat.plank)
+  lidSlab.position.set(0, 0.045, 0.34)
+  lid.add(lidSlab)
+  for (const bx of [-0.38, 0.38]) {
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.11, 0.7), mat.iron)
+    band.position.set(bx, 0.045, 0.34)
+    lid.add(band)
+  }
+
+  // The rope lashing — what stands between bare hands and the mate's things
+  const lashing = new THREE.Group()
+  for (const lx of [-0.18, 0.18]) {
+    const wrap = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.028, 6, 18), mat.rope)
+    wrap.rotation.y = Math.PI / 2
+    wrap.scale.set(1, 0.72, 0.82)
+    wrap.position.set(lx, 0, 0)
+    lashing.add(wrap)
+  }
+  chest.add(lashing)
+
+  // What's inside, sitting just proud of the chest's open top: an oilskin
+  // pouch over the mate's spear. Hidden by the closed lid until it's cut.
+  const contents = new THREE.Group()
+  contents.position.y = 0.19
+  chest.add(contents)
+  const spearProp = buildSpear()
+  spearProp.scale.setScalar(0.62)
+  spearProp.rotation.set(0.12, 0.3, Math.PI / 2 - 0.06)
+  contents.add(spearProp)
+  const pouch = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.08, 0.17), mat.leather)
+  pouch.position.set(0.16, 0.06, -0.16)
+  pouch.rotation.y = 0.4
+  contents.add(pouch)
+
   // —— growth and rubble, planted by dropping rays onto the rock ——
   const clumps: { pivot: THREE.Group; phase: number }[] = []
   {
@@ -668,6 +878,9 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
 
   // —— flotsam on the surface, riding the real swell ——
   const flotsam: Flotsam[] = []
+  /** World position of the provision crate, refreshed each frame as it bobs. */
+  const provision = new THREE.Vector3()
+  let provisionItem: Flotsam | null = null
   {
     const add = (
       kind: FlotsamKind,
@@ -677,16 +890,31 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
       lift: number,
       spin: number,
       phase: number,
+      id?: string,
     ) => {
       group.add(object)
-      flotsam.push({ object, kind, x, z, lift, spin, phase, rest: object.quaternion.clone() })
+      const item: Flotsam = {
+        object,
+        kind,
+        x,
+        z,
+        lift,
+        spin,
+        phase,
+        rest: object.quaternion.clone(),
+        id,
+      }
+      flotsam.push(item)
+      if (id === 'provision') provisionItem = item
     }
     // The plank he first went overboard clinging to
     add('plank', plankObject(2.7, 0.36, mat.plank), 5.5, 6.5, 0.04, 0.05, 0)
     add('plank', plankObject(1.9, 0.28, mat.plank), 11.5, 12.5, 0.03, -0.04, 1.9)
     add('plank', plankObject(1.4, 0.22, mat.plank), -6.5, 14, 0.03, 0.07, 3.4)
     add('barrel', barrelObject(mat.plank, mat.iron), 8.5, -4.5, 0.12, -0.06, 2.6)
-    add('crate', crateObject(mat.plank), 16, 3.5, 0.16, 0.05, 4.8)
+    // The ship's provision crate — first food in the run, lashed shut and
+    // still floating. Its lid battens are prised off by hand.
+    add('crate', crateObject(mat.plank), 16, 3.5, 0.16, 0.05, 4.8, 'provision')
     add('plank', plankObject(2.2, 0.3, mat.plank), 19.5, -9, 0.03, -0.03, 5.6)
   }
 
@@ -720,11 +948,21 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     }
   }
 
+  // —— salvage state —————————————————————————————————————————
+  let knifeTaken = false
+  let locker: 'sealed' | 'cut' | 'stripped' = 'sealed'
+  /** Time the lashing was cut, so the lid can swing open over a beat. */
+  let lidFrom = -1
+  const knifeWorld = new THREE.Vector3()
+  const lockerWorld = new THREE.Vector3()
+
   // —— per-frame ————————————————————————————————————————————
   const centre = new THREE.Vector3(opts.x, -12, opts.z)
   group.updateMatrixWorld(true)
   /** Where the deck hatch sits in the world — the one way into the hull. */
   const hatchAt = hatch.getWorldPosition(new THREE.Vector3())
+  /** Mast head in world space — the landmark you spot from a kilometre out. */
+  const beacon = mastTip.clone().add(group.position)
 
   const waveUp = new THREE.Vector3()
   const tilt = new THREE.Quaternion()
@@ -732,13 +970,25 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   const sailPos = sailGeo.attributes.position
 
   function update(time: number, camera: THREE.Camera) {
+    // Once the lashing parts, the lid swings wide on its own — no hand model,
+    // just the chest giving up its weight to buoyancy and a nudge
+    if (locker !== 'sealed') {
+      if (lidFrom < 0) lidFrom = time
+      const f = Math.min(1, (time - lidFrom) / 1.6)
+      lid.rotation.x = -1.78 * (f * f * (3 - 2 * f))
+    }
+
     for (const item of flotsam) {
+      if (item.taken) continue
       const water = sampleOcean(opts.x + item.x, opts.z + item.z, time)
       item.object.position.set(item.x, water.y + item.lift, item.z)
       waveUp.set(water.normal.x, water.normal.y, water.normal.z)
       tilt.setFromUnitVectors(UP, waveUp)
       yaw.setFromAxisAngle(UP, item.phase + time * item.spin)
       item.object.quaternion.copy(tilt).multiply(yaw).multiply(item.rest)
+      if (item === provisionItem) {
+        provision.set(opts.x + item.x, water.y + item.lift, opts.z + item.z)
+      }
     }
 
     // Per-vertex work only earns its keep once you're close enough to read it
@@ -763,5 +1013,90 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     sailGeo.computeVertexNormals()
   }
 
-  return { group, centre, hatch: hatchAt, flotsam, resolve, update }
+  /**
+   * The provision crate, while it still floats. Null once it's been pried
+   * open and stripped — the hulk slips under a swell and is gone.
+   */
+  function provisionSpot() {
+    return provisionItem && !provisionItem.taken ? provision : null
+  }
+
+  /** Pry the crate open: take the food, lose the box to the sea. */
+  function takeProvision() {
+    if (!provisionItem || provisionItem.taken) return false
+    provisionItem.taken = true
+    provisionItem.object.visible = false
+    return true
+  }
+
+  /** World position of the knife on the bow deck, or null once it's yours. */
+  function knifeSpot() {
+    return knifeTaken ? null : knife.getWorldPosition(knifeWorld)
+  }
+
+  /** Work the knife free of the deck — one time only. */
+  function takeKnife() {
+    if (knifeTaken) return false
+    knifeTaken = true
+    knife.visible = false
+    return true
+  }
+
+  /** World position of the mate's chest by the stern. */
+  function lockerSpot() {
+    return chest.getWorldPosition(lockerWorld)
+  }
+
+  /** Part the rope lashing: the lid swings wide. Needs the knife, one time. */
+  function cutLashing() {
+    if (locker !== 'sealed') return false
+    locker = 'cut'
+    chest.remove(lashing)
+    return true
+  }
+
+  /** Take the pouch and the spear, leaving the empty chest to the dark. */
+  function stripLocker() {
+    if (locker !== 'cut') return false
+    locker = 'stripped'
+    contents.visible = false
+    return true
+  }
+
+  /** A new run: the knife is back on the deck, the locker roped shut, the
+   *  provision crate riding the swell again. */
+  function reset() {
+    knifeTaken = false
+    knife.visible = true
+    locker = 'sealed'
+    lidFrom = -1
+    lid.rotation.x = 0
+    if (lashing.parent !== chest) chest.add(lashing)
+    contents.visible = true
+    if (provisionItem) {
+      provisionItem.taken = false
+      provisionItem.object.visible = true
+    }
+  }
+
+  return {
+    group,
+    centre,
+    beacon,
+    hatch: hatchAt,
+    flotsam,
+    resolve,
+    update,
+    provisionSpot,
+    takeProvision,
+    knifeSpot,
+    takeKnife,
+    lockerSpot,
+    cutLashing,
+    stripLocker,
+    reset,
+    get lockerState() {
+      return locker
+    },
+  }
 }
