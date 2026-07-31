@@ -56,19 +56,15 @@ const BREAST: Key[] = [
 ]
 
 /**
- * Treading water — elbows bent, forearms angled inward, hands meeting in
- * front of the chest like a real scull. The sweep rides on shoulder twist
- * (forearms fan out/in across the midline) with the wrist pitching against
- * each direction, palms pressing water the way sculling actually works.
- * Keeping the hands pulled back toward the chest also keeps them inside the
- * frame on a portrait phone, where straight-arm poses crop at the corners.
+ * Idle / straddling — arms hang by the sides, out of the forward view.
+ * Near-static keys with a whisper of sway so the hang breathes instead of
+ * freezing. Hands only come into frame once effort blends toward crawl or
+ * breaststroke.
  */
-const SCULL: Key[] = [
-  [0.0, 1.18, 0.24, 0.32, 0.95, 0.5, 0.22],
-  [0.25, 1.1, 0.12, 0.2, 1.08, 0.05, 0.0],
-  [0.5, 1.2, 0.26, 0.32, 0.95, -0.5, -0.22],
-  [0.75, 1.1, 0.12, 0.2, 1.08, -0.05, 0.0],
-  [1.0, 1.18, 0.24, 0.32, 0.95, 0.5, 0.22],
+const REST: Key[] = [
+  [0.0, 0.06, 0.28, 0.04, 0.22, 0.12, 0.04],
+  [0.5, 0.1, 0.32, 0.0, 0.28, 0.08, -0.04],
+  [1.0, 0.06, 0.28, 0.04, 0.22, 0.12, 0.04],
 ]
 
 /** [phase, hipFlex, kneeBend, legSpread] for the breaststroke whip kick. */
@@ -351,7 +347,7 @@ export function createSwimmer(camera: THREE.Camera) {
   // —— animation scratch ————————————————————————————————————
   const poseCrawl: Pose = { swing: 0, spread: 0, twist: 0, elbow: 0, wristPitch: 0, wristRoll: 0 }
   const poseBreast: Pose = { swing: 0, spread: 0, twist: 0, elbow: 0, wristPitch: 0, wristRoll: 0 }
-  const poseScull: Pose = { swing: 0, spread: 0, twist: 0, elbow: 0, wristPitch: 0, wristRoll: 0 }
+  const poseRest: Pose = { swing: 0, spread: 0, twist: 0, elbow: 0, wristPitch: 0, wristRoll: 0 }
   const legWhip = { hip: 0, knee: 0, spread: 0 }
   const euler = new THREE.Euler(0, 0, 0, 'XYZ')
   const qA = new THREE.Quaternion()
@@ -392,7 +388,7 @@ export function createSwimmer(camera: THREE.Camera) {
     prone = damp(prone, frame.moving * (0.92 + 0.3 * sub), 4, dt)
     const wCrawl = drive * (1 - sub)
     const wBreast = drive * sub
-    const wScull = Math.max(0, 1 - drive)
+    const wRest = Math.max(0, 1 - drive)
 
     // Torso rolls toward the pulling arm; arms inherit most of it. Without
     // this the crawl reads as a windmill bolted to a surfboard.
@@ -400,7 +396,7 @@ export function createSwimmer(camera: THREE.Camera) {
     // Breaststroke breathes: chest rises into the insweep, settles on the glide
     const breastPulse = Math.sin(frame.stroke * TAU * 2 + 0.8) * 0.045 * wBreast
     // Idle breathing lift
-    const breathe = Math.sin(time * 0.8) * 0.006 * wScull
+    const breathe = Math.sin(time * 0.8) * 0.006 * wRest
 
     body.rotation.x = -prone + breastPulse
     body.rotation.z = crawlRoll
@@ -410,46 +406,46 @@ export function createSwimmer(camera: THREE.Camera) {
     armRoot.position.z = prone * 0.05
 
     const smoothing = 1 - Math.exp(-dt * 14)
-    const scullPhase = time * 0.42
+    const restPhase = time * 0.22
 
     for (const arm of arms) {
       samplePose(CRAWL, frame.stroke + arm.offset, poseCrawl)
       samplePose(BREAST, frame.stroke, poseBreast)
-      samplePose(SCULL, scullPhase + arm.offset * 0.5, poseScull)
+      samplePose(REST, restPhase + arm.offset * 0.5, poseRest)
 
       // Clavicle follows the stroke at a fraction — shoulders rise into the
       // reach and dip into the pull instead of staying pinned to the camera
       const clavSwing =
         (poseCrawl.swing - 0.6) * 0.09 * wCrawl +
         (poseBreast.swing - 0.8) * 0.07 * wBreast +
-        Math.sin(time * 0.8 + arm.offset * 3) * 0.015 * wScull
+        Math.sin(time * 0.8 + arm.offset * 3) * 0.01 * wRest
       arm.clavicle.rotation.x = damp(arm.clavicle.rotation.x, clavSwing, 10, dt)
 
       euler.set(poseCrawl.swing, arm.sign * poseCrawl.twist, arm.sign * poseCrawl.spread)
       qA.setFromEuler(euler)
       euler.set(poseBreast.swing, arm.sign * poseBreast.twist, arm.sign * poseBreast.spread)
       qB.setFromEuler(euler)
-      euler.set(poseScull.swing, arm.sign * poseScull.twist, arm.sign * poseScull.spread)
+      euler.set(poseRest.swing, arm.sign * poseRest.twist, arm.sign * poseRest.spread)
       qC.setFromEuler(euler)
-      blend(wCrawl, wBreast, wScull)
+      blend(wCrawl, wBreast, wRest)
       arm.shoulder.quaternion.slerp(qOut, smoothing)
 
       euler.set(poseCrawl.elbow, 0, 0)
       qA.setFromEuler(euler)
       euler.set(poseBreast.elbow, 0, 0)
       qB.setFromEuler(euler)
-      euler.set(poseScull.elbow, 0, 0)
+      euler.set(poseRest.elbow, 0, 0)
       qC.setFromEuler(euler)
-      blend(wCrawl, wBreast, wScull)
+      blend(wCrawl, wBreast, wRest)
       arm.elbow.quaternion.slerp(qOut, smoothing)
 
       euler.set(poseCrawl.wristPitch, 0, arm.sign * poseCrawl.wristRoll)
       qA.setFromEuler(euler)
       euler.set(poseBreast.wristPitch, 0, arm.sign * poseBreast.wristRoll)
       qB.setFromEuler(euler)
-      euler.set(poseScull.wristPitch, 0, arm.sign * poseScull.wristRoll)
+      euler.set(poseRest.wristPitch, 0, arm.sign * poseRest.wristRoll)
       qC.setFromEuler(euler)
-      blend(wCrawl, wBreast, wScull)
+      blend(wCrawl, wBreast, wRest)
       arm.wrist.quaternion.slerp(qOut, smoothing)
     }
 
@@ -473,9 +469,9 @@ export function createSwimmer(camera: THREE.Camera) {
       const treadHip = Math.sin(tread + offset) * 0.16 - 0.06
       const treadKnee = 0.3 + Math.max(0, Math.sin(tread + offset - 0.8)) * 0.25
 
-      leg.hip.rotation.x = flutterHip * wCrawl + legWhip.hip * wBreast + treadHip * wScull
+      leg.hip.rotation.x = flutterHip * wCrawl + legWhip.hip * wBreast + treadHip * wRest
       leg.hip.rotation.z = leg.sign * legWhip.spread * wBreast
-      leg.knee.rotation.x = -(flutterKnee * wCrawl + legWhip.knee * wBreast + treadKnee * wScull)
+      leg.knee.rotation.x = -(flutterKnee * wCrawl + legWhip.knee * wBreast + treadKnee * wRest)
     }
   }
 

@@ -27,9 +27,11 @@ const VIEWS = [
     dive: 2.6,
     zoom: { x: 340, y: 100, width: 600, height: 400 },
   },
+  // Hands only show while swimming — hold W so effort doesn't decay
   {
     name: 'hand-closeup',
     url: 'http://localhost:5173/',
+    fwd: 2.2,
     zoom: { x: 560, y: 340, width: 500, height: 330 },
   },
   // Looking straight down: chest, belt, legs — the "is this a body" check
@@ -46,13 +48,13 @@ const VIEWS = [
     fwd: 2.5,
     zoom: { x: 640, y: 380, width: 560, height: 380 },
   },
-  // Idle scull framing — where the hands sit when you're just treading
+  // Idle rest: arms hang by the sides — should be out of the forward view
   {
-    name: 'idle-hands',
+    name: 'idle-clear',
     url: 'http://localhost:5173/?pitch=-0.2',
     zoom: { x: 320, y: 340, width: 640, height: 380 },
   },
-  // Portrait phones: narrow horizontal FOV, hands crop easily
+  // Portrait phones: narrow horizontal FOV — rest pose must stay clear of frame
   { name: 'idle-portrait', url: 'http://localhost:5173/?pitch=-0.2', viewport: PORTRAIT },
   { name: 'crawl-portrait', url: 'http://localhost:5173/?pitch=-0.35', fwd: 2.4, viewport: PORTRAIT },
   { name: 'body-portrait', url: 'http://localhost:5173/?pitch=-1.3', viewport: PORTRAIT },
