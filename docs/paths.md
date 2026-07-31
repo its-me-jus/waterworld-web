@@ -1,9 +1,10 @@
 # Survival paths
 
-What a run can *become*. Nothing here is signposted in-game — these are the
-arcs a player can discover by looking, and the order we should build them in.
+What a run can *become*. Nothing here is signposted in-game — these are arcs a
+player might discover by looking.
 
-Re-run the numbers anytime: `npm run sim:starts`.
+**Nothing below is committed.** This doc is for weighing options before we pick
+a next focus. Re-run opening math anytime: `npm run sim:starts`.
 
 ---
 
@@ -11,11 +12,11 @@ Re-run the numbers anytime: `npm run sim:starts`.
 
 | Path | Status | What it asks of you |
 |------|--------|---------------------|
-| **Wreck surface** | Live | Swim ~114 m, pry the provision crate, take floating planks / barrel / rope / canvas, open the hatch stash |
-| **Wreck depth** | Live | Knife at ~13 m → cut the mate's chest at ~24 m → oilskin memory + spear. Shark starts committing |
-| **Island crossing** | Live | ~900 m open-water swim to a wadeable beach. Dry ground refills warmth; coconuts refill water |
-| **Open-water forage** | Live | Hand-fish while hanging still; eat kelp / shellfish; drifters recycle in the haze |
-| **Raft** | Promised only | Stash collects `plank / barrel / crate / rope / canvas` — HUD counts them, nothing spends them yet |
+| **Wreck surface** | Live | Swim ~114 m, pry the provision crate, take floating debris, open the hatch stash |
+| **Wreck depth** | Live | Knife ~13 m → mate's chest ~24 m → memory + spear; shark starts committing |
+| **Island crossing** | Live | ~900 m swim to a wadeable beach; dry ground refills warmth; coconuts refill water |
+| **Open-water forage** | Live | Hand-fish while still; kelp / shellfish; drifters in the haze |
+| **Stash** | Live, unfinished | Counts `plank / barrel / crate / rope / canvas` — nothing spends them yet. README still says they "will build a raft yet" — that line is a promise we can keep, soften, or cut |
 
 ### Sim snapshot (200 runs, day start 9:30)
 
@@ -27,169 +28,241 @@ Re-run the numbers anytime: `npm run sim:starts`.
 | Linger ~8 min at wreck, then leave | 0% | Exposure mid-ocean |
 | Camp the wreck 20 min (no land) | 0% alive | Exposure — wreck is not a camp |
 
-Hard truth from the sim: **warmth is the open-water budget**. A full in-game day
-is only ~8 real minutes, so any long swim or linger hits night cold. Food from
-the crate helps stamina; it does not heat you. `onLand` only fires on the
-island beach — standing on the wreck does nothing for warmth today.
+**Warmth is the open-water budget.** A full in-game day is ~8 real minutes, so
+long swims and long lingers hit night cold. Food helps stamina, not heat.
+`onLand` only fires on the island beach today.
+
+The design tension: after the wreck, some players will want to *stay and work
+the site*; others will want the horizon. Island covers the second. The first
+has no honest home yet — and "build a raft" may not be the right answer.
 
 ---
 
-## The fork: island or stay
+## Parked / doubted ideas
 
-Two honest first-run choices once you've found the wreck:
+### Expandable craft-a-raft (Raft Survival-like)
+**Doubt:** In real water, a lone swimmer is not lashing a growing multi-stage
+deck out of flotsam between shark passes. The fantasy is strong in other games;
+here it risks feeling like a genre borrow and a big systems bet (craft spend,
+platform physics, expansion stages, sail) for a loop we aren't sure we want.
+
+**Status:** Parked. Do not start building expansion stages.
+
+### Cling to a plank / barrel as a swim aid
+**Doubt:** Probably not worth the work. A slight stamina or rest buff on a
+found float is easy to ship and easy to forget — it doesn't create a *path*,
+just a slightly kinder stroke. If we ever want "something under you," prefer a
+found object with a clear fantasy (see options below), not +10% swim efficiency.
+
+### Stash as a craft currency (for its own sake)
+Collecting without a sink is fine for a while (trophy / "I cleared the
+flotsam"). Inventing a sink just to justify the HUD is how we end up with raft
+tech trees. Better to decide the fantasy first, then see whether stash belongs.
+
+---
+
+## Options on the table
+
+Each option is scored roughly on: *fantasy fit*, *build size*, *does it answer
+"stay at the wreck?"*, *does it need new systems*.
+
+### 1 — Climb the wreck (use what's already unbroken)
+
+**Fantasy:** The Wanderer still breaks the surface — mast, yard, scraps of
+deck. Real castaways climb wreckage; they don't invent shipwrighting in hour one.
+
+**Play:** Haul onto bow plating / reef crest / mast stump that sits in air.
+Those spots count as `onLand` (or a wet-perch with slow warmth refill). The
+wreck becomes a vertical camp: dive, surface, climb, warm a little, dive again.
+
+**Pros:** Diegetic, small-to-medium build, no craft UI, makes existing geometry
+matter, answers "stay" without a second vehicle.
+**Cons:** Need standable collision + walk/climb on irregular mesh; mast may be
+too narrow; storm wash already knocks you off beaches — same problem here.
+**Stay answer:** Yes.
+**Size:** Medium.
+
+### 2 — Found warmth gear (wetsuit / oilskin) — no raft attached
+
+**Fantasy:** One sealed box. Spare dive skins or a deckhand's oilskin. You put
+it on; the sea steals heat slower.
+
+**Play:** Warmth drain multiplier while worn. Unlocks longer wreck work and a
+less suicidal island swim. No craft loop.
+
+**Pros:** Tiny, sim-able, helps *every* path; matches the body you already see.
+**Cons:** Doesn't spend stash; doesn't create a new place to *be* — only buys
+time. Easy to tune into "the cold stopped mattering."
+**Stay answer:** Partial (time, not a base).
+**Size:** Small.
+
+### 3 — Deepen the wreck (dungeon, not shipyard)
+
+**Fantasy:** The Wanderer is the destination. More holds, a second chest, a
+name on a locker, a flooded cabin you can barely turn around in.
+
+**Play:** More dive loops, more memory beats, knife/spear remain the keys.
+Island stays optional folklore on the horizon.
+
+**Pros:** Lean into what already sings; no vehicle; stash can stay flavor or
+become "wedged door / float a hatch" one-off spends.
+**Cons:** Doesn't solve warmth camping; more art/collision; shark + breath
+already gate depth.
+**Stay answer:** Yes, as content — not as a dry base.
+**Size:** Medium–large (content).
+
+### 4 — Make the island the only base (tune the crossing)
+
+**Fantasy:** There is one place that saves you. The wreck is a raid; the island
+is home. Own that.
+
+**Play:** Soften or sharpen with tuning — slightly shorter distance, a
+glass-off that drifts you toward land, a found float *once* for the crossing,
+clearer warmth recovery on sand, island fire later. Stash might become island
+building (lean-to), not sea building.
+
+**Pros:** Clear fantasy; less split focus; island workshop (fire, cook, shelter)
+has somewhere to live.
+**Cons:** "I don't want to swim 1 km" players get less of a run unless tuning
+helps; wreck must stay rewarding as a *raid*, not a home.
+**Stay answer:** No (by design).
+**Size:** Small (tune) to medium (island workshop).
+
+### 5 — Drift & weather as the skill
+
+**Fantasy:** You don't out-muscle the ocean; you wait for it. Glass-offs are
+dive windows; a following swell is free miles; night is a different country.
+
+**Play:** Stronger feedback for calm/storm/swell direction; maybe a rare
+current set that trends toward the island or past a second landmark. Mastery
+without inventory.
+
+**Pros:** Uses systems we already have; unique; no craft.
+**Cons:** Easy to feel random or unread; may need HUD-adjacent tells we refuse;
+doesn't create a base.
+**Stay answer:** No.
+**Size:** Small–medium (tuning + feedback).
+
+### 6 — Memory / identity spine
+
+**Fantasy:** Who were you on the Wanderer? The oilskin was beat one.
+
+**Play:** More findable papers, a name, a reason. Emotional path that sits
+beside whatever spatial path we pick.
+
+**Pros:** Cheap systems-wise; raises stakes for shark and cold.
+**Cons:** Not a survival *path*; writing-heavy; can feel like cutscenes if
+overplayed.
+**Stay answer:** No.
+**Size:** Small–medium.
+
+### 7 — Shark & spear as the mid-game
+
+**Fantasy:** Once armed, the ocean answers. The run's middle is the fin, not a
+building project.
+
+**Play:** Better telegraph, wound/clot readability, rare aggression spikes,
+maybe a pass that only happens after you've lingered at the wreck.
+
+**Pros:** Already half-built; high drama per hour of work.
+**Cons:** Combat-centric; doesn't house players who want to gather and dwell.
+**Stay answer:** No.
+**Size:** Small–medium.
+
+### 8 — Second landmark (another wreck, rock, fog bank)
+
+**Fantasy:** The horizon has more than one shape. Choice of *where*, not
+*what you craft*.
+
+**Play:** A spar buoy, a second mast, a rock stack closer than the island —
+stepping stones so "stay" and "go" blur into a route.
+
+**Pros:** Explores space; can break the 900 m binary; still found by looking.
+**Cons:** More world art; risk of tourist trail if too many dots.
+**Stay answer:** Partial (shorter hops).
+**Size:** Medium.
+
+### 9 — One found float (not a build loop)
+
+**Fantasy:** A life raft canister, a fish-hold hatch cover, a netted barrel
+cluster — already made. You free it, climb on, paddle poorly.
+
+**Play:** Single mountable object near the wreck. Slow warmth relief, weak
+locomotion, can break free in a storm. Not expandable.
+
+**Pros:** More believable than shipwrighting; one object; stash unused or used
+once (cut the lashings).
+**Cons:** Still "a boat," just smaller; physics + mount camera; might still feel
+like a toy if it doesn't change decisions.
+**Stay answer:** Yes, lightly.
+**Size:** Medium.
+
+### 10 — Stash as story weight / jettison
+
+**Fantasy:** Carrying wreckage costs you. Swim slower with a full arms-load;
+ditch planks in a panic; leave a trail.
+
+**Play:** Stash becomes burden and breadcrumb, not currency.
+**Pros:** Makes counts matter without craft; diegetic.
+**Cons:** Punishment-heavy; may encourage never picking up — then why have them.
+**Stay answer:** No.
+**Size:** Small.
+
+---
+
+## How these answer the fork
 
 ```
-spawn
-  └─ notice the mast / haze
-       ├─ swim for the island     ← exists, punishing after loot
-       └─ work the wreckage       ← needs a place to stand that isn't sand
-            └─ build a raft
-                 ├─ live at sea (expand, sail, fish)
-                 └─ ferry to the island later (and haul island salvage back)
+spawn → wreck
+         ├─ go for the island     (exists)
+         │     strengthened by: 2, 4, 5, 8
+         └─ stay / work the site  (missing)
+               answered by: 1, 2 (time only), 3, 9
+               not answered by: craft-raft (parked), plank buff (doubted)
 ```
 
-Players who don't want the death-swim should still have a run. The raft is that
-run — and the stash already points at it.
+---
+
+## Useful combinations (if we pick later)
+
+| Pair | Why |
+|------|-----|
+| **1 + 2** | Climb to warm a little; suit to dive longer — wreck as raid base |
+| **2 + 4** | Suit makes the island crossing humane after loot; island becomes home |
+| **3 + 6** | Deep wreck + memory — story dungeon |
+| **4 + 6 + 7** | Island home, memory stakes, shark as the thing you left behind |
+| **8 + 5** | Stepping-stone landmarks + readable weather between them |
+| **9 alone** | Only if we still want "something under you" without a genre raft |
+
+Avoid stacking **1 + 9 + craft-raft** — three ways to get out of the water is
+muddy.
 
 ---
 
-## Path A — Island (live)
+## Decision criteria (use these before committing)
 
-**Fantasy:** notice the shape on the horizon, commit, crawl onto sand before
-the cold closes.
-
-**Next polish (not blocking):** clearer beach warmth recovery feedback;
-coconut as the "you made it" sip; maybe a first dry-land whisper. The crossing
-math works; the last 40 seconds after a wreck-loot start are the drama.
-
-**Later:** island as a *supply loop* — haul wood / coconuts back out on a raft
-instead of a one-way swim. That only opens once Path B exists.
+1. **Believable in this ocean** — would a cold, tired person actually do this?
+2. **Creates a path, not a buff** — changes where you go and what a run *is*.
+3. **Size vs learning** — can we feel it in a week of build, then sim it?
+4. **Stash** — either earns a real sink, becomes burden/flavor, or we stop
+   implying a raft in the README.
+5. **Doesn't delete the island swim** — even if we tune it, the naked crossing
+   should stay a valid legend.
 
 ---
 
-## Path B — Raft from wreckage (next focus)
+## Current leaning (soft — change freely)
 
-**Fantasy:** you never leave the water for long — you *make* a place to leave
-it. The Wanderer's debris becomes a deck. More flotsam → a bigger deck. Island
-wood / canvas later upgrades what the wreck alone couldn't.
+No build order yet. Soft read from the doubts above:
 
-### Why this is next
+- **Cut or rewrite** the README raft promise until we mean it.
+- **Plank-as-kickboard** — skip.
+- **Expandable raft** — stay parked.
+- Strongest "stay at wreck" answer that still feels real: **climb the wreck (1)**,
+  maybe with **found warmth gear (2)** so dives between perches work.
+- Strongest "simplify the game" answer: **own the island as the only base (4)**
+  and treat the wreck as a dive raid; spend design time on crossing feel +
+  island life instead of a second home.
 
-1. The stash has nowhere to go ("it will build a raft yet").
-2. Island is viable but razor-thin after looting — half the players will want
-   another answer.
-3. A raft turns the ocean from a corridor into a workshop.
-4. It unlocks ferry / return trips without softening the naked swim.
-
-### The warmth problem (must solve first)
-
-You cannot build a raft while dying of exposure. Staying near the wreck for the
-time it takes to gather + lash needs a warmth answer that isn't "swim to the
-island first."
-
-**Proposal — sealed gear locker / ditty box on the bow or in the hatch line:**
-
-- Found like everything else: you notice a lashed box, pry / cut it (knife helps
-  but bare hands can struggle longer).
-- Inside: a **folded wetsuit** (or the ship's spare dive skins).
-- Putting it on is a one-time diegetic action — suit appears on the body you
-  already wear in first person, warmth drain in water drops hard (e.g. ~0.35×
-  current `WARMTH_IN_WATER` rate while worn).
-- Night + storm still bite; the suit buys *hours of work*, not immortality.
-- Without it, raft-building at the wreck is a speedrun against freeze — possible
-  for experts, hostile for the intended path.
-
-Optional sibling finds in the same box or nearby: a **float bladder / life ring**
-(lets you rest with less stamina drain) or a **small tarp** (first canvas if you
-missed drifters). Keep the box to one memorable reveal.
-
-### Raft loop (expandable)
-
-Spend stash in place — no menu tree, just an interact when you're at your
-deck (or at a floating "keel" plank you've claimed):
-
-| Stage | Costs (sketch) | What you get |
-|-------|----------------|--------------|
-| **Keel** | 3 plank + 1 rope | A lashable float you can stand / kneel on — first `onRaft` warmth relief (wet but out of full swim drain) |
-| **Deck** | +4 plank + 1 rope + 1 barrel or crate | Wider platform; stash chest; craft point |
-| **Shelter** | +2 canvas + 1 rope | Shade / spray break — further warmth + rain/storm help |
-| **Mast & sail** | +1 plank + 2 canvas + 1 rope | Weak downwind push; island becomes a *voyage*, not a stroke contest |
-| **Outriggers / second bay** | more plank + rope + island timber later | Expand footprint; carry more salvage |
-
-Island salvage later feeds the same recipe table (palm trunk ≈ plank+, coconut
-fiber ≈ rope, etc.) so a raft that visited land comes back *changed*.
-
-### Feel targets
-
-- First keel: findable within one suited day at the wreck without a checklist.
-- Expansion is visible — the deck grows under your feet, not a level-up chime.
-- Storms threaten to break loose lashings (optional later): rope condition, or
-  a piece washes off if you leave a fresh stage unsecured.
-- Shark still circles; a raft is not a fortress — spear still matters.
-
-### Sim additions once built
-
-Add paths to `scripts/sim-starts.mjs`:
-
-- `wetsuit → keel → survive 20 min at wreck`
-- `wetsuit → deck → sail toward island`
-- `no suit → rush a keel before freeze` (expert / fail rate)
-
----
-
-## Other paths (backlog — pick after raft keel)
-
-Candidates to keep on the board. None are committed; they hang off A/B.
-
-### C — Reef perch
-Climb / haul onto the reef rock or bow deck as **micro-land** (partial warmth
-refill, no full island). Softer than a wetsuit, weaker fantasy. Could pair with
-B as a stopgap, or stay cut if the suit ships.
-
-### D — Spear & shark
-Already started. Next beats: wound feedback, a second pass that learns, maybe
-a rare "fin at the raft edge" once B exists. Combat is seasoning, not the meal.
-
-### E — Memory / identity
-Oilskin pouch already fires one beat. More wreck papers / names / a reason you
-were on the Wanderer — diegetic, findable, never a quest log. Feeds emotional
-stakes for whatever path you pick.
-
-### F — Island as workshop
-Once ashore (A) or ferried (B): fire, cooked fish, palm-frond lean-to, better
-rope from fiber. Makes the island a *second base*, not a finish line. Depends
-on A working and preferably B for return cargo.
-
-### G — Night economy
-Biolum jellies, glass-off dive windows, colder math. Reward staying awake /
-diving smart. Mostly tuning + one find (e.g. lantern glass in the wreck).
-
-### H — Current & drift
-Lean into swell orbital push / seasonal amp: a raft without a sail still
-*travels*. Quiet way to make the sea feel alive between player inputs.
-
-### I — Soft fail / second chance
-A broken keel that becomes a plank again; washing up on a random scrap after
-drown-adjacent exposure. Easy to cheapen the ocean — only add if runs feel
-cruel rather than sharp.
-
----
-
-## Recommended build order
-
-1. **Wetsuit find + warmth multiplier** — unblocks every "stay in the water" fantasy; small, testable, sim-able.
-2. **Keel craft from stash** — first time the HUD numbers *do* something; first `onRaft` state.
-3. **Deck expansion stages** — barrel/crate/rope/canvas sinks; visible growth.
-4. **Sail / weak propulsion** — bridges B → A without deleting the hard swim.
-5. **Island salvage recipes** — return trips matter.
-6. Then pick from C–H based on what the raft made feel thin (combat, story, night).
-
----
-
-## Design rules (keep these while building)
-
-- Still no objective marker. The box, the keel site, the island — found by looking.
-- Stash spends in the world (hands on the deck), not in a craft UI grid.
-- Warmth stays the honest cost of water life; the suit and the raft are *answers*, not cheats.
-- Island swim stays valid forever — raft is another path, not a replacement.
-- When in doubt, re-run `npm run sim:starts` and add a path before shipping a loop that can't outrun exposure.
+Next step when ready: pick one primary fantasy sentence and kill the rest for
+a milestone — not a second brainstorm.

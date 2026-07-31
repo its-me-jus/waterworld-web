@@ -43,6 +43,9 @@ is a first meal; after that, hang still underwater and grab fish by hand. The
 debris that drifts by — planks, barrels, crates, rope, canvas — goes in the
 stash, and it will build a raft yet.
 
+Survival arcs (island swim, wreck→raft, and what's next): [`docs/paths.md`](docs/paths.md).
+Re-check the opening math with `npm run sim:starts`.
+
 ## The island
 
 A volcanic island ~1.2 km off the spawn heading's right shoulder: beach, scrub,
