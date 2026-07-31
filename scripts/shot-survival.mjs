@@ -35,9 +35,16 @@ const VIEWS = [
   },
   {
     name: 'shark',
-    url: 'http://localhost:5173/?depth=5&shark=5&pitch=0.15',
+    url: 'http://localhost:5173/?shark=5&pitch=-0.05',
     wait: 0,
     sharkWatch: true,
+    small: true,
+  },
+  {
+    name: 'shark-under',
+    url: 'http://localhost:5173/?depth=5&shark=5&pitch=0.15',
+    wait: 0,
+    sharkUnder: true,
     small: true,
   },
 ]
@@ -68,14 +75,31 @@ for (const v of VIEWS) {
 
   await page.goto(v.url, { waitUntil: 'load' })
   if (v.sharkWatch) {
-    // Wait for the pass to begin and close in, then catch it mid-circle
+    // Surface act: wait for the fin pass to close in
     await page.waitForFunction(() => window.__shark?.active, null, { timeout: 60000 })
-    await page.waitForFunction(() => window.__shark?.proximity > 0.5, null, { timeout: 120000 })
+    await page.waitForFunction(
+      () => window.__shark?.mode === 'surface' && window.__shark?.proximity > 0.45,
+      null,
+      { timeout: 180000 },
+    )
     for (let i = 0; i < 3; i++) {
       await page.screenshot({ path: `${OUT}/${v.name}-${i + 1}.png` })
-      console.log(`[${v.name}-${i + 1}] captured`)
-      await page.waitForTimeout(4500)
+      console.log(`[${v.name}-${i + 1}] captured (mode=${await page.evaluate(() => window.__shark?.mode)})`)
+      await page.waitForTimeout(3500)
     }
+    await page.close()
+    continue
+  }
+  if (v.sharkUnder) {
+    await page.waitForFunction(() => window.__shark?.active, null, { timeout: 60000 })
+    await page.waitForFunction(
+      () => window.__shark?.mode === 'circle' && window.__shark?.proximity > 0.5,
+      null,
+      { timeout: 180000 },
+    )
+    await page.evaluate(() => window.__faceShark?.())
+    await page.screenshot({ path: `${OUT}/${v.name}.png` })
+    console.log(`[${v.name}] captured`)
     await page.close()
     continue
   }
