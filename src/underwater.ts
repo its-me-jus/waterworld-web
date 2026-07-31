@@ -457,7 +457,7 @@ function createFishSchools(count: number, schoolCount: number, waterColor: THREE
   const dummy = new THREE.Object3D()
   const pos = new THREE.Vector3()
 
-  function update(dt: number, time: number, camera: THREE.Camera, surfaceY: number) {
+  function update(dt: number, time: number, camera: THREE.Camera, surfaceY: number, effort = 0) {
     // Anchor trails the swimmer so schools stay nearby without snapping to them
     if (!seeded) {
       anchor.copy(camera.position)
@@ -477,6 +477,10 @@ function createFishSchools(count: number, schoolCount: number, waterColor: THREE
 
     material.uniforms.uTime.value = time
 
+    // Thrashing sends every fish darting; hang still and they drift back in.
+    // This is what makes hand-fishing possible at all.
+    const flee = 0.15 + effort * 1.6
+
     for (let i = 0; i < fishes.length; i++) {
       const f = fishes[i]
       const c = schools[f.school].centre
@@ -495,7 +499,7 @@ function createFishSchools(count: number, schoolCount: number, waterColor: THREE
       const d2 = dx * dx + dy * dy + dz * dz
       if (d2 < 20 && d2 > 0.01) {
         const d = Math.sqrt(d2)
-        const push = (1 - d / 4.5) * 3.2
+        const push = (1 - d / 4.5) * 3.2 * flee
         pos.x += (dx / d) * push
         pos.y += (dy / d) * push
         pos.z += (dz / d) * push
@@ -517,7 +521,36 @@ function createFishSchools(count: number, schoolCount: number, waterColor: THREE
     mesh.instanceMatrix.needsUpdate = true
   }
 
-  return { mesh, material, update }
+  /**
+   * Nearest fish to a point, within `maxDist`. Uses last frame's solved
+   * positions, so it only sees fish that are genuinely on screen nearby.
+   */
+  function nearest(point: THREE.Vector3, maxDist: number) {
+    let best = -1
+    let bestD2 = maxDist * maxDist
+    for (let i = 0; i < fishes.length; i++) {
+      const d2 = fishes[i].prev.distanceToSquared(point)
+      if (d2 < bestD2) {
+        bestD2 = d2
+        best = i
+      }
+    }
+    return best < 0 ? null : { index: best, dist: Math.sqrt(bestD2) }
+  }
+
+  /** Fling a fish away from the swimmer — a missed grab, or a swallowed one. */
+  function fling(index: number, far: boolean) {
+    const f = fishes[index]
+    const s = far ? 3 : 1.6
+    f.ox = (Math.random() - 0.5) * 9 * s
+    f.oy = (Math.random() - 0.5) * 5 * s
+    f.oz = (Math.random() - 0.5) * 10 * s
+    f.wanderPhase = Math.random() * TAU
+    f.wanderAmp = 1.4 + Math.random() * 1.6
+    f.wanderSpeed = 1.6 + Math.random() * 1.4
+  }
+
+  return { mesh, material, update, nearest, fling }
 }
 
 // —— jellyfish ————————————————————————————————————————————
@@ -826,6 +859,8 @@ export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOption
     submersion: number
     underwater: boolean
     pixelRatio: number
+    /** 0..1 how hard the swimmer is working — drives how skittish the fish are. */
+    effort?: number
   }) {
     // Ease the whole layer in so surfacing doesn't pop
     const target = ctx.underwater ? 1 : 0
@@ -836,9 +871,9 @@ export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOption
     shafts.update(ctx.time, ctx.camera, ctx.surfaceY, fade)
     snow.update(ctx.time, ctx.camera, ctx.pixelRatio, fade)
     plume.update(ctx.time, ctx.camera, ctx.pixelRatio, fade * 0.85)
-    fish.update(ctx.dt, ctx.time, ctx.camera, ctx.surfaceY)
+    fish.update(ctx.dt, ctx.time, ctx.camera, ctx.surfaceY, ctx.effort ?? 0)
     jellies.update(ctx.dt, ctx.time, ctx.camera, ctx.surfaceY, fade)
   }
 
-  return { group, update }
+  return { group, update, fish }
 }

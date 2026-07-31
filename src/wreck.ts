@@ -530,6 +530,10 @@ type Flotsam = {
   phase: number
   /** How the item lies in the water, before the swell tilts it. */
   rest: THREE.Quaternion
+  /** Named items the survival loop can interact with. */
+  id?: string
+  /** Once pried open, it stops riding the swell. */
+  taken?: boolean
 }
 
 function plankObject(length: number, width: number, mat: THREE.Material) {
@@ -775,17 +779,32 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
 
   // —— flotsam on the surface, riding the real swell ——
   const flotsam: Flotsam[] = []
+  /** World position of the provision crate, refreshed each frame as it bobs. */
+  const provision = new THREE.Vector3()
+  let provisionItem: Flotsam | null = null
   {
-    const add = (object: THREE.Object3D, x: number, z: number, lift: number, spin: number, phase: number) => {
+    const add = (
+      object: THREE.Object3D,
+      x: number,
+      z: number,
+      lift: number,
+      spin: number,
+      phase: number,
+      id?: string,
+    ) => {
       group.add(object)
-      flotsam.push({ object, x, z, lift, spin, phase, rest: object.quaternion.clone() })
+      const item: Flotsam = { object, x, z, lift, spin, phase, rest: object.quaternion.clone(), id }
+      flotsam.push(item)
+      if (id === 'provision') provisionItem = item
     }
     // The plank he first went overboard clinging to
     add(plankObject(2.7, 0.36, mat.plank), 5.5, 6.5, 0.04, 0.05, 0)
     add(plankObject(1.9, 0.28, mat.plank), 11.5, 12.5, 0.03, -0.04, 1.9)
     add(plankObject(1.4, 0.22, mat.plank), -6.5, 14, 0.03, 0.07, 3.4)
     add(barrelObject(mat.plank, mat.iron), 8.5, -4.5, 0.12, -0.06, 2.6)
-    add(crateObject(mat.plank), 16, 3.5, 0.16, 0.05, 4.8)
+    // The ship's provision crate — first food in the run, lashed shut and
+    // still floating. Its lid battens are prised off by hand.
+    add(crateObject(mat.plank), 16, 3.5, 0.16, 0.05, 4.8, 'provision')
     add(plankObject(2.2, 0.3, mat.plank), 19.5, -9, 0.03, -0.03, 5.6)
   }
 
@@ -834,12 +853,16 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
 
   function update(time: number, camera: THREE.Camera) {
     for (const item of flotsam) {
+      if (item.taken) continue
       const water = sampleOcean(opts.x + item.x, opts.z + item.z, time)
       item.object.position.set(item.x, water.y + item.lift, item.z)
       waveUp.set(water.normal.x, water.normal.y, water.normal.z)
       tilt.setFromUnitVectors(UP, waveUp)
       yaw.setFromAxisAngle(UP, item.phase + time * item.spin)
       item.object.quaternion.copy(tilt).multiply(yaw).multiply(item.rest)
+      if (item === provisionItem) {
+        provision.set(opts.x + item.x, water.y + item.lift, opts.z + item.z)
+      }
     }
 
     // Per-vertex work only earns its keep once you're close enough to read it
@@ -864,5 +887,21 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     sailGeo.computeVertexNormals()
   }
 
-  return { group, centre, beacon, resolve, update }
+  /**
+   * The provision crate, while it still floats. Null once it's been pried
+   * open and stripped — the hulk slips under a swell and is gone.
+   */
+  function provisionSpot() {
+    return provisionItem && !provisionItem.taken ? provision : null
+  }
+
+  /** Pry the crate open: take the food, lose the box to the sea. */
+  function takeProvision() {
+    if (!provisionItem || provisionItem.taken) return false
+    provisionItem.taken = true
+    provisionItem.object.visible = false
+    return true
+  }
+
+  return { group, centre, beacon, resolve, update, provisionSpot, takeProvision }
 }
