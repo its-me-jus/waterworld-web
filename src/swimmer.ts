@@ -1,10 +1,10 @@
 import * as THREE from 'three'
-import { createHandPair, createSkinMaterials } from './hand'
+import { createDiveKitMaterials, createHandPair } from './hand'
 import type { PlayerFrame } from './player'
 
 /**
- * First-person swimmer: arms, torso and kicking legs parented to the camera.
- * Hands live in `hand.ts` — they're always on screen, so they get the PBR pass.
+ * First-person swimmer in a full dive kit: neoprene suit, dive gloves (the
+ * owned procedural hand mesh painted as padded rubber), and high-vis accents.
  *
  * Poses are keyframed per stroke style across six channels (shoulder swing /
  * spread / twist, elbow, wrist pitch / roll) and blended as quaternions so the
@@ -164,16 +164,10 @@ type Arm = {
 type Leg = { hip: THREE.Group; knee: THREE.Group; sign: number }
 
 export function createSwimmer(camera: THREE.Camera) {
-  // One skin material for hands, arms, torso and legs so the tone always matches
-  const mats = createSkinMaterials()
-  const { skin, setWetness } = mats
-  const hands = createHandPair(mats)
-
-  const gear = new THREE.MeshStandardMaterial({
-    color: 0x6b5344,
-    roughness: 0.8,
-    metalness: 0.04,
-  })
+  // Full dive kit — no bare skin. The hand mesh stays, painted as a padded glove.
+  const kit = createDiveKitMaterials()
+  const { skin: glove, suit, suitPanel, accent, hardware, setWetness } = kit
+  const hands = createHandPair(kit)
 
   const rig = new THREE.Group()
   rig.name = 'Swimmer'
@@ -183,7 +177,7 @@ export function createSwimmer(camera: THREE.Camera) {
   // without help they render as near-silhouettes. A soft fill that travels
   // with the camera lifts just the viewmodel — distance-capped so the world
   // never notices.
-  const fill = new THREE.PointLight(0xfff0e0, 2.4, 2.6, 1.9)
+  const fill = new THREE.PointLight(0xd6e9f5, 3.2, 2.6, 1.9)
   fill.position.set(0.12, -0.04, -0.26)
   rig.add(fill)
 
@@ -200,32 +194,40 @@ export function createSwimmer(camera: THREE.Camera) {
     clavicle.position.set(sign * 0.19, -0.33, 0.12)
     armRoot.add(clavicle)
 
-    const deltoid = new THREE.Mesh(new THREE.SphereGeometry(0.055, 14, 10), skin)
+    const deltoid = new THREE.Mesh(new THREE.SphereGeometry(0.055, 14, 10), suit)
     deltoid.scale.set(1, 0.85, 1.05)
     clavicle.add(deltoid)
 
     const shoulder = new THREE.Group()
     clavicle.add(shoulder)
 
-    const upper = limb(0.33, 0.05, skin)
+    const upper = limb(0.33, 0.05, suit)
     shoulder.add(upper.root)
+
+    // Bicep panel ring — sells "wetsuit seam"
+    const bicepRing = new THREE.Mesh(new THREE.TorusGeometry(0.052, 0.005, 8, 16), suitPanel)
+    bicepRing.rotation.x = Math.PI / 2
+    bicepRing.position.y = -0.05
+    upper.root.add(bicepRing)
 
     const elbow = new THREE.Group()
     upper.end.add(elbow)
     // Soft elbow pad so a fully bent arm doesn't read as a sharp V
-    const elbowPad = new THREE.Mesh(new THREE.SphereGeometry(0.044, 12, 8), skin)
+    const elbowPad = new THREE.Mesh(new THREE.SphereGeometry(0.044, 12, 8), suitPanel)
     elbowPad.position.set(0, 0.004, 0.014)
     elbowPad.scale.set(0.9, 1, 0.85)
     elbow.add(elbowPad)
 
-    const fore = limb(0.3, 0.044, skin, 0.62)
+    const fore = limb(0.3, 0.044, suit, 0.72)
     elbow.add(fore.root)
 
-    // Braided cord, sitting just above the wrist
-    const bracer = new THREE.Mesh(new THREE.TorusGeometry(0.029, 0.0035, 8, 26), gear)
-    bracer.rotation.x = Math.PI / 2
-    bracer.position.y = -0.245
-    fore.root.add(bracer)
+    // Glove gauntlet + high-vis cuff — hides the wrist seam
+    const gauntlet = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.042, 0.085, 18), glove)
+    gauntlet.position.y = -0.245
+    fore.root.add(gauntlet)
+    const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.051, 0.014, 18), accent)
+    cuff.position.y = -0.208
+    fore.root.add(cuff)
 
     const wrist = new THREE.Group()
     fore.end.add(wrist)
@@ -246,38 +248,70 @@ export function createSwimmer(camera: THREE.Camera) {
   body.position.set(0, -0.24, 0.12)
   rig.add(body)
 
-  // Neck stump — the rim you catch at the bottom of the frame when looking down
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.1, 14), skin)
-  neck.position.y = -0.06
+  // Hood collar + neck dam — the rim you catch looking straight down
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.095, 0.028, 10, 18), suitPanel)
+  collar.rotation.x = Math.PI / 2
+  collar.position.y = -0.04
+  body.add(collar)
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.1, 14), suit)
+  neck.position.y = -0.07
   body.add(neck)
 
   // Clavicle bar ties the deltoids to the chest so the shoulders have a home
-  const clavBar = new THREE.Mesh(new THREE.CapsuleGeometry(0.04, 0.24, 4, 12), skin)
+  const clavBar = new THREE.Mesh(new THREE.CapsuleGeometry(0.045, 0.24, 4, 12), suit)
   clavBar.rotation.z = Math.PI / 2
   clavBar.position.set(0, -0.12, 0.01)
   clavBar.scale.set(1, 1, 0.8)
   body.add(clavBar)
 
-  const chest = new THREE.Mesh(new THREE.CapsuleGeometry(0.185, 0.28, 4, 14), skin)
+  const chest = new THREE.Mesh(new THREE.CapsuleGeometry(0.185, 0.28, 4, 14), suit)
   chest.position.y = -0.32
   chest.scale.set(1, 1, 0.74)
   body.add(chest)
 
-  const abdomen = new THREE.Mesh(new THREE.CapsuleGeometry(0.155, 0.14, 4, 12), skin)
+  const abdomen = new THREE.Mesh(new THREE.CapsuleGeometry(0.155, 0.14, 4, 12), suit)
   abdomen.position.y = -0.52
   abdomen.scale.set(1, 1, 0.7)
   body.add(abdomen)
+
+  // Center zipper + BCD straps — dive-kit read when looking down
+  const zipper = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.36, 0.008), hardware)
+  zipper.position.set(0, -0.3, 0.138)
+  body.add(zipper)
+  const zipperPull = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.028, 0.014), accent)
+  zipperPull.position.set(0, -0.15, 0.144)
+  body.add(zipperPull)
+
+  for (const sx of [-1, 1] as const) {
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.26, 0.014), suitPanel)
+    strap.position.set(sx * 0.1, -0.24, 0.132)
+    strap.rotation.set(-0.1, 0, sx * -0.05)
+    body.add(strap)
+    const keeper = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.018, 0.018), accent)
+    keeper.position.set(sx * 0.1, -0.32, 0.14)
+    body.add(keeper)
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.26, 0.008), accent)
+    stripe.position.set(sx * 0.13, -0.3, 0.1)
+    stripe.rotation.z = sx * 0.08
+    body.add(stripe)
+  }
+  const chestStrap = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.04, 0.012), suitPanel)
+  chestStrap.position.set(0, -0.36, 0.138)
+  body.add(chestStrap)
+  const strapBuckle = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.018), accent)
+  strapBuckle.position.set(0, -0.36, 0.146)
+  body.add(strapBuckle)
 
   const hips = new THREE.Group()
   hips.name = 'Hips'
   hips.position.y = -0.66
   body.add(hips)
 
-  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.155, 0.145, 0.1, 12), gear)
+  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.155, 0.145, 0.08, 12), hardware)
   belt.scale.z = 0.78
   belt.position.y = 0.02
   hips.add(belt)
-  const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.045, 0.02), gear)
+  const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.045, 0.022), accent)
   buckle.position.set(0, 0.02, 0.12)
   hips.add(buckle)
 
@@ -286,24 +320,28 @@ export function createSwimmer(camera: THREE.Camera) {
     hip.position.set(sign * 0.088, -0.02, 0)
     hips.add(hip)
 
-    const thigh = limb(0.44, 0.078, skin)
+    const thigh = limb(0.44, 0.078, suit)
     hip.add(thigh.root)
 
     const knee = new THREE.Group()
     thigh.end.add(knee)
-    const kneePad = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 8), skin)
+    const kneePad = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 8), suitPanel)
     kneePad.position.set(0, 0.0, -0.018)
     kneePad.scale.set(0.95, 1.05, 0.8)
     knee.add(kneePad)
 
-    const shin = limb(0.42, 0.055, skin, 0.78)
+    const shin = limb(0.42, 0.055, suit, 0.78)
     knee.add(shin.root)
 
-    const foot = new THREE.Mesh(new THREE.CapsuleGeometry(0.04, 0.072, 3, 10), skin)
+    // Bootie — same glove rubber as the hands
+    const foot = new THREE.Mesh(new THREE.CapsuleGeometry(0.04, 0.072, 3, 10), glove)
     foot.scale.set(1.12, 1, 0.62)
     foot.position.set(0, -0.06, -0.045)
     foot.rotation.x = 1.1
     shin.end.add(foot)
+    const ankleCuff = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.046, 0.028, 12), accent)
+    ankleCuff.position.y = -0.02
+    shin.end.add(ankleCuff)
 
     return { hip, knee, sign }
   }

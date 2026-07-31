@@ -208,6 +208,88 @@ export function createSkinMaterials(): SkinMaterials {
   return { skin, nail, setWetness }
 }
 
+export type DiveKitMaterials = SkinMaterials & {
+  /** Neoprene for arms / torso / legs — slightly lighter than the glove. */
+  suit: THREE.MeshPhysicalMaterial
+  suitPanel: THREE.MeshPhysicalMaterial
+  accent: THREE.MeshStandardMaterial
+  hardware: THREE.MeshStandardMaterial
+}
+
+/**
+ * Full dive kit: padded black gloves + neoprene suit. Same hand mesh, no bare
+ * skin — the nail plates are painted glove-rubber so they disappear into the
+ * finger tips. Wetness still drives clearcoat for the "just surfaced" sheen.
+ */
+export function createDiveKitMaterials(): DiveKitMaterials {
+  const glove = new THREE.MeshPhysicalMaterial({
+    color: 0x1b222b,
+    roughness: 0.52,
+    metalness: 0.06,
+    clearcoat: 0.35,
+    clearcoatRoughness: 0.4,
+    envMapIntensity: 0.55,
+  })
+  // Same rubber as the glove so nail plates don't flash pink through the mitt
+  const nail = new THREE.MeshPhysicalMaterial({
+    color: 0x1b222b,
+    roughness: 0.5,
+    metalness: 0.06,
+    clearcoat: 0.4,
+    clearcoatRoughness: 0.35,
+  })
+  const suit = new THREE.MeshPhysicalMaterial({
+    color: 0x27384a,
+    roughness: 0.58,
+    metalness: 0.04,
+    clearcoat: 0.35,
+    clearcoatRoughness: 0.45,
+    envMapIntensity: 0.5,
+  })
+  const suitPanel = new THREE.MeshPhysicalMaterial({
+    color: 0x33495e,
+    roughness: 0.55,
+    metalness: 0.05,
+    clearcoat: 0.3,
+    clearcoatRoughness: 0.48,
+  })
+  const accent = new THREE.MeshStandardMaterial({
+    color: 0xe0aa1a,
+    roughness: 0.42,
+    metalness: 0.3,
+  })
+  const hardware = new THREE.MeshStandardMaterial({
+    color: 0x49565f,
+    roughness: 0.35,
+    metalness: 0.6,
+  })
+
+  function setWetness(wet: number) {
+    const w = THREE.MathUtils.clamp(wet, 0, 1)
+    glove.clearcoat = 0.35 + w * 0.4
+    glove.clearcoatRoughness = 0.4 - w * 0.2
+    glove.roughness = 0.52 - w * 0.15
+    glove.envMapIntensity = 0.55 + w * 0.35
+    nail.clearcoat = glove.clearcoat
+    nail.clearcoatRoughness = glove.clearcoatRoughness
+    suit.clearcoat = 0.35 + w * 0.35
+    suit.clearcoatRoughness = 0.45 - w * 0.18
+    suit.roughness = 0.58 - w * 0.12
+    suitPanel.clearcoat = suit.clearcoat
+    suitPanel.clearcoatRoughness = suit.clearcoatRoughness
+  }
+
+  return {
+    skin: glove,
+    nail,
+    suit,
+    suitPanel,
+    accent,
+    hardware,
+    setWetness,
+  }
+}
+
 // —— geometry ———————————————————————————————————————————————
 
 type HandParts = { body: THREE.BufferGeometry; nails: THREE.BufferGeometry }
