@@ -77,6 +77,8 @@ npm run dev
   `SHOT_BASE=http://localhost:5174` follows the dev server if it moved port;
   `SHOT_ONLY=storm,night` re-shoots matching views (comma-separated).
   `scripts/shot-survival.mjs` / `shot-salvage.mjs` cover the shark and loot arcs.
+- `npm run sim:starts` — Monte Carlo over opening paths (wreck loot, island
+  swim, linger/camp). See `docs/paths.md` for how to read it.
 - `?x=&z=&yaw=&pitch=&depth=` spawns anywhere.
 - `?hour=22` starts at night · `?storm=1` locks a squall · `?calm=1` pins a
   glass-off · `?breath=0.3` / `?food=0.2` / `?wound=1` pre-set vitals ·
