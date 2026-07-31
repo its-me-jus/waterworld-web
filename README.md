@@ -19,8 +19,10 @@ npm run dev
 - **Touch / on-screen:** left stick move · drag anywhere to look · ▲▼ depth
 - **Desktop:** WASD · click for mouse-look · Space/E up · Shift/Q dive
 
-## Credits
+## Assets
 
-- First-person hands: [anatomical hand model](https://github.com/emmalieker/anatomical-hand-model) by Emma L. D. Lieker ([CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/))
+Everything in the scene — hands, swimmer, ocean, wreck, skin textures — is generated
+in code. No third-party models or textures, so there are no licence restrictions on
+commercial use.
 
 Brain notes: `../agenticiallyjus/projects/waterworld.md`

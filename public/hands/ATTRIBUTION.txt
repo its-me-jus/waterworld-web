@@ -1,4 +1,0 @@
-Anatomical hand model by Emma L. D. Lieker
-Source: https://github.com/emmalieker/anatomical-hand-model
-License: CC BY-NC 4.0 — https://creativecommons.org/licenses/by-nc/4.0/
-Optimized with glTF-Transform (meshopt + webp).

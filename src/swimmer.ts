@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { createHandPair } from './hand'
+import { createHandPair, createSkinMaterials } from './hand'
 import type { PlayerFrame } from './player'
 
 /**
@@ -74,25 +74,26 @@ function samplePose(keys: Key[], phase: number, out: Pose) {
 
 /**
  * A limb segment hanging along -Y from its joint, plus a group at its far end.
- * `openEnd` skips the distal capsule cap so an anatomical hand can own the wrist.
+ * Tapered so a forearm narrows into the wrist instead of ending in a fat dome.
  */
-function limb(length: number, radius: number, material: THREE.Material, openEnd = false) {
+function limb(length: number, radius: number, material: THREE.Material, taper = 1) {
   const root = new THREE.Group()
-  if (openEnd) {
-    const mesh = new THREE.Mesh(
-      new THREE.CylinderGeometry(radius, radius * 0.92, length * 0.92, 20),
-      material,
-    )
-    mesh.position.y = -length * 0.46
-    root.add(mesh)
-  } else {
-    const mesh = new THREE.Mesh(
-      new THREE.CapsuleGeometry(radius, Math.max(0.02, length - radius * 2), 6, 20),
-      material,
-    )
-    mesh.position.y = -length / 2
-    root.add(mesh)
+  const geo = new THREE.CapsuleGeometry(radius, Math.max(0.02, length - radius * 2), 6, 20)
+  if (taper !== 1) {
+    // Squeeze the distal half toward the wrist
+    const pos = geo.getAttribute('position')
+    for (let i = 0; i < pos.count; i++) {
+      const t = THREE.MathUtils.clamp((length / 2 - pos.getY(i)) / length, 0, 1)
+      const k = 1 + (taper - 1) * t
+      pos.setX(i, pos.getX(i) * k)
+      pos.setZ(i, pos.getZ(i) * k)
+    }
+    pos.needsUpdate = true
+    geo.computeVertexNormals()
   }
+  const mesh = new THREE.Mesh(geo, material)
+  mesh.position.y = -length / 2
+  root.add(mesh)
   const end = new THREE.Group()
   end.position.y = -length
   root.add(end)
@@ -109,21 +110,11 @@ type Arm = {
 
 type Leg = { hip: THREE.Group; knee: THREE.Group }
 
-export async function createSwimmer(camera: THREE.Camera) {
-  const hands = await createHandPair()
-  const { setWetness } = hands.mats
-
-  // Shared arm/body skin — picks up a warm tone close to the hand texture
-  const skin = new THREE.MeshPhysicalMaterial({
-    color: 0xc49272,
-    roughness: 0.5,
-    metalness: 0,
-    sheen: 0.7,
-    sheenRoughness: 0.6,
-    sheenColor: new THREE.Color(0xe09070),
-    clearcoat: 0.18,
-    clearcoatRoughness: 0.5,
-  })
+export function createSwimmer(camera: THREE.Camera) {
+  // One skin material for hands, arms, torso and legs so the tone always matches
+  const mats = createSkinMaterials()
+  const { skin, setWetness } = mats
+  const hands = createHandPair(mats)
 
   const gear = new THREE.MeshStandardMaterial({
     color: 0x6b5344,
@@ -152,13 +143,13 @@ export async function createSwimmer(camera: THREE.Camera) {
 
     const elbow = new THREE.Group()
     upper.end.add(elbow)
-    const fore = limb(0.26, 0.038, skin, true)
+    const fore = limb(0.28, 0.042, skin, 0.62)
     elbow.add(fore.root)
 
-    // Thin cuff sits under the anatomical wrist so the hand stump can bury into it
-    const bracer = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.005, 10, 28), gear)
+    // Braided cord, sitting just above the wrist
+    const bracer = new THREE.Mesh(new THREE.TorusGeometry(0.029, 0.0035, 8, 26), gear)
     bracer.rotation.x = Math.PI / 2
-    bracer.position.y = -0.18
+    bracer.position.y = -0.235
     fore.root.add(bracer)
 
     const wrist = new THREE.Group()
