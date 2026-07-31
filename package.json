@@ -12,6 +12,8 @@
     "shot:salvage": "node scripts/shot-salvage.mjs",
     "smoke": "node scripts/smoke.mjs",
     "sim:starts": "node scripts/sim-starts.mjs",
+    "shot:shelter": "node scripts/shot-shelter.mjs",
+    "icons": "node scripts/gen-icons.mjs",
     "audio": "node scripts/gen-audio.mjs",
     "audio:lyria": "node scripts/gen-audio-lyria.mjs",
     "hands": "node scripts/gen-hands.mjs"
