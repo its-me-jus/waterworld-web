@@ -302,3 +302,214 @@ body.underwater #bubbles {
     opacity: 0.85;
   }
 }
+
+/* —— vitals veils: the body as readout —— */
+#breath-veil {
+  position: fixed;
+  inset: -4%;
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  background:
+    radial-gradient(ellipse at center, transparent 30%, rgba(8, 6, 8, 0.62) 76%, rgba(2, 1, 3, 0.94) 100%),
+    radial-gradient(ellipse at center, transparent 52%, rgba(96, 18, 22, 0.22) 100%);
+}
+
+#breath-veil.critical {
+  animation: breath-pulse 1.05s ease-in-out infinite;
+}
+
+@keyframes breath-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.045);
+  }
+}
+
+#weary-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.9s ease;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(26, 22, 16, 0.55) 100%);
+}
+
+/* —— whisper lines —— */
+#whisper {
+  position: fixed;
+  left: 50%;
+  bottom: 24%;
+  transform: translateX(-50%);
+  z-index: 5;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.9s ease;
+  max-width: 80vw;
+  text-align: center;
+  color: rgba(222, 238, 244, 0.9);
+  font-size: 0.85rem;
+  font-style: italic;
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 8px rgba(3, 14, 20, 0.95);
+}
+
+#whisper.show {
+  opacity: 1;
+}
+
+/* —— interaction prompt —— */
+#prompt {
+  position: fixed;
+  left: 50%;
+  bottom: 17%;
+  transform: translate(-50%, 0.4rem);
+  z-index: 5;
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+  padding: 0.35rem 0.85rem;
+  border: 1px solid rgba(190, 225, 240, 0.35);
+  background: rgba(5, 22, 30, 0.55);
+  color: #d8eef6;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+#prompt.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* —— contextual grab button (touch) —— */
+#grab-btn {
+  position: fixed;
+  z-index: 6;
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: calc(max(1.25rem, env(safe-area-inset-bottom)) + 148px);
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 2px solid rgba(220, 240, 250, 0.55);
+  background: rgba(20, 62, 76, 0.65);
+  color: #eaf6ff;
+  font-size: 1.35rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  touch-action: none;
+  user-select: none;
+}
+
+#grab-btn.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* —— permadeath —— */
+#death {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 2rem;
+  text-align: center;
+  background: radial-gradient(ellipse at center, #050d13 0%, #010507 100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 3.2s ease;
+}
+
+#death.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+#death strong,
+#death span {
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 1.4s ease,
+    transform 1.4s ease;
+}
+
+#death.show strong {
+  opacity: 1;
+  transform: none;
+  transition-delay: 0.8s;
+}
+
+#death.show .cause {
+  opacity: 1;
+  transform: none;
+  transition-delay: 2s;
+}
+
+#death.show .stat {
+  opacity: 1;
+  transform: none;
+  transition-delay: 3s;
+}
+
+#death strong {
+  font-size: 1.45rem;
+  font-weight: 500;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #cfe2ea;
+}
+
+#death .cause {
+  font-size: 0.9rem;
+  font-style: italic;
+  color: rgba(190, 214, 224, 0.75);
+}
+
+#death .stat {
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(160, 190, 202, 0.6);
+}
+
+#death .again {
+  margin-top: 2.4rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgba(200, 226, 236, 0.6);
+}
+
+#death .again.ready {
+  opacity: 1 !important;
+  transform: none;
+  animation: again-blink 2.6s ease-in-out infinite;
+}
+
+@keyframes again-blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+body.dying #touch-controls,
+body.dying #crosshair,
+body.dying #prompt,
+body.dying #grab-btn,
+body.dying #whisper {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}

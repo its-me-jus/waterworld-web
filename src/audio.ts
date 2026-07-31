@@ -43,8 +43,9 @@ function startNoise(ctx: AudioContext, buffer: AudioBuffer, dest: AudioNode) {
 async function tryLoadBed(ctx: AudioContext, url: string) {
   try {
     const res = await fetch(url)
-    if (!res.ok) return null
-    return ctx.decodeAudioData(await res.arrayBuffer())
+    // Dev servers answer missing files with the SPA fallback (200, text/html)
+    if (!res.ok || !(res.headers.get('content-type') ?? '').includes('audio')) return null
+    return await ctx.decodeAudioData(await res.arrayBuffer())
   } catch {
     return null
   }
@@ -82,6 +83,16 @@ export function createOceanAudio() {
   // Optional Lyria beds
   let surfaceBed: { gain: GainNode } | null = null
   let underBed: { gain: GainNode } | null = null
+
+  // Vitals & danger layers
+  let dangerGain: GainNode | null = null
+  let breathShortage = 0
+  let hungerShortage = 0
+  let heartbeatTimer = 0
+  let growlTimer = 12
+  let seaWeight = 1
+  let dangerLevel = 0
+  let dimLevel = 0
 
   let lastSub = 0
   let splashCool = 0
@@ -137,6 +148,18 @@ export function createOceanAudio() {
     underRumble.frequency.value = 42
     underRumble.connect(rumbleGain)
     underRumble.start(0)
+
+    // —— proximity dread: two detuned lows beating against each other ————
+    dangerGain = ctx.createGain()
+    dangerGain.gain.value = 0
+    dangerGain.connect(master)
+    for (const freq of [52, 55.4]) {
+      const osc = ctx.createOscillator()
+      osc.type = 'sine'
+      osc.frequency.value = freq
+      osc.connect(dangerGain)
+      osc.start(0)
+    }
 
     // Optional Lyria beds (generated offline by scripts/gen-audio-lyria.mjs)
     const [surfBuf, underBuf] = await Promise.all([
@@ -206,6 +229,80 @@ export function createOceanAudio() {
     src.start(0)
   }
 
+  /** Lub-dub. Rate and weight track how thin your air is running. */
+  function thump(intensity: number) {
+    if (!ctx || !master) return
+    const beat = (at: number, gain: number) => {
+      if (!ctx || !master) return
+      const osc = ctx.createOscillator()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(58, at)
+      osc.frequency.exponentialRampToValueAtTime(38, at + 0.09)
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0.0001, at)
+      g.gain.exponentialRampToValueAtTime(gain, at + 0.015)
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.14)
+      osc.connect(g)
+      g.connect(master)
+      osc.start(at)
+      osc.stop(at + 0.2)
+    }
+    const now = ctx.currentTime
+    beat(now, 0.5 * intensity)
+    beat(now + 0.17, 0.34 * intensity)
+  }
+
+  /** Empty-belly gurgle — low noise through a wandering bandpass. */
+  function growl(intensity: number) {
+    if (!ctx || !master) return
+    const duration = 0.7 + Math.random() * 0.5
+    const length = Math.floor(ctx.sampleRate * duration)
+    const buffer = ctx.createBuffer(1, length, ctx.sampleRate)
+    const data = buffer.getChannelData(0)
+    let last = 0
+    const wobble = 2.2 + Math.random() * 2.6
+    for (let i = 0; i < length; i++) {
+      const t = i / length
+      const env = Math.sin(Math.PI * t) * (0.55 + 0.45 * Math.sin(t * wobble * Math.PI * 2))
+      const white = Math.random() * 2 - 1
+      last = (last + 0.06 * white) / 1.06
+      data[i] = last * 3.4 * env
+    }
+    const src = ctx.createBufferSource()
+    src.buffer = buffer
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.frequency.value = 95 + Math.random() * 60
+    filter.Q.value = 1.1
+    const gain = ctx.createGain()
+    gain.gain.value = 0.4 * intensity
+    src.connect(filter)
+    filter.connect(gain)
+    gain.connect(master)
+    src.start(0)
+  }
+
+  /** Vitals, once per frame: breath shortage drives the heartbeat, hunger the growls. */
+  function setVitals(shortage: { breath: number; hunger: number }) {
+    breathShortage = shortage.breath
+    hungerShortage = shortage.hunger
+  }
+
+  /** 0 calm → 1 heavy: the surface wash wears the sea state. */
+  function setSeaWeight(w: number) {
+    seaWeight = w
+  }
+
+  /** 0..1 — something big is in your water. */
+  function setDanger(level: number) {
+    dangerLevel = level
+  }
+
+  /** Duck everything (the long fade after the ocean wins). */
+  function dim(level: number) {
+    dimLevel = level
+  }
+
   /** Occasional tiny bubble ticks while submerged. */
   function tickBubble() {
     if (!ctx || !master) return
@@ -250,10 +347,12 @@ export function createOceanAudio() {
       Math.max(0, 1 - submersion * 2.4) * (0.28 + Math.min(0.7, Math.abs(heave) * 1.1))
     const murk = Math.min(1, depth / 22)
 
-    gSurface = damp(gSurface, surfaceW * 0.42, 3.4, dt)
+    // A glassed-off sea is quiet; a standing swell is loud
+    const seaLoud = 0.3 + 0.7 * seaWeight
+    gSurface = damp(gSurface, surfaceW * 0.42 * seaLoud, 3.4, dt)
     gUnder = damp(gUnder, underW * (0.55 + murk * 0.15), 3.4, dt)
-    gBob = damp(gBob, bobW * 0.5, 5, dt)
-    gMaster = damp(gMaster, 0.9, 2.2, dt)
+    gBob = damp(gBob, bobW * 0.5 * seaLoud, 5, dt)
+    gMaster = damp(gMaster, 0.9 * (1 - dimLevel * 0.85), 2.2, dt)
     gSurfaceBed = damp(gSurfaceBed, surfaceW * 0.22, 2.5, dt)
     gUnderBed = damp(gUnderBed, underW * 0.28, 2.5, dt)
     underCutoff = damp(underCutoff, 1050 - murk * 650, 2.6, dt)
@@ -265,8 +364,29 @@ export function createOceanAudio() {
     master.gain.setTargetAtTime(gMaster, now, 0.05)
     if (underFilter) underFilter.frequency.setTargetAtTime(underCutoff, now, 0.08)
     if (rumbleGain) rumbleGain.gain.setTargetAtTime(underW * (0.08 + murk * 0.1), now, 0.08)
+    if (dangerGain) dangerGain.gain.setTargetAtTime(dangerLevel * 0.16, now, 0.45)
     if (surfaceBed) surfaceBed.gain.gain.setTargetAtTime(gSurfaceBed, now, 0.08)
     if (underBed) underBed.gain.gain.setTargetAtTime(gUnderBed, now, 0.08)
+
+    // —— vitals-driven one-shots ————————————————————————————
+    if (breathShortage > 0.04) {
+      heartbeatTimer -= dt
+      if (heartbeatTimer <= 0) {
+        thump(0.45 + breathShortage * 0.55)
+        heartbeatTimer = 1.7 - breathShortage * 1.15
+      }
+    } else {
+      heartbeatTimer = 0.3
+    }
+    if (hungerShortage > 0.45) {
+      growlTimer -= dt
+      if (growlTimer <= 0) {
+        growl(0.5 + hungerShortage * 0.5)
+        growlTimer = 17 + Math.random() * 16
+      }
+    } else {
+      growlTimer = 12
+    }
 
     // Swell breathing on the surface filter
     if (surfaceFilter) {
@@ -290,5 +410,5 @@ export function createOceanAudio() {
 
   bindUnlock()
 
-  return { unlock, update }
+  return { unlock, update, setVitals, setSeaWeight, setDanger, dim }
 }
