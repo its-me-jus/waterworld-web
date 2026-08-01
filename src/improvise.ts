@@ -1639,6 +1639,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     restReadyAt = 0
     saidPole = false
     saidSail = false
+    boardGrace = 0
   }
 
   return {
