@@ -22,7 +22,7 @@
   <circle cx="398" cy="118" r="96" fill="#ffffff" opacity="0.13"/>
   <circle cx="398" cy="118" r="44" fill="#fff4d8" opacity="0.62"/>
 
-  <!-- The Wanderer. A mast raked hard over, snapped at the head, with the
+  <g transform="translate(256 250) scale(0.74) translate(-256 -250)"><!-- The Wanderer. A mast raked hard over, snapped at the head, with the
        yard still across it and a rag of sail hanging by gravity. -->
   <g>
     <!-- One shroud still made off under the water. Two of them turn the whole
@@ -43,7 +43,7 @@
     <path d="M152 207 L332 157 L328 143 L148 193 Z" fill="#2c3b45"/>
   </g>
 
-  <!-- Sea: a hard horizon, then swell that still reads at 16 px -->
+  </g><!-- Sea: a hard horizon, then swell that still reads at 16 px -->
   <path d="M0 330 H512 V512 H0 Z" fill="url(#sea)"/>
   <path d="M0 330 C 84 317, 140 346, 220 332 C 300 318, 356 346, 436 332 C 470 326, 494 330, 512 334 L512 352 H0 Z" fill="#2f9ab0"/>
   <path d="M0 378 C 70 364, 128 392, 206 378 C 288 363, 344 392, 424 378 C 462 371, 490 376, 512 381 L512 408 H0 Z" fill="#1c7b96" opacity="0.95"/>

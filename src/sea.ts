@@ -38,18 +38,23 @@ export function createSeaState(events: SeaEvents = {}) {
   let nextGlassIn = 150 + Math.random() * 180
   /** Set when a glass-off is active, for the fade in/out envelope. */
   let glassy = false
+  /** 1 under a settled sky, 0 in a gale — set from the climate clock. */
+  let fair = 1
 
   function update(dt: number, t: number) {
-    nextGlassIn -= dt
+    // Glass-offs belong to fair weather. Under a settled sky they come around
+    // often and hold; with a front overhead the water never gets the chance.
+    nextGlassIn -= dt * (0.35 + fair * 1.3)
     if (glassy) {
       glassLeft -= dt
-      if (glassLeft <= 0) {
+      // A front rolling in ends the calm early — that's the tell
+      if (glassLeft <= 0 || fair < 0.35) {
         glassy = false
-        nextGlassIn = 240 + Math.random() * 320
+        nextGlassIn = 190 + Math.random() * 260
       }
-    } else if (nextGlassIn <= 0) {
+    } else if (nextGlassIn <= 0 && fair > 0.6) {
       glassy = true
-      glassLength = 50 + Math.random() * 45
+      glassLength = 60 + Math.random() * 70
       glassLeft = glassLength
     }
 
@@ -77,6 +82,10 @@ export function createSeaState(events: SeaEvents = {}) {
 
   return {
     update,
+    /** Feed the climate's fair-weather share in; glass-offs follow the sky. */
+    setFair(value: number) {
+      fair = Math.min(1, Math.max(0, value))
+    },
     /** 0 = dead calm, 1 = as heavy as it gets. For audio / sky / UI. */
     get weight() {
       return Math.min(1, Math.max(0, (amp - 0.5) / 0.8))

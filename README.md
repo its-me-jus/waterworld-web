@@ -20,9 +20,11 @@ a growl, slower arms, whispers that only name what you already feel.
 ## The ocean
 
 The day turns (~8 real minutes). Night drains warmth faster and the jellies
-glow. Storm squalls roll through every few minutes — swell climbs, the sky
-closes, swimming costs more. Under all of it the sea breathes slower: seasons
-and sudden glass-off calm spells, which are the natural dive windows.
+glow. Weather runs in spells rather than on a timer: long fair stretches, a
+breezy afternoon, and now and then something that closes over you — swell
+climbs, the sky shuts, every stroke costs more. Fair weather holds about nine
+tenths of a run, fronts roll in slowly enough to read, and it never turns foul
+twice in a row. Glass-offs come with the settled sky and are the dive windows.
 
 And every few minutes something large takes one circle through your water and
 leaves. Until it doesn't.
@@ -30,9 +32,13 @@ leaves. Until it doesn't.
 ## The wreck's depth
 
 The Wanderer gives up her past in dives. A galley knife lies on the bow deck at
-~13 m — it cuts rope. The mate's chest sits roped shut on the sand by the torn
+~13 m — it cuts rope. One deck below that a hold door has swelled shut on the
+ship's immersion suit; force it with the knife and the cold stops being the
+thing that ends every run. A soldered bread tin rolled into the same corner is
+a meal. The mate's chest sits roped shut on the sand by the torn
 stern at ~24 m, where the light gives up. Inside: an oilskin pouch that gives
-back the first memory of who you were, and the mate's spear. Once armed, the
+back the first memory of who you were, and the mate's spear. The master's log
+lies out on the sand beside her broken ribs, and it answers the pouch. Once armed, the
 shark's slow circle tightens, and about two passes in three it commits to a run
 at you — jab it with the spear inside ~4 m and it turns; let the run connect
 and it takes a piece of you. One wound clots. A second bite, while it hasn't,
@@ -41,15 +47,25 @@ is the one the ocean keeps.
 The surface tells its own story: a provision crate still floating by the wreck
 is a first meal; after that, hang still underwater and grab fish by hand. The
 debris that drifts by — planks, barrels, crates, rope, canvas — goes in the
-stash, and it will build a raft yet.
+stash. What that stash is *for* is still open — see [`docs/paths.md`](docs/paths.md).
+Opening-run math: `npm run sim:starts`.
 
-## The island
+## Dry ground
 
-A volcanic island ~1.2 km off the spawn heading's right shoulder: beach, scrub,
-cliffs and palms. Wade far enough up the beach and you climb out of the swim
-into a walk — slope-aware, with real gravity off the ledges. Cliffs past ~50°
-refuse you; a storm face that closes over your head knocks you back into the
-sea. Coconuts on the sand are worth the crossing.
+Two places in the world are not the ocean.
+
+The nearer one is a reef spire off the wreck's port bow, standing a few metres
+clear of an ordinary sea. It is cliff on every bearing but one, where a long
+shoulder shelves down far enough to climb. Sitting on it gives heat back at
+about half the rate dry sand does, and a gale still comes over the top — but it
+turns the wreck from a raid into somewhere you can work.
+
+The far one is a volcanic island ~1.2 km off the spawn heading's right
+shoulder: beach, scrub, cliffs and palms. Wade far enough up and you climb out
+of the swim into a walk — slope-aware, with real gravity off the ledges. Cliffs
+past ~50° refuse you; a storm face that closes over your head knocks you back
+into the sea. Coconuts lie on the sand, and rain stands in hollows in the rock
+above the beach — the one water that keeps coming back.
 
 ## Controls
 
@@ -77,18 +93,25 @@ npm run dev
   `SHOT_BASE=http://localhost:5174` follows the dev server if it moved port;
   `SHOT_ONLY=storm,night` re-shoots matching views (comma-separated).
   `scripts/shot-survival.mjs` / `shot-salvage.mjs` cover the shark and loot arcs.
+- `npm run shot:shelter` — checks the climbable spire, the immersion suit, the
+  hold's deep finds and that a weather spell holds. Needs `npm run dev`.
+- `npm run sim:starts` — Monte Carlo over opening paths (wreck loot, suited
+  crossing, spire camp, island swim) plus the weather balance. See
+  `docs/paths.md` for how to read it.
+- `npm run icons` — rasterises `public/favicon.svg` into the install icons.
 - `?x=&z=&yaw=&pitch=&depth=` spawns anywhere.
 - `?hour=22` starts at night · `?storm=1` locks a squall · `?calm=1` pins a
   glass-off · `?breath=0.3` / `?food=0.2` / `?wound=1` pre-set vitals ·
   `?shark=8` summons a pass · `?knife=1` / `?spear=1` start armed ·
-  `?commit=1` every armed pass runs at you.
+  `?suit=1` starts in the immersion suit · `?commit=1` every armed pass runs at you.
 - In dev, `window.ww` exposes player, vitals, salvage, climate, shark and the
   interaction registry; `__spots` marks the loot spots.
 
 ## Assets
 
 Everything in the scene is generated — hands (own Blender script → GLB, with a
-procedural fallback), swimmer, ocean, wreck, textures. No third-party models or
-textures, so there are no licence restrictions on commercial use.
+procedural fallback), swimmer, ocean, wreck, textures. The app icon is our own
+SVG, rasterised by `npm run icons`. No third-party models or textures, so there
+are no licence restrictions on commercial use.
 
 Brain notes: `../agenticiallyjus/projects/waterworld.md`

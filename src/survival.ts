@@ -22,6 +22,8 @@ export type Vitals = {
   /** The shark's mark: bleeding until it clots. A second bite ends the run. */
   wounded: boolean
   woundClock: number
+  /** Wearing the ship's immersion suit — the sea takes heat far slower. */
+  suited: boolean
   /** Whisper latches — each line fires once per decline, re-arms on recovery. */
   saidKnot: boolean
   saidGnaw: boolean
@@ -51,12 +53,26 @@ const MENDING = 190
 /** Seconds for a bite to clot. Until then it taxes strength and appetite. */
 const WOUND_CLOT = 150
 
+/**
+ * The immersion suit. Sealed neoprene turns fifteen minutes of survivable
+ * water into most of an hour — long enough to work the wreck, or to cross to
+ * the island after dark. It does not make you warm, only slow to lose it, and
+ * the bulk costs you a little in the water.
+ */
+const SUIT_WARMTH = 0.32
+const SUIT_DRAG = 0.92
+
 export type VitalsContext = {
   submerged: boolean
   depth: number
   effort: number
   /** Out of the water — standing on land or high on the wreck. */
   onLand: boolean
+  /**
+   * How well the ground you're on gives heat back: 1 is dry sand well up the
+   * beach, ~0.5 a wave-washed rock perch you're still being spat at on.
+   */
+  shelter?: number
   /** Night + storm cold multiplier from the climate clock. */
   cold?: number
   /** Storm swim-cost multiplier — effort burns stamina faster. */
@@ -78,6 +94,7 @@ export function createVitals(): Vitals {
     elapsed: 0,
     wounded: false,
     woundClock: 0,
+    suited: false,
     saidKnot: false,
     saidGnaw: false,
     saidSalt: false,
@@ -114,10 +131,16 @@ export function updateVitals(v: Vitals, dt: number, ctx: VitalsContext) {
 
   // Warmth — the sea pulls heat out far faster than the air does.
   // Night and storms raise `cold`; land still refills, just slower after dark.
+  // A wave-washed perch gives less back than dry sand does.
   const cold = ctx.cold ?? 1
-  if (ctx.onLand) v.warmth = fill(v.warmth, dt / Math.max(0.55, 1.35 - cold * 0.2), WARMTH_REFILL)
-  else v.warmth = drain(v.warmth, dt * (ctx.submerged ? 1.35 : 1) * cold, WARMTH_IN_WATER)
-  if (ctx.onLand) v.warmth = drain(v.warmth, dt * cold, WARMTH_ON_LAND)
+  const suit = v.suited ? SUIT_WARMTH : 1
+  const shelter = ctx.shelter ?? 1
+  if (ctx.onLand) {
+    v.warmth = fill(v.warmth, (dt * shelter) / Math.max(0.55, 1.35 - cold * 0.2), WARMTH_REFILL)
+    v.warmth = drain(v.warmth, dt * cold * suit, WARMTH_ON_LAND)
+  } else {
+    v.warmth = drain(v.warmth, dt * (ctx.submerged ? 1.35 : 1) * cold * suit, WARMTH_IN_WATER)
+  }
 
   // An open wound feeds the sea a little of you too, and caps how strong
   // you can get until it clots
@@ -191,7 +214,7 @@ export function swimLimits(v: Vitals) {
   const breathShort = v.breath < 0.35 ? (0.35 - v.breath) / 0.35 : 0
   const spentShake = v.stamina < 0.18 ? ((0.18 - v.stamina) / 0.18) * 0.5 : 0
   return {
-    speedScale: 0.55 + 0.45 * strength,
+    speedScale: (0.55 + 0.45 * strength) * (v.suited ? SUIT_DRAG : 1),
     climbScale: 0.45 + 0.55 * strength,
     cadenceScale: 0.68 + 0.32 * strength,
     wobble: Math.min(1, breathShort + spentShake),
@@ -214,6 +237,14 @@ export function bite(v: Vitals, whisper?: (text: string) => void) {
   v.woundClock = 0
   v.stamina = Math.min(v.stamina, 0.5)
   whisper?.('Its teeth rake your side. The water tastes of iron.')
+}
+
+/** Pull the immersion suit on. One way — you don't take it off out here. */
+export function wearSuit(v: Vitals, whisper?: (text: string) => void) {
+  if (v.suited) return false
+  v.suited = true
+  whisper?.('The suit seals cold and clammy, then your own heat fills it.')
+  return true
 }
 
 /** Tuning hooks for the ?breath / ?food / ?wound URL params. */
