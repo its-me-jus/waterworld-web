@@ -6,12 +6,12 @@ import type { WreckLoot } from './wreckloot'
 /**
  * The operating menu — one bag icon that opens the modal the game is run from.
  *
- * Two halves:
+ * Three halves:
  *  - Stash: what you're actually carrying (salvage counts, held fish, knife /
  *    spear). A real readout, not the corner strip's sentence.
- *  - Field kit (DEV only): the cheats the world gets built with — teleport to
- *    the island or the wreck, refill the body, arm up. Stripped from prod
- *    builds automatically since `import.meta.env.DEV` is compile-time.
+ *  - Field kit: island / wreck teleport and fill-stash — always on, so you can
+ *    keep building on a live deploy without a swim.
+ *  - Dev extras (DEV only): vitals, fish, arms, reset run.
  */
 
 export type TeleportSpot = { x: number; z: number; y?: number; yaw?: number }
@@ -67,23 +67,23 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
         <h3>Gear</h3>
         <div id="op-gear" class="op-gear"></div>
       </div>
-      ${
-        dev
-          ? `<div class="op-section op-dev">
-        <h3>Field kit <span>dev</span></h3>
+      <div class="op-section op-dev">
+        <h3>Field kit</h3>
         <div class="op-cheats">
           <button data-tp="island" type="button">Island</button>
           <button data-tp="wreck" type="button">Wreck</button>
-          <button data-cheat="fill" type="button">Fill vitals</button>
           <button data-cheat="stash" type="button">Fill stash</button>
+          ${
+            dev
+              ? `<button data-cheat="fill" type="button">Fill vitals</button>
           <button data-cheat="fish" type="button">Fish</button>
           <button data-cheat="knife" type="button">Knife</button>
           <button data-cheat="spear" type="button">Spear</button>
-          <button data-cheat="reset" type="button" class="warn">Reset run</button>
+          <button data-cheat="reset" type="button" class="warn">Reset run</button>`
+              : ''
+          }
         </div>
-      </div>`
-          : ''
-      }
+      </div>
     </div>`
   app.appendChild(overlay)
 
