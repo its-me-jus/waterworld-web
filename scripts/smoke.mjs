@@ -67,28 +67,62 @@ const ok = (name, cond) => {
   await page.waitForTimeout(2500)
 
   try {
-    await page.waitForFunction(() => window.__shark?.mode === 'commit', null, { timeout: 120000 })
-    ok('shark committed', true)
+    await page.waitForFunction(
+      () => {
+        const m = window.__shark?.mode
+        return m === 'telegraph' || m === 'commit'
+      },
+      null,
+      { timeout: 120000 },
+    )
+    ok('shark armed for a run', true)
   } catch {
-    ok('shark committed', false)
+    ok('shark armed for a run', false)
   }
 
-  // Face the run and jab when it closes
+  // Face the run and jab when the spear prompt is live
   let jabbed = false
-  for (let i = 0; i < 120; i++) {
+  for (let i = 0; i < 160; i++) {
     await page.evaluate(() => window.__faceShark?.())
-    const d = await page.evaluate(() => window.__shark?.distance ?? Infinity)
-    if (d < 3.6) {
+    const ready = await page.evaluate(() => {
+      const m = window.__shark?.mode
+      const d = window.__shark?.distance ?? Infinity
+      const prompt = document.querySelector('#prompt span')?.textContent ?? ''
+      return {
+        close: d < 4.0 && (m === 'telegraph' || m === 'commit'),
+        jabPrompt: /jab/i.test(prompt),
+      }
+    })
+    if (ready.close || ready.jabPrompt) {
       await page.keyboard.press('KeyF')
-      jabbed = true
-      break
+      // Confirm the strike landed — flee mode, or the spear line queued/shown
+      await page.waitForTimeout(200)
+      const landed = await page.evaluate(() => {
+        const m = window.__shark?.mode
+        const w = document.querySelector('#whisper')?.textContent ?? ''
+        return m === 'flee' || /spear finds it|gone/i.test(w)
+      })
+      if (landed) {
+        jabbed = true
+        break
+      }
     }
-    await page.waitForTimeout(120)
+    await page.waitForTimeout(100)
   }
   ok('jabbed the run', jabbed)
-  await page.waitForTimeout(800)
-  const whisper = await page.evaluate(() => document.querySelector('#whisper')?.textContent ?? '')
-  ok(`spear whisper ("${whisper.slice(0, 40)}")`, /spear finds it|gone/i.test(whisper))
+  // Telegraph + commit lines sit in the whisper queue ahead of the spear line
+  let spearLine = ''
+  try {
+    await page.waitForFunction(
+      () => /spear finds it|gone/i.test(document.querySelector('#whisper')?.textContent ?? ''),
+      null,
+      { timeout: 22000 },
+    )
+    spearLine = await page.evaluate(() => document.querySelector('#whisper')?.textContent ?? '')
+  } catch {
+    spearLine = await page.evaluate(() => document.querySelector('#whisper')?.textContent ?? '')
+  }
+  ok(`spear whisper ("${spearLine.slice(0, 40)}")`, /spear finds it|gone/i.test(spearLine))
 
   // Two bites → taken → death screen → swim again resets the run
   await page.evaluate(() => {
