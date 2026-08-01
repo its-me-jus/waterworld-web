@@ -6,6 +6,8 @@ export type SkyRig = {
   sky: Sky
   clouds: THREE.Mesh
   stars: THREE.Points
+  milky: THREE.Mesh
+  moon: THREE.Group
   sunDir: THREE.Vector3
   sunLight: THREE.DirectionalLight
   hemi: THREE.HemisphereLight
@@ -92,9 +94,171 @@ void main() {
 }
 `
 
+const starVertex = /* glsl */ `
+attribute float aSize;
+attribute float aBright;
+attribute float aPhase;
+
+uniform float uTime;
+uniform float uOpacity;
+
+varying float vBright;
+varying float vTwinkle;
+
+void main() {
+  float twinkle = 0.9 + 0.1 * sin(uTime * (0.7 + aPhase * 1.4) + aPhase * 6.28318);
+  vBright = aBright;
+  vTwinkle = twinkle;
+
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * mv;
+  gl_PointSize = aSize * (0.85 + aBright * 0.55) * twinkle * mix(0.55, 1.0, uOpacity);
+}
+`
+
+const starFragment = /* glsl */ `
+uniform float uOpacity;
+
+varying float vBright;
+varying float vTwinkle;
+
+void main() {
+  vec2 p = gl_PointCoord * 2.0 - 1.0;
+  float r = dot(p, p);
+  if (r > 1.0) discard;
+
+  // Soft core — bright stars keep a pin, dim ones stay faint dust
+  float core = exp(-r * mix(4.5, 2.2, vBright));
+  float halo = exp(-r * 1.1) * 0.35;
+  float a = (core + halo) * vBright * vTwinkle * uOpacity;
+  if (a < 0.01) discard;
+
+  vec3 col = mix(vec3(0.72, 0.82, 0.95), vec3(0.92, 0.95, 1.0), vBright);
+  gl_FragColor = vec4(col, a);
+
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`
+
+const milkyVertex = /* glsl */ `
+varying vec3 vDir;
+void main() {
+  vDir = position;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`
+
+const milkyFragment = /* glsl */ `
+uniform float uOpacity;
+
+varying vec3 vDir;
+
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float noise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+    mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
+    u.y
+  );
+}
+
+float fbm(vec2 p) {
+  float v = 0.0;
+  float a = 0.5;
+  for (int i = 0; i < 4; i++) {
+    v += a * noise(p);
+    p = p * 2.13 + vec2(17.2, 9.1);
+    a *= 0.5;
+  }
+  return v;
+}
+
+void main() {
+  vec3 d = normalize(vDir);
+  if (d.y < 0.02) discard;
+
+  // Tilted galactic plane — a soft dusty ridge across the dome
+  float tilt = 0.55;
+  float band = d.y * cos(tilt) + d.z * sin(tilt);
+  float along = atan(d.x, d.z * cos(tilt) - d.y * sin(tilt));
+
+  float ridge = 1.0 - smoothstep(0.0, 0.22, abs(band));
+  float grit = fbm(vec2(along * 1.8, band * 6.0));
+  float dust = fbm(vec2(along * 4.5 + 2.0, band * 12.0));
+  float mask = ridge * (0.45 + grit * 0.55) * (0.65 + dust * 0.5);
+  mask *= smoothstep(0.02, 0.18, d.y);
+
+  float alpha = mask * uOpacity * 0.55;
+  if (alpha < 0.004) discard;
+
+  vec3 col = mix(vec3(0.55, 0.62, 0.78), vec3(0.82, 0.88, 0.96), grit);
+  gl_FragColor = vec4(col, alpha);
+
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`
+
+const moonDiscFragment = /* glsl */ `
+uniform float uOpacity;
+varying vec2 vUv;
+
+void main() {
+  vec2 p = vUv * 2.0 - 1.0;
+  float r = length(p);
+  if (r > 1.0) discard;
+  float edge = smoothstep(1.0, 0.82, r);
+  float shade = 0.88 + 0.12 * (1.0 - p.x * 0.4 - p.y * 0.15);
+  vec3 col = vec3(0.91, 0.93, 0.97) * shade;
+  gl_FragColor = vec4(col, edge * uOpacity);
+
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`
+
+const moonHaloFragment = /* glsl */ `
+uniform float uOpacity;
+varying vec2 vUv;
+
+void main() {
+  vec2 p = vUv * 2.0 - 1.0;
+  float r = length(p);
+  if (r > 1.0) discard;
+  float a = exp(-r * r * 2.8) * 0.55 * uOpacity;
+  if (a < 0.01) discard;
+  gl_FragColor = vec4(0.78, 0.84, 0.95, a);
+
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`
+
+/** Billboard that faces the camera; mesh scale sets the on-screen disc size. */
+const moonSpriteVertex = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  // Center in view space, then expand by the mesh's world scale (PlaneGeometry is ±0.5)
+  float sx = length(vec3(modelMatrix[0][0], modelMatrix[0][1], modelMatrix[0][2]));
+  float sy = length(vec3(modelMatrix[1][0], modelMatrix[1][1], modelMatrix[1][2]));
+  vec4 mv = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+  mv.x += position.x * sx;
+  mv.y += position.y * sy;
+  gl_Position = projectionMatrix * mv;
+}
+`
+
 const DAY_HORIZON = new THREE.Color('#8fb3c9')
 const DUSK_HORIZON = new THREE.Color('#c48a6a')
-const NIGHT_HORIZON = new THREE.Color('#0c1a28')
+const NIGHT_HORIZON = new THREE.Color('#08141f')
 const STORM_HORIZON = new THREE.Color('#3a4650')
 
 const DAY_CLOUD = new THREE.Color('#f6f1e6')
@@ -103,6 +267,11 @@ const STORM_CLOUD = new THREE.Color('#8a9198')
 const STORM_CLOUD_SHADOW = new THREE.Color('#2a3238')
 const NIGHT_CLOUD = new THREE.Color('#1a222c')
 const NIGHT_CLOUD_SHADOW = new THREE.Color('#05080c')
+
+/** Fixed moon direction — high enough to read, offset from the sun track. */
+const MOON_ELEVATION = 42
+const MOON_AZIMUTH = 210
+const MOON_DISTANCE = 4200
 
 /** Sky dome + drifting cloud layer + matched sun/ambient lights. */
 export function createSky(scene: THREE.Scene, elevationDeg = 30, azimuthDeg = 155): SkyRig {
@@ -153,46 +322,129 @@ export function createSky(scene: THREE.Scene, elevationDeg = 30, azimuthDeg = 15
   clouds.frustumCulled = false
   scene.add(clouds)
 
-  // A handful of stars — only matter once the day has gone
-  const starCount = 600
+  // Varied starfield — sizes and brightness seeded once, twinkle in the shader
+  const starCount = 1500
   const starPos = new Float32Array(starCount * 3)
+  const starSize = new Float32Array(starCount)
+  const starBright = new Float32Array(starCount)
+  const starPhase = new Float32Array(starCount)
   for (let i = 0; i < starCount; i++) {
-    // Hemisphere above the horizon
-    const u = Math.random()
-    const v = Math.random()
-    const theta = u * Math.PI * 2
-    const phi = Math.acos(0.05 + v * 0.95)
+    const su = Math.random()
+    const sv = Math.random()
+    const theta = su * Math.PI * 2
+    const phi = Math.acos(0.05 + sv * 0.95)
     const r = 4500
     starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta)
     starPos[i * 3 + 1] = r * Math.cos(phi)
     starPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta)
+
+    // Power curve: many dim, few bright
+    const mag = Math.pow(Math.random(), 2.4)
+    starBright[i] = 0.25 + mag * 0.75
+    starSize[i] = 2.2 + mag * 5.5
+    starPhase[i] = Math.random()
   }
   const starGeo = new THREE.BufferGeometry()
   starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3))
-  const starMat = new THREE.PointsMaterial({
-    color: 0xd8e6f4,
-    size: 3.5,
-    sizeAttenuation: false,
+  starGeo.setAttribute('aSize', new THREE.BufferAttribute(starSize, 1))
+  starGeo.setAttribute('aBright', new THREE.BufferAttribute(starBright, 1))
+  starGeo.setAttribute('aPhase', new THREE.BufferAttribute(starPhase, 1))
+  const starMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uOpacity: { value: 0 },
+    },
+    vertexShader: starVertex,
+    fragmentShader: starFragment,
     transparent: true,
-    opacity: 0,
     depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
     fog: false,
   })
   const stars = new THREE.Points(starGeo, starMat)
   stars.frustumCulled = false
-  stars.renderOrder = 0
+  stars.renderOrder = -1
   scene.add(stars)
+
+  // Soft Milky Way band — only reads on clear nights
+  const milkyMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uOpacity: { value: 0 },
+    },
+    vertexShader: milkyVertex,
+    fragmentShader: milkyFragment,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.BackSide,
+    blending: THREE.AdditiveBlending,
+    fog: false,
+  })
+  const milky = new THREE.Mesh(new THREE.SphereGeometry(4400, 48, 28), milkyMat)
+  milky.frustumCulled = false
+  milky.renderOrder = -2
+  milky.visible = false
+  scene.add(milky)
+
+  // Moon disc + soft halo, billboarded toward the camera
+  const moonDir = new THREE.Vector3()
+  moonDir.setFromSphericalCoords(
+    1,
+    THREE.MathUtils.degToRad(90 - MOON_ELEVATION),
+    THREE.MathUtils.degToRad(MOON_AZIMUTH),
+  )
+
+  const moon = new THREE.Group()
+  moon.visible = false
+  moon.frustumCulled = false
+  moon.renderOrder = 0
+
+  const discMat = new THREE.ShaderMaterial({
+    uniforms: { uOpacity: { value: 0 } },
+    vertexShader: moonSpriteVertex,
+    fragmentShader: moonDiscFragment,
+    transparent: true,
+    depthWrite: false,
+    fog: false,
+  })
+  const disc = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), discMat)
+  disc.scale.setScalar(140)
+  disc.renderOrder = 2
+
+  const haloMat = new THREE.ShaderMaterial({
+    uniforms: { uOpacity: { value: 0 } },
+    vertexShader: moonSpriteVertex,
+    fragmentShader: moonHaloFragment,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    fog: false,
+  })
+  const halo = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), haloMat)
+  halo.scale.setScalar(420)
+  halo.renderOrder = 1
+
+  moon.add(halo)
+  moon.add(disc)
+  moon.position.copy(moonDir).multiplyScalar(MOON_DISTANCE)
+  moon.userData.ox = moon.position.x
+  moon.userData.oy = moon.position.y
+  moon.userData.oz = moon.position.z
+  scene.add(moon)
 
   const horizonColor = DAY_HORIZON.clone()
   const dayHemiSky = new THREE.Color(0x9dc6e8)
   const dayHemiGround = new THREE.Color(0x07202b)
   const scratch = new THREE.Color()
   const sunTint = new THREE.Color()
+  const lightDir = new THREE.Vector3()
 
   return {
     sky,
     clouds,
     stars,
+    milky,
+    moon,
     sunDir,
     sunLight,
     hemi,
@@ -201,6 +453,7 @@ export function createSky(scene: THREE.Scene, elevationDeg = 30, azimuthDeg = 15
     dayHemiGround,
     update(time: number, climate: Climate) {
       cloudMat.uniforms.uTime.value = time
+      starMat.uniforms.uTime.value = time
 
       sunDir.setFromSphericalCoords(
         1,
@@ -209,53 +462,79 @@ export function createSky(scene: THREE.Scene, elevationDeg = 30, azimuthDeg = 15
       )
       u['sunPosition'].value.copy(sunDir)
       cloudMat.uniforms.uSunDir.value.copy(sunDir)
-      sunLight.position.copy(sunDir).multiplyScalar(200)
 
       const day = climate.daylight
       const storm = climate.storm
+      const fair = climate.fair
       const dusk = THREE.MathUtils.clamp(1 - Math.abs(climate.sunElevation - 4) / 14, 0, 1)
+      const night = Math.max(0, 1 - day)
 
       // Horizon: day → dusk blush → night, then storm greys it out.
       // Floor the night mix so the sky never goes pure black — open ocean
       // at midnight still needs a readable horizon.
-      const nightAmt = Math.min(0.82, 1 - day)
+      const nightAmt = Math.min(0.9, night)
       scratch.copy(DAY_HORIZON).lerp(NIGHT_HORIZON, nightAmt)
       scratch.lerp(DUSK_HORIZON, dusk * Math.max(day, 0.15) * 0.7)
       scratch.lerp(STORM_HORIZON, storm * 0.75)
       horizonColor.copy(scratch)
 
       // Physical sky params — storms muddy the air, night drops the scatter
-      u['turbidity'].value = THREE.MathUtils.lerp(1.2, 12, storm) + (1 - day) * 2.5
-      u['rayleigh'].value = THREE.MathUtils.lerp(0.35, 1.7, day) * (1 - storm * 0.55)
-      u['mieCoefficient'].value = 0.002 + storm * 0.018 + (1 - day) * 0.004
+      // so the starfield isn't fighting grey Rayleigh
+      u['turbidity'].value = THREE.MathUtils.lerp(1.2, 12, storm) + night * 1.8
+      u['rayleigh'].value = THREE.MathUtils.lerp(0.18, 1.7, day) * (1 - storm * 0.55)
+      u['mieCoefficient'].value = 0.002 + storm * 0.018 + night * 0.003
 
       // Cloud deck: lower uCover = more cloud. Storms fill the sky.
       cloudMat.uniforms.uCover.value = THREE.MathUtils.lerp(0.62, 0.12, storm)
       cloudMat.uniforms.uTint.value
         .copy(DAY_CLOUD)
-        .lerp(NIGHT_CLOUD, 1 - day)
+        .lerp(NIGHT_CLOUD, night)
         .lerp(STORM_CLOUD, storm)
       cloudMat.uniforms.uShadow.value
         .copy(DAY_CLOUD_SHADOW)
-        .lerp(NIGHT_CLOUD_SHADOW, 1 - day)
+        .lerp(NIGHT_CLOUD_SHADOW, night)
         .lerp(STORM_CLOUD_SHADOW, storm)
       cloudMat.uniforms.uOpacity.value = THREE.MathUtils.lerp(0.55, 1, Math.max(storm, 1 - day * 0.5))
 
-      // Lights — night keeps a thin moon fill so the wreck silhouette still reads
+      // Lights — after dusk the directional becomes cool moon fill from the moon
       const sunUp = Math.max(0, climate.sunElevation / 62)
-      sunLight.intensity = THREE.MathUtils.lerp(0.15, 2.6, sunUp * sunUp) * (1 - storm * 0.6)
-      sunTint.setRGB(1, 0.94, 0.83).lerp(new THREE.Color('#8a9bb8'), 1 - day)
+      const moonLift = night * (1 - storm * 0.75)
+      const dayIntensity = THREE.MathUtils.lerp(0.15, 2.6, sunUp * sunUp) * (1 - storm * 0.6)
+      const nightIntensity = THREE.MathUtils.lerp(0.22, 0.28, fair) * moonLift
+      sunLight.intensity = Math.max(dayIntensity, nightIntensity)
+
+      sunTint.setRGB(1, 0.94, 0.83).lerp(new THREE.Color('#8a9bb8'), night)
       sunTint.lerp(new THREE.Color('#c8d0d6'), storm * 0.5)
       sunLight.color.copy(sunTint)
 
-      dayHemiSky.setRGB(0.62, 0.78, 0.91).lerp(new THREE.Color('#1a2838'), 1 - day)
+      // Aim the key light at the moon once the sun is down so silhouettes read
+      if (climate.sunElevation < 2) {
+        lightDir.copy(moonDir)
+      } else {
+        lightDir.copy(sunDir)
+      }
+      sunLight.position.copy(lightDir).multiplyScalar(200)
+
+      dayHemiSky.setRGB(0.62, 0.78, 0.91).lerp(new THREE.Color('#1a2838'), night)
       dayHemiSky.lerp(new THREE.Color('#3a4550'), storm * 0.55)
-      dayHemiGround.setRGB(0.03, 0.125, 0.17).lerp(new THREE.Color('#050a10'), 1 - day)
+      dayHemiGround.setRGB(0.03, 0.125, 0.17).lerp(new THREE.Color('#050a10'), night)
       hemi.intensity = THREE.MathUtils.lerp(0.22, 0.5, day) * (1 - storm * 0.3)
 
       // Stars fade in after dusk, wash out under a storm
-      starMat.opacity = Math.max(0, (1 - day) * 0.95 - storm * 0.7)
-      stars.visible = starMat.opacity > 0.02
+      const starOp = Math.max(0, night * 0.95 - storm * 0.7)
+      starMat.uniforms.uOpacity.value = starOp
+      stars.visible = starOp > 0.02
+
+      // Milky Way only on open, fair nights
+      const milkyOp = Math.max(0, night * fair * (1 - storm * 1.2))
+      milkyMat.uniforms.uOpacity.value = milkyOp
+      milky.visible = milkyOp > 0.03
+
+      // Moon disc eases in with night, dims hard under cloud cover
+      const moonOp = Math.max(0, night * (0.55 + fair * 0.45) * (1 - storm * 0.85))
+      discMat.uniforms.uOpacity.value = moonOp
+      haloMat.uniforms.uOpacity.value = moonOp * 0.85
+      moon.visible = moonOp > 0.04
     },
   }
 }

@@ -518,6 +518,13 @@ function frame() {
   skyRig.sky.position.set(camera.position.x, 0, camera.position.z)
   skyRig.clouds.position.set(camera.position.x, 0, camera.position.z)
   skyRig.stars.position.set(camera.position.x, 0, camera.position.z)
+  skyRig.milky.position.set(camera.position.x, 0, camera.position.z)
+  // Moon rides with the camera origin; its local offset is set in createSky
+  skyRig.moon.position.set(
+    camera.position.x + skyRig.moon.userData.ox,
+    skyRig.moon.userData.oy,
+    camera.position.z + skyRig.moon.userData.oz,
+  )
   // A heavy sea carries more cloud; a glass-off opens the sky up — on top of
   // whatever the squall clock is already doing
   const cover = skyRig.clouds.material as THREE.ShaderMaterial
@@ -557,6 +564,8 @@ function frame() {
   skyRig.sky.visible = !underwater
   skyRig.clouds.visible = !underwater
   skyRig.stars.visible = !underwater && skyRig.stars.visible
+  skyRig.milky.visible = !underwater && skyRig.milky.visible
+  skyRig.moon.visible = !underwater && skyRig.moon.visible
   if (underwater) {
     // Backscatter off the water is the only fill down here. Without a lit lower
     // hemisphere every underside — reef flank, hull, kelp — goes flat black.
