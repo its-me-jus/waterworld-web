@@ -100,7 +100,13 @@ the materials on you. No craft menu, no markers, no "correct" build order.
 | **Lean-to** | 2 plank + 1 rope | Dry ground (beach or spire) | Local shelter / warmth; **Rest** under it to nap or sleep until dawn |
 | **Fire** | 1 plank | Dry ground | Heat, cook/smoke fish, and a warm light at night. **Take** it as a brand to carry; **Plant** it to set camp again. Diving puts it out. |
 | **Rain-catch** | 1 canvas + 1 rope | Higher dry ground | Refilling fresh water |
-| **Raft** | 3 plank + 1 rope (+1 barrel if you have it) | Waterline | A small deck you can stand on that rides the swell |
+| **Raft** | 3 plank + 1 rope (+1 barrel) | Waterline | A real deck: gunwales, push pole, climb-aboard. Pole to steer. |
+| **Rig sail** | 1 plank + 1 canvas + 1 rope | On the raft | Mast and canvas — slow trade-wind drift while you're aboard |
+| **Lash rail** | 1 plank + 1 rope | On the raft | Higher rails, wider deck, harder to wash off |
+| **Lash locker** | 1 crate | On the raft | Dry storage. **Stow** / **Fetch** your pack |
+| **Scratch stern** | Mate's spear (memory) | On the raft | The Wanderer's mark — your watch, your deck |
+
+Fall off and **Climb** the raft from the water (F when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft.
 
 Hand-caught fish stay in hand — shown in the Pack and the HUD stash strip —
 until you **Eat** them raw, **Cook** them at a fire for a meal now, or **Smoke**
@@ -115,9 +121,11 @@ Warmth and strength come back; food and water tick down. A fire nearby helps,
 and finishes any fish still hanging in the smoke. Too empty to sleep if the
 tanks are nearly dry.
 
-A raft at the wreck is one path — **pole it from the deck** (move while standing
-on it) toward the island or along the reef. A camp on the island is another.
-Working the spire with a lean-to and a fire is a third. The sandbox is the point.
+A raft at the wreck is one path — **Climb** aboard from the water, **pole it
+from the deck**, then **Rig** a sail, **Lash** a rail and locker, **Scratch**
+the stern once the mate's spear has given you a name to cut. Stow gear you
+cannot swim with. A camp on the island is another path. Working the spire with
+a lean-to and a fire is a third. The sandbox is the point.
 
 ---
 

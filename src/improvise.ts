@@ -6,7 +6,7 @@ import type { PlayerFrame } from './player'
 import type { Salvage, StashKind } from './salvage'
 import { eat, type Vitals } from './survival'
 import { sampleOcean } from './waves'
-import { barrelObject, plankObject } from './wreck'
+import { barrelObject, crateObject, plankObject } from './wreck'
 
 /**
  * Improvise — spend what you've hauled so the world answers back.
@@ -40,6 +40,8 @@ export type ImproviseDeps = {
   skipTime: (seconds: number) => void
   /** Real seconds until the next dawn. */
   secondsUntilDawn: () => number
+  /** True once the mate's spear is yours — unlocks the stern mark. */
+  hasMark?: () => boolean
 }
 
 type BuildKind = 'lean-to' | 'fire' | 'raft' | 'catch'
@@ -48,6 +50,8 @@ type SmokeRack = {
   readyAt: number
   mesh: THREE.Object3D
 }
+
+type Hold = Record<StashKind, number>
 
 type Build = {
   kind: BuildKind
@@ -64,6 +68,14 @@ type Build = {
   vz?: number
   /** Fish hanging over this fire, waiting on the smoke. */
   smoking?: SmokeRack[]
+  /** Deck fittings — only meaningful on rafts. */
+  mast?: boolean
+  rail?: boolean
+  locker?: boolean
+  /** Materials stowed in the deck locker. */
+  hold?: Hold
+  /** Stern scratched with the mate's mark. */
+  marked?: boolean
   /** Extra hotspots this build registered (drink, etc.) — cleared on reset. */
   items: Interactable[]
 }
@@ -73,6 +85,9 @@ const FIRE_COST: Cost = { plank: 1 }
 const CATCH_COST: Cost = { canvas: 1, rope: 1 }
 const RAFT_COST: Cost = { plank: 3, rope: 1 }
 const RAFT_BARREL_COST: Cost = { plank: 3, rope: 1, barrel: 1 }
+const MAST_COST: Cost = { plank: 1, canvas: 1, rope: 1 }
+const RAIL_COST: Cost = { plank: 1, rope: 1 }
+const LOCKER_COST: Cost = { crate: 1 }
 
 const REACH = 3.2
 const PLACE_AHEAD = 1.7
@@ -87,6 +102,21 @@ const SMOKE_MAX = 2
 /** How hard you can pole a raft (m/s). */
 const POLE_SPEED = 1.85
 const POLE_SPEED_BARREL = 2.35
+/** Passive sail drift (m/s) once the mast is rigged. */
+const SAIL_SPEED = 0.95
+const SAIL_SPEED_BARREL = 1.35
+/** Standing eye height — match player.ts so Climb seats you on the deck. */
+const WALK_EYE = 1.62
+/** How far out you can still Climb aboard from the water. */
+const CLIMB_RANGE = 4.8
+
+const emptyHold = (): Hold => ({ plank: 0, barrel: 0, crate: 0, rope: 0, canvas: 0 })
+
+function holdCount(h: Hold) {
+  let n = 0
+  for (const k of Object.keys(h) as StashKind[]) n += h[k]
+  return n
+}
 
 function mats() {
   return {
@@ -162,6 +192,17 @@ function mats() {
     brand: new THREE.MeshStandardMaterial({
       color: 0x5a4430,
       roughness: 0.95,
+    }),
+    sail: new THREE.MeshStandardMaterial({
+      color: 0xc4b89a,
+      roughness: 0.9,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.92,
+    }),
+    mark: new THREE.MeshStandardMaterial({
+      color: 0x3a2e22,
+      roughness: 1,
     }),
     water: new THREE.MeshStandardMaterial({
       color: 0x6a9aaa,
@@ -439,32 +480,203 @@ function catchMesh(m: ReturnType<typeof mats>) {
 
 function raftMesh(m: ReturnType<typeof mats>, withBarrel: boolean) {
   const g = new THREE.Group()
-  for (let i = 0; i < 5; i++) {
-    const plank = plankObject(2.8, 0.28, m.wood)
-    plank.position.set(0, 0.05, (i - 2) * 0.32)
+  g.name = 'raft'
+
+  // Deck — denser planking, a touch longer so it reads as a craft not a pallet
+  for (let i = 0; i < 6; i++) {
+    const plank = plankObject(3.2, 0.3, m.wood)
+    plank.position.set(0, 0.05, (i - 2.5) * 0.3)
     g.add(plank)
   }
-  for (const z of [-0.7, 0.7]) {
-    const cross = plankObject(1.7, 0.16, m.wood)
+  for (const z of [-0.85, 0, 0.85]) {
+    const cross = plankObject(1.9, 0.14, m.wood)
     cross.rotation.y = Math.PI / 2
-    cross.position.set(0, 0.12, z * 0.15)
+    cross.position.set(0, 0.12, z * 0.05)
     g.add(cross)
   }
-  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.04, 4, 10), m.rope)
-  lash.rotation.x = Math.PI / 2
-  lash.position.set(1.1, 0.1, 0)
-  g.add(lash)
+
+  // Low gunwales — the lip that keeps gear (and you) from sliding off
+  for (const z of [-0.95, 0.95]) {
+    const rail = plankObject(2.9, 0.08, m.wood)
+    rail.position.set(0, 0.22, z)
+    rail.scale.set(1, 1.6, 1)
+    g.add(rail)
+  }
+
+  // Bow stem — a raised nose so it reads as going somewhere
+  const stem = plankObject(0.7, 0.12, m.wood)
+  stem.position.set(-1.55, 0.28, 0)
+  stem.rotation.z = 0.45
+  g.add(stem)
+  const stemPost = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.55, 0.1), m.wood)
+  stemPost.position.set(-1.65, 0.4, 0)
+  g.add(stemPost)
+
+  // Stern thwart + blank name board (mark carved later)
+  const thwart = plankObject(1.6, 0.18, m.wood)
+  thwart.rotation.y = Math.PI / 2
+  thwart.position.set(1.35, 0.2, 0)
+  g.add(thwart)
+  const board = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.28, 0.7), m.wood)
+  board.position.set(1.55, 0.42, 0)
+  board.name = 'sternBoard'
+  g.add(board)
+
+  // Push pole — lashed along the starboard rail, ready to hand
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 2.6, 6), m.brand)
+  pole.rotation.z = Math.PI / 2
+  pole.position.set(0.15, 0.28, 0.72)
+  g.add(pole)
+  const poleGrip = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.015, 4, 8), m.rope)
+  poleGrip.position.set(1.1, 0.28, 0.72)
+  poleGrip.rotation.y = Math.PI / 2
+  g.add(poleGrip)
+
+  // Lashings at the joints
+  for (const [x, z] of [
+    [1.2, 0.7],
+    [1.2, -0.7],
+    [-1.1, 0.7],
+    [-1.1, -0.7],
+  ] as const) {
+    const lash = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.03, 4, 8), m.rope)
+    lash.rotation.x = Math.PI / 2
+    lash.position.set(x, 0.14, z)
+    g.add(lash)
+  }
+
   if (withBarrel) {
     const left = barrelObject(m.wood, m.iron)
-    left.position.set(-1.3, -0.15, 0.55)
+    left.position.set(-1.15, -0.12, 0.65)
     left.rotation.z = Math.PI / 2
     g.add(left)
     const right = barrelObject(m.wood, m.iron)
-    right.position.set(-1.3, -0.15, -0.55)
+    right.position.set(-1.15, -0.12, -0.65)
     right.rotation.z = Math.PI / 2
     g.add(right)
   }
+
+  // Upgrade slots — empty groups filled when you lash fittings on
+  const mastSlot = new THREE.Group()
+  mastSlot.name = 'mastSlot'
+  mastSlot.visible = false
+  g.add(mastSlot)
+  const railSlot = new THREE.Group()
+  railSlot.name = 'railSlot'
+  railSlot.visible = false
+  g.add(railSlot)
+  const lockerSlot = new THREE.Group()
+  lockerSlot.name = 'lockerSlot'
+  lockerSlot.visible = false
+  g.add(lockerSlot)
+  const markSlot = new THREE.Group()
+  markSlot.name = 'markSlot'
+  markSlot.visible = false
+  g.add(markSlot)
+
   return g
+}
+
+function fitMast(raft: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = raft.getObjectByName('mastSlot') as THREE.Group
+  if (!slot || slot.children.length) {
+    if (slot) slot.visible = true
+    return
+  }
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 2.8, 8), m.brand)
+  mast.position.set(-0.35, 1.45, 0)
+  slot.add(mast)
+  const yard = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 1.8, 6), m.wood)
+  yard.rotation.z = Math.PI / 2
+  yard.position.set(-0.35, 2.35, 0)
+  slot.add(yard)
+  // Scrap of canvas on a yard — billows a little in animateSail
+  const sail = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 1.9, 3, 4), m.sail)
+  const pos = sail.geometry.attributes.position
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i)
+    const z = pos.getZ(i)
+    pos.setX(i, 0.08 + (1.1 - y) * 0.12 + z * z * 0.08)
+  }
+  pos.needsUpdate = true
+  sail.geometry.computeVertexNormals()
+  sail.position.set(-0.35, 1.45, 0)
+  sail.name = 'sail'
+  slot.add(sail)
+  const stay = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 2.2, 4), m.rope)
+  stay.position.set(0.4, 1.2, 0)
+  stay.rotation.z = 0.55
+  slot.add(stay)
+  slot.visible = true
+}
+
+function fitRail(raft: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = raft.getObjectByName('railSlot') as THREE.Group
+  if (!slot || slot.children.length) {
+    if (slot) slot.visible = true
+    return
+  }
+  for (const z of [-1.05, 1.05]) {
+    for (const x of [-1.1, 0, 1.1]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.55, 0.07), m.wood)
+      post.position.set(x, 0.45, z)
+      slot.add(post)
+    }
+    const top = plankObject(2.6, 0.07, m.wood)
+    top.position.set(0, 0.72, z)
+    slot.add(top)
+    // Rope course between posts
+    const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 2.4, 5), m.rope)
+    rope.rotation.z = Math.PI / 2
+    rope.position.set(0, 0.5, z)
+    slot.add(rope)
+  }
+  slot.visible = true
+}
+
+function fitLocker(raft: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = raft.getObjectByName('lockerSlot') as THREE.Group
+  if (!slot || slot.children.length) {
+    if (slot) slot.visible = true
+    return
+  }
+  const box = crateObject(m.wood)
+  box.rotation.set(0, 0.15, 0)
+  box.position.set(0.85, 0.42, -0.35)
+  box.scale.setScalar(0.85)
+  slot.add(box)
+  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.03, 4, 8), m.rope)
+  lash.position.set(0.85, 0.55, -0.35)
+  lash.rotation.x = Math.PI / 2
+  slot.add(lash)
+  slot.visible = true
+}
+
+function fitMark(raft: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = raft.getObjectByName('markSlot') as THREE.Group
+  if (!slot || slot.children.length) {
+    if (slot) slot.visible = true
+    return
+  }
+  // Scratched W — the Wanderer's mark, cut with the knife you earned
+  for (const [dx, dy, rot] of [
+    [-0.08, 0.04, 0.4],
+    [0.08, 0.04, -0.4],
+    [0, -0.02, 0],
+  ] as const) {
+    const cut = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.2, 0.04), m.mark)
+    cut.position.set(1.6, 0.42 + dy, dx)
+    cut.rotation.z = rot
+    slot.add(cut)
+  }
+  slot.visible = true
+}
+
+function animateSail(raft: THREE.Object3D, t: number) {
+  const sail = raft.getObjectByName('sail')
+  if (!sail) return
+  sail.rotation.y = Math.sin(t * 0.7) * 0.06
+  sail.rotation.z = Math.sin(t * 0.45 + 1) * 0.03
 }
 
 function smokedFishMesh(m: ReturnType<typeof mats>) {
@@ -511,6 +723,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const restPos = new THREE.Vector3()
   const takeFirePos = new THREE.Vector3()
   const plantFirePos = new THREE.Vector3()
+  const climbPos = new THREE.Vector3()
+  const raftFitPos = new THREE.Vector3()
+  const stowPos = new THREE.Vector3()
+  const markPos = new THREE.Vector3()
 
   let yaw = 0
   let onLand = false
@@ -521,6 +737,18 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let pz = 0
   let restReadyAt = 0
   let saidPole = false
+  let saidSail = false
+  let swimming = false
+  let onRaftDeck = false
+  /** Live player ref — Climb mutates this to seat you on the deck. */
+  let live: {
+    x: number
+    y: number
+    z: number
+    mode: 'swim' | 'walk'
+    vy: number
+    submersion: number
+  } | null = null
   /** Living brand in hand — null when every fire is planted. */
   let carried: Build | null = null
   const torch = torchMesh(m)
@@ -529,6 +757,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   // Lower-right, tip forward — reads as carried, not bolted to the lens
   const torchBase = new THREE.Vector3(0.38, -0.42, -0.55)
   const torchSway = new THREE.Vector3()
+  /** Trade-wind axis the sail draws on — steady, not a weather toy. */
+  const WIND = { x: Math.sin(0.85), z: Math.cos(0.85) }
 
   function disposeBuildObject(object: THREE.Object3D) {
     object.traverse((obj) => {
@@ -606,8 +836,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     available: () =>
       deps.vitals.alive &&
       !carried &&
-      onLand &&
-      groundY > 0.6 &&
+      ((onLand && groundY > 0.6) || onRaftDeck) &&
       deps.salvage.has(FIRE_COST) &&
       !nearestOfKind(firePos.x, firePos.z, 'fire', 3.5) &&
       clearOfBuilds(firePos.x, firePos.z, 1.4),
@@ -615,9 +844,13 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (!deps.salvage.spend(FIRE_COST)) return
       const x = firePos.x
       const z = firePos.z
-      const y = deps.groundAt(x, z)
+      const y = onRaftDeck
+        ? (nearestOfKind(px, pz, 'raft', 3.2)?.deckY ?? deps.groundAt(x, z)) + 0.08
+        : deps.groundAt(x, z)
       addBuild('fire', fireMesh(m), x, z, y, 2.4, 1.35)
-      deps.hud.whisper('Smoke. Heat. Something like a camp.')
+      deps.hud.whisper(
+        onRaftDeck ? 'Fire on the deck. Mind the planks.' : 'Smoke. Heat. Something like a camp.',
+      )
     },
   })
 
@@ -658,14 +891,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     available: () =>
       !!carried &&
       deps.vitals.alive &&
-      onLand &&
-      groundY > 0.6 &&
+      ((onLand && groundY > 0.6) || onRaftDeck) &&
       clearOfBuilds(plantFirePos.x, plantFirePos.z, 1.4),
     use: () => {
       if (!carried) return
       const x = plantFirePos.x
       const z = plantFirePos.z
-      const y = deps.groundAt(x, z)
+      const y = onRaftDeck
+        ? (nearestOfKind(px, pz, 'raft', 3.2)?.deckY ?? deps.groundAt(x, z)) + 0.08
+        : deps.groundAt(x, z)
       carried.x = x
       carried.z = z
       carried.deckY = y
@@ -676,7 +910,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       builds.push(carried)
       carried = null
       torch.visible = false
-      deps.hud.whisper('Embers in the sand. Camp again.')
+      deps.hud.whisper(onRaftDeck ? 'Embers on the deck.' : 'Embers in the sand. Camp again.')
     },
   })
 
@@ -728,7 +962,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     label: 'Raft',
     radius: REACH,
     available: () => {
-      if (!deps.vitals.alive || !nearWaterline) return false
+      if (!deps.vitals.alive || !nearWaterline || carried) return false
       if (!clearOfBuilds(raftPos.x, raftPos.z, 3.5)) return false
       return deps.salvage.has(RAFT_COST)
     },
@@ -739,18 +973,181 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const x = raftPos.x
       const z = raftPos.z
       const sea = sampleOcean(x, z, time).y
-      const radius = withBarrel ? 2.1 : 1.7
-      const raft = addBuild('raft', raftMesh(m, withBarrel), x, z, sea + 0.22, radius, 0.55, {
+      const radius = withBarrel ? 2.35 : 2.05
+      addBuild('raft', raftMesh(m, withBarrel), x, z, sea + 0.22, radius, withBarrel ? 0.62 : 0.55, {
         buoyant: withBarrel,
         vx: 0,
         vz: 0,
+        hold: emptyHold(),
       })
-      void raft
       deps.hud.whisper(
         withBarrel
-          ? 'Barrels under planks. It bears weight. Pole from the deck.'
-          : 'Three planks and a lashing. Pole it from the deck.',
+          ? 'Barrels under planks. Climb aboard. Pole from the deck.'
+          : 'Three planks and a lashing. Climb aboard — pole from the deck.',
       )
+    },
+  })
+
+  // Swim up, grab the gunwale, haul yourself onto the deck. The soft skirt
+  // helps, but this is the sure verb when the swell keeps knocking you off.
+  deps.interactions.add({
+    position: climbPos,
+    verb: 'Climb',
+    label: 'Raft',
+    radius: CLIMB_RANGE,
+    available: () => {
+      if (!deps.vitals.alive || !live || !swimming) return false
+      const raft = nearestOfKind(px, pz, 'raft', CLIMB_RANGE)
+      return !!raft
+    },
+    use: () => {
+      if (!live) return
+      const raft = nearestOfKind(px, pz, 'raft', CLIMB_RANGE)
+      if (!raft) return
+      live.mode = 'walk'
+      live.x = raft.x
+      live.z = raft.z
+      live.y = raft.deckY + WALK_EYE
+      live.vy = 0
+      live.submersion = 0
+      deps.hud.whisper('Hands on the gunwale. Up.')
+    },
+  })
+
+  function nearestRaftOnDeck() {
+    if (!onRaftDeck) return null
+    return nearestOfKind(px, pz, 'raft', 3.2)
+  }
+
+  // —— deck fittings —————————————————————————————————————————
+  deps.interactions.add({
+    position: raftFitPos,
+    verb: 'Rig',
+    label: 'Sail',
+    radius: 2.8,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      return !!raft && !raft.mast && deps.vitals.alive && deps.salvage.has(MAST_COST)
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !deps.salvage.spend(MAST_COST)) return
+      raft.mast = true
+      raft.shelter = Math.max(raft.shelter, raft.buoyant ? 0.78 : 0.7)
+      fitMast(raft.object, m)
+      deps.hud.whisper('Canvas on a yard. The wind will do some of the work.')
+    },
+  })
+
+  deps.interactions.add({
+    position: raftFitPos,
+    verb: 'Lash',
+    label: 'Rail',
+    radius: 2.8,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      return !!raft && !raft.rail && deps.vitals.alive && deps.salvage.has(RAIL_COST)
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !deps.salvage.spend(RAIL_COST)) return
+      raft.rail = true
+      raft.radius += 0.35
+      raft.shelter = Math.max(raft.shelter, raft.shelter + 0.12)
+      fitRail(raft.object, m)
+      deps.hud.whisper('A rail. The deck keeps more of you.')
+    },
+  })
+
+  deps.interactions.add({
+    position: raftFitPos,
+    verb: 'Lash',
+    label: 'Locker',
+    radius: 2.8,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      return !!raft && !raft.locker && deps.vitals.alive && deps.salvage.has(LOCKER_COST)
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !deps.salvage.spend(LOCKER_COST)) return
+      raft.locker = true
+      if (!raft.hold) raft.hold = emptyHold()
+      fitLocker(raft.object, m)
+      deps.hud.whisper('A crate, lashed dry. Stow what you cannot swim with.')
+    },
+  })
+
+  deps.interactions.add({
+    position: stowPos,
+    verb: 'Stow',
+    label: 'Gear',
+    radius: 2.6,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft?.locker || !deps.vitals.alive) return false
+      const s = deps.salvage.stash
+      return s.plank + s.barrel + s.crate + s.rope + s.canvas > 0
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft?.hold) return
+      const s = deps.salvage.stash
+      let moved = 0
+      for (const k of Object.keys(s) as StashKind[]) {
+        if (s[k] <= 0) continue
+        raft.hold[k] += s[k]
+        moved += s[k]
+        s[k] = 0
+      }
+      if (moved <= 0) return
+      deps.hud.whisper(
+        moved === 1 ? 'One piece in the locker.' : `${moved} pieces stowed. The swim lightens.`,
+      )
+    },
+  })
+
+  deps.interactions.add({
+    position: stowPos,
+    verb: 'Fetch',
+    label: 'Gear',
+    radius: 2.6,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft?.locker || !raft.hold || !deps.vitals.alive) return false
+      return holdCount(raft.hold) > 0
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft?.hold) return
+      const s = deps.salvage.stash
+      let moved = 0
+      for (const k of Object.keys(raft.hold) as StashKind[]) {
+        if (raft.hold[k] <= 0) continue
+        s[k] += raft.hold[k]
+        moved += raft.hold[k]
+        raft.hold[k] = 0
+      }
+      if (moved <= 0) return
+      deps.hud.whisper(moved === 1 ? 'Back in the hands.' : 'The locker empties into your arms.')
+    },
+  })
+
+  deps.interactions.add({
+    position: markPos,
+    verb: 'Scratch',
+    label: 'Stern',
+    radius: 2.6,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      return !!raft && !raft.marked && deps.vitals.alive && !!deps.hasMark?.()
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft) return
+      raft.marked = true
+      fitMark(raft.object, m)
+      deps.hud.whisper("The Wanderer's mark. Your watch. Your deck.")
     },
   })
 
@@ -761,9 +1158,18 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     if (carried) {
       return (
         onLand && groundY > 0.6 && clearOfBuilds(plantFirePos.x, plantFirePos.z, 1.4)
-      )
+      ) || (onRaftDeck && clearOfBuilds(plantFirePos.x, plantFirePos.z, 1.4))
+    }
+    if (onRaftDeck) {
+      const raft = nearestOfKind(px, pz, 'raft', 3.2)
+      if (raft && !raft.mast && deps.salvage.has(MAST_COST)) return true
+      if (raft && !raft.rail && deps.salvage.has(RAIL_COST)) return true
+      if (raft && !raft.locker && deps.salvage.has(LOCKER_COST)) return true
+      if (deps.salvage.has(FIRE_COST)) return true
+      return false
     }
     if (!onLand) {
+      if (swimming && nearestOfKind(px, pz, 'raft', CLIMB_RANGE)) return true
       return nearWaterline && deps.salvage.has(RAFT_COST) && clearOfBuilds(raftPos.x, raftPos.z, 3.5)
     }
     if (groundY > 0.8 && deps.salvage.has(LEAN_COST) && clearOfBuilds(leanPos.x, leanPos.z, 2.2)) {
@@ -953,7 +1359,17 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   function update(
     dt: number,
     t: number,
-    player: { x: number; y: number; z: number; dirX: number; dirZ: number },
+    player: {
+      x: number
+      y: number
+      z: number
+      dirX: number
+      dirZ: number
+      mode: 'swim' | 'walk'
+      vy: number
+      submersion: number
+      speed: number
+    },
     view: PlayerFrame,
     facingYaw: number,
   ) {
@@ -961,8 +1377,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     yaw = facingYaw
     px = player.x
     pz = player.z
+    live = player
+    swimming = !view.walking
     onLand = view.walking && view.groundY > 0.3
     groundY = view.groundY
+    onRaftDeck =
+      view.walking && !!nearestOfKind(player.x, player.z, 'raft', 3.4) && view.groundY > -0.5
 
     const ahead = offset(player, facingYaw, PLACE_AHEAD, 0)
     const fireAt = offset(player, facingYaw, 0.9, 0)
@@ -976,11 +1396,16 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     if (onLand && aheadY > 0.3) setAnchor(leanPos, ahead.x, ahead.z, aheadY + 0.5)
     else setAnchor(leanPos, player.x, player.z, player.y)
 
-    if (onLand && fireY > 0.3) setAnchor(firePos, fireAt.x, fireAt.z, fireY + 0.3)
-    else setAnchor(firePos, player.x, player.z, player.y)
-
-    if (onLand && fireY > 0.3) setAnchor(plantFirePos, fireAt.x, fireAt.z, fireY + 0.3)
-    else setAnchor(plantFirePos, player.x, player.z, player.y)
+    if ((onLand && fireY > 0.3) || onRaftDeck) {
+      const y = onRaftDeck
+        ? (nearestOfKind(px, pz, 'raft', 3.2)?.deckY ?? player.y) + 0.35
+        : fireY + 0.3
+      setAnchor(firePos, fireAt.x, fireAt.z, y)
+      setAnchor(plantFirePos, fireAt.x, fireAt.z, y)
+    } else {
+      setAnchor(firePos, player.x, player.z, player.y)
+      setAnchor(plantFirePos, player.x, player.z, player.y)
+    }
 
     if (onLand && catchY > 0.3) setAnchor(catchPos, catchAt.x, catchAt.z, catchY + 0.5)
     else setAnchor(catchPos, player.x, player.z, player.y)
@@ -998,6 +1423,20 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     void seaHere
 
     eatPos.set(player.x, player.y - 0.2, player.z)
+
+    const nearRaft = nearestOfKind(player.x, player.z, 'raft', CLIMB_RANGE)
+    if (nearRaft) {
+      climbPos.set(nearRaft.x, nearRaft.deckY + 0.4, nearRaft.z)
+      raftFitPos.set(nearRaft.x, nearRaft.deckY + 0.55, nearRaft.z)
+      stowPos.set(nearRaft.x + 0.7, nearRaft.deckY + 0.5, nearRaft.z - 0.3)
+      markPos.set(nearRaft.x + 1.2, nearRaft.deckY + 0.5, nearRaft.z)
+    } else {
+      climbPos.copy(eatPos)
+      raftFitPos.copy(eatPos)
+      stowPos.copy(eatPos)
+      markPos.copy(eatPos)
+    }
+
     const fire = nearestOfKind(player.x, player.z, 'fire', 2.8)
     if (fire) {
       takeFirePos.set(fire.x, fire.deckY + 0.45, fire.z)
@@ -1045,7 +1484,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         const prevX = b.x
         const prevZ = b.z
         const onDeck =
-          view.walking && Math.hypot(player.x - b.x, player.z - b.z) <= b.radius * 0.92
+          view.walking && Math.hypot(player.x - b.x, player.z - b.z) <= b.radius * 0.95
         const top = b.buoyant ? POLE_SPEED_BARREL : POLE_SPEED
         let vx = b.vx ?? 0
         let vz = b.vz ?? 0
@@ -1059,11 +1498,25 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
             saidPole = true
             deps.hud.whisper('The deck answers the pole.')
           }
+        } else if (b.mast && onDeck) {
+          // Sail draws while you're aboard — falls idle if you go overboard
+          const sail = b.buoyant ? SAIL_SPEED_BARREL : SAIL_SPEED
+          const draw = 1 - Math.exp(-0.55 * dt)
+          vx += (WIND.x * sail - vx) * draw * 0.65
+          vz += (WIND.z * sail - vz) * draw * 0.65
+          if (!saidSail && Math.hypot(vx, vz) > 0.35) {
+            saidSail = true
+            deps.hud.whisper('Canvas fills. The raft finds a heading.')
+          }
         } else {
           const drag = Math.exp(-1.15 * dt)
           vx *= drag
           vz *= drag
         }
+        // Soft water drag always — even under sail / pole
+        const waterDrag = Math.exp(-0.15 * dt)
+        vx *= waterDrag
+        vz *= waterDrag
         b.vx = vx
         b.vz = vz
         b.x += vx * dt
@@ -1074,20 +1527,31 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         b.object.position.set(b.x, b.deckY, b.z)
         b.object.rotation.x = sea.normal.z * 0.35
         b.object.rotation.z = -sea.normal.x * 0.35
-        // Yaw a little into the push so the raft reads as steered
-        if (Math.hypot(vx, vz) > 0.15) {
+        // Yaw into the push so the raft reads as steered
+        if (Math.hypot(vx, vz) > 0.12) {
           const want = Math.atan2(-vx, -vz)
           let dyaw = want - b.object.rotation.y
           while (dyaw > Math.PI) dyaw -= Math.PI * 2
           while (dyaw < -Math.PI) dyaw += Math.PI * 2
           b.object.rotation.y += dyaw * (1 - Math.exp(-1.2 * dt))
         }
+        if (b.mast) animateSail(b.object, t)
 
         if (onDeck) {
           player.x += b.x - prevX
           player.z += b.z - prevZ
           px = player.x
           pz = player.z
+        }
+
+        // Deck fire rides with the raft
+        for (const other of builds) {
+          if (other.kind !== 'fire') continue
+          if (Math.hypot(other.x - prevX, other.z - prevZ) > b.radius * 0.95) continue
+          other.x += b.x - prevX
+          other.z += b.z - prevZ
+          other.deckY = b.deckY + 0.08
+          other.object.position.set(other.x, other.deckY, other.z)
         }
       }
       if (b.kind === 'fire') {
@@ -1110,14 +1574,16 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (b.kind !== 'raft') continue
       const d = Math.hypot(b.x - x, b.z - z)
       // Soft skirt past the deck so the walker's slope probe doesn't see a
-      // cliff into the analytic ocean floor and refuse the edge
-      if (d > b.radius * 2.2) continue
+      // cliff into the analytic ocean floor — and so a swimmer can find the
+      // lip before they have to Climb.
+      const skirt = b.radius * (b.rail ? 2.8 : 2.55)
+      if (d > skirt) continue
       if (d <= b.radius) {
         const lip = 1 - (d / b.radius) ** 2
         best = Math.max(best, b.deckY + lip * 0.04)
       } else {
-        const t = Math.min(1, (d - b.radius) / (b.radius * 1.2))
-        best = Math.max(best, THREE.MathUtils.lerp(b.deckY, b.deckY - 0.55, t))
+        const t = Math.min(1, (d - b.radius) / (skirt - b.radius))
+        best = Math.max(best, THREE.MathUtils.lerp(b.deckY, b.deckY - 0.45, t))
       }
     }
     return best
@@ -1151,6 +1617,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     torch.visible = false
     restReadyAt = 0
     saidPole = false
+    saidSail = false
   }
 
   return {
@@ -1174,6 +1641,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       catch: CATCH_COST,
       raft: RAFT_COST,
       raftBarrel: RAFT_BARREL_COST,
+      mast: MAST_COST,
+      rail: RAIL_COST,
+      locker: LOCKER_COST,
       label: costLabel,
     },
   }
