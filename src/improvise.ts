@@ -113,60 +113,51 @@ function mats() {
       emissive: 0x8a2808,
       emissiveIntensity: 0.85,
     }),
-    flameCore: new THREE.MeshStandardMaterial({
-      color: 0xffe8a0,
-      roughness: 1,
-      emissive: 0xffcc66,
-      emissiveIntensity: 3.4,
+    flameCore: new THREE.MeshBasicMaterial({
+      color: 0xffcc66,
       transparent: true,
-      opacity: 0.95,
-      side: THREE.DoubleSide,
+      opacity: 0.9,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
     }),
-    flameMid: new THREE.MeshStandardMaterial({
-      color: 0xff8a2a,
-      roughness: 1,
-      emissive: 0xff5510,
-      emissiveIntensity: 2.8,
+    flameMid: new THREE.MeshBasicMaterial({
+      color: 0xff6a18,
       transparent: true,
-      opacity: 0.88,
-      side: THREE.DoubleSide,
+      opacity: 0.78,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
     }),
-    flameOuter: new THREE.MeshStandardMaterial({
-      color: 0xe03a08,
-      roughness: 1,
-      emissive: 0xc02000,
-      emissiveIntensity: 2.0,
+    flameOuter: new THREE.MeshBasicMaterial({
+      color: 0xd02008,
       transparent: true,
-      opacity: 0.55,
-      side: THREE.DoubleSide,
+      opacity: 0.42,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
     }),
     glow: new THREE.MeshBasicMaterial({
-      color: 0xff6a20,
+      color: 0xff6020,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.32,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
     }),
-    spark: new THREE.PointsMaterial({
-      color: 0xffc878,
-      size: 0.045,
-      sizeAttenuation: true,
+    sparkBit: new THREE.MeshBasicMaterial({
+      color: 0xffd090,
       transparent: true,
       opacity: 0.95,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     }),
-    smoke: new THREE.PointsMaterial({
-      color: 0x6a6258,
-      size: 0.22,
-      sizeAttenuation: true,
+    smokePuff: new THREE.MeshBasicMaterial({
+      color: 0x4a4540,
       transparent: true,
-      opacity: 0.28,
+      opacity: 0.18,
       depthWrite: false,
+      side: THREE.DoubleSide,
     }),
     brand: new THREE.MeshStandardMaterial({
       color: 0x5a4430,
@@ -210,52 +201,53 @@ function leanToMesh(m: ReturnType<typeof mats>) {
   return g
 }
 
-/** Rising spark / smoke points — positions rewritten each frame in animateFire. */
-function firePoints(count: number, material: THREE.PointsMaterial, name: string) {
-  const positions = new Float32Array(count * 3)
-  const seeds = new Float32Array(count)
+/** Rising spark bits / smoke puffs — positions rewritten each frame in animateFire. */
+function fireBits(
+  count: number,
+  material: THREE.Material,
+  name: string,
+  radius: number,
+) {
+  const g = new THREE.Group()
+  g.name = name
   for (let i = 0; i < count; i++) {
-    seeds[i] = Math.random()
-    positions[i * 3] = 0
-    positions[i * 3 + 1] = 0
-    positions[i * 3 + 2] = 0
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 5, 4), material.clone())
+    mesh.userData.seed = Math.random()
+    g.add(mesh)
   }
-  const geo = new THREE.BufferGeometry()
-  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1))
-  const pts = new THREE.Points(geo, material)
-  pts.name = name
-  pts.frustumCulled = false
-  pts.renderOrder = 3
-  return pts
+  return g
 }
 
 function attachFireLight(g: THREE.Group, torch: boolean) {
-  // Warm key — close, bright, flicker-driven. Soft fill — wider pool on the sand.
-  const key = new THREE.PointLight(0xff8a3a, torch ? 4.5 : 7.5, torch ? 7 : 14, 2)
+  // Candela units (Three r155+). A campfire is bright — hundreds of cd — so
+  // the night sand actually takes the orange.
+  const key = new THREE.PointLight(0xff8a3a, torch ? 55 : 110, torch ? 9 : 16, 2)
   key.name = 'fireLight'
-  key.position.set(0, torch ? 0.55 : 0.45, 0)
+  key.position.set(0, torch ? 0.55 : 0.5, 0)
   g.add(key)
-  const fill = new THREE.PointLight(0xff6a28, torch ? 1.2 : 2.2, torch ? 11 : 22, 2)
+  const fill = new THREE.PointLight(0xff6a28, torch ? 18 : 36, torch ? 14 : 26, 2)
   fill.name = 'fireFill'
-  fill.position.set(0, torch ? 0.35 : 0.25, 0)
+  fill.position.set(0, torch ? 0.3 : 0.2, 0)
   g.add(fill)
 }
 
 function flameStack(m: ReturnType<typeof mats>, scale = 1) {
   const g = new THREE.Group()
   g.name = 'flames'
-  const outer = new THREE.Mesh(new THREE.ConeGeometry(0.22 * scale, 0.72 * scale, 7), m.flameOuter)
-  outer.position.y = 0.38 * scale
+  const outer = new THREE.Mesh(new THREE.ConeGeometry(0.24 * scale, 0.78 * scale, 7), m.flameOuter.clone())
+  outer.position.y = 0.4 * scale
   outer.name = 'flameOuter'
+  outer.renderOrder = 2
   g.add(outer)
-  const mid = new THREE.Mesh(new THREE.ConeGeometry(0.14 * scale, 0.58 * scale, 6), m.flameMid)
-  mid.position.y = 0.36 * scale
+  const mid = new THREE.Mesh(new THREE.ConeGeometry(0.15 * scale, 0.62 * scale, 6), m.flameMid.clone())
+  mid.position.y = 0.38 * scale
   mid.name = 'flameMid'
+  mid.renderOrder = 3
   g.add(mid)
-  const core = new THREE.Mesh(new THREE.ConeGeometry(0.07 * scale, 0.42 * scale, 5), m.flameCore)
-  core.position.y = 0.32 * scale
+  const core = new THREE.Mesh(new THREE.ConeGeometry(0.08 * scale, 0.46 * scale, 5), m.flameCore.clone())
+  core.position.y = 0.34 * scale
   core.name = 'flameCore'
+  core.renderOrder = 4
   g.add(core)
   return g
 }
@@ -283,14 +275,15 @@ function fireMesh(m: ReturnType<typeof mats>) {
   coal.name = 'ember'
   g.add(coal)
 
-  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.38, 12, 10), m.glow.clone())
-  glow.position.y = 0.28
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 10), m.glow.clone())
+  glow.position.y = 0.3
   glow.name = 'glow'
+  glow.renderOrder = 1
   g.add(glow)
 
   g.add(flameStack(m, 1))
-  g.add(firePoints(18, m.spark.clone(), 'sparks'))
-  g.add(firePoints(10, m.smoke.clone(), 'smoke'))
+  g.add(fireBits(14, m.sparkBit, 'sparks', 0.018))
+  g.add(fireBits(6, m.smokePuff, 'smoke', 0.07))
   attachFireLight(g, false)
   return g
 }
@@ -310,15 +303,16 @@ function torchMesh(m: ReturnType<typeof mats>) {
   tip.position.y = 0.66
   tip.name = 'ember'
   g.add(tip)
-  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), m.glow.clone())
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), m.glow.clone())
   glow.position.y = 0.72
   glow.name = 'glow'
+  glow.renderOrder = 1
   g.add(glow)
   const flames = flameStack(m, 0.55)
   flames.position.y = 0.42
   g.add(flames)
-  g.add(firePoints(12, m.spark.clone(), 'sparks'))
-  g.add(firePoints(6, m.smoke.clone(), 'smoke'))
+  g.add(fireBits(10, m.sparkBit, 'sparks', 0.014))
+  g.add(fireBits(4, m.smokePuff, 'smoke', 0.05))
   attachFireLight(g, true)
   return g
 }
@@ -341,15 +335,20 @@ function animateFire(root: THREE.Object3D, t: number, phase: number, daylight: n
         n === 'flameCore' ? 0.9 + flicker * 0.2 : n === 'flameMid' ? 0.85 + flicker * 0.22 : 0.8 + flicker * 0.28
       child.scale.set(0.92 + flicker * 0.12, yPulse, 0.92 + flicker * 0.12)
       child.rotation.y = t * (n === 'flameOuter' ? 0.9 : n === 'flameMid' ? 1.4 : 2.1)
+      if (child instanceof THREE.Mesh) {
+        const mat = child.material as THREE.MeshBasicMaterial
+        const base = n === 'flameCore' ? 0.95 : n === 'flameMid' ? 0.82 : 0.5
+        mat.opacity = base * (0.7 + flicker * 0.4)
+      }
     }
   }
 
   const glow = root.getObjectByName('glow')
   if (glow) {
-    const s = 0.85 + flicker * 0.35
+    const s = 0.9 + flicker * 0.4
     glow.scale.setScalar(s)
     const mat = (glow as THREE.Mesh).material as THREE.MeshBasicMaterial
-    mat.opacity = 0.22 + flicker * 0.2
+    mat.opacity = 0.28 + flicker * 0.28
   }
 
   const ember = root.getObjectByName('ember')
@@ -358,34 +357,34 @@ function animateFire(root: THREE.Object3D, t: number, phase: number, daylight: n
     mat.emissiveIntensity = 1.2 + flicker * 1.1
   }
 
-  // Sparks climb and drift; smoke slower and wider
-  const sparks = root.getObjectByName('sparks') as THREE.Points | undefined
+  const sparks = root.getObjectByName('sparks')
   if (sparks) {
-    const pos = sparks.geometry.getAttribute('position') as THREE.BufferAttribute
-    const seed = sparks.geometry.getAttribute('aSeed') as THREE.BufferAttribute
-    for (let i = 0; i < pos.count; i++) {
-      const s = seed.getX(i)
-      const life = ((t * (0.55 + s * 0.7) + s * 7) % 1.4) / 1.4
+    for (const child of sparks.children) {
+      if (!(child instanceof THREE.Mesh)) continue
+      const s = child.userData.seed as number
+      const life = ((t * (0.55 + s * 0.7) + s * 7) % 1.35) / 1.35
       const spin = s * Math.PI * 2 + t * (1.2 + s)
-      const r = 0.04 + life * 0.16 + Math.sin(spin) * 0.03
-      pos.setXYZ(i, Math.cos(spin) * r, 0.25 + life * 0.95, Math.sin(spin) * r)
+      const r = 0.03 + life * 0.14 + Math.sin(spin) * 0.02
+      child.position.set(Math.cos(spin) * r, 0.28 + life * 0.9, Math.sin(spin) * r)
+      const fade = life < 0.15 ? life / 0.15 : life > 0.7 ? 1 - (life - 0.7) / 0.3 : 1
+      child.scale.setScalar(0.6 + fade * 0.8)
+      ;(child.material as THREE.MeshBasicMaterial).opacity = fade * (0.55 + flicker * 0.4)
     }
-    pos.needsUpdate = true
-    ;(sparks.material as THREE.PointsMaterial).opacity = 0.55 + flicker * 0.4
   }
-  const smoke = root.getObjectByName('smoke') as THREE.Points | undefined
+  const smoke = root.getObjectByName('smoke')
   if (smoke) {
-    const pos = smoke.geometry.getAttribute('position') as THREE.BufferAttribute
-    const seed = smoke.geometry.getAttribute('aSeed') as THREE.BufferAttribute
-    for (let i = 0; i < pos.count; i++) {
-      const s = seed.getX(i)
-      const life = ((t * (0.18 + s * 0.2) + s * 4) % 2.2) / 2.2
-      const spin = s * Math.PI * 2 + t * 0.35
-      const r = 0.08 + life * 0.35
-      pos.setXYZ(i, Math.cos(spin) * r, 0.5 + life * 1.6, Math.sin(spin * 0.8) * r)
+    for (const child of smoke.children) {
+      if (!(child instanceof THREE.Mesh)) continue
+      const s = child.userData.seed as number
+      const life = ((t * (0.16 + s * 0.18) + s * 4) % 2.4) / 2.4
+      const spin = s * Math.PI * 2 + t * 0.3
+      const r = 0.06 + life * 0.32
+      child.position.set(Math.cos(spin) * r, 0.55 + life * 1.5, Math.sin(spin * 0.8) * r)
+      child.scale.setScalar(0.7 + life * 1.6)
+      const night = Math.max(0, 1 - daylight)
+      ;(child.material as THREE.MeshBasicMaterial).opacity =
+        (0.08 + night * 0.1) * (1 - life * 0.85)
     }
-    pos.needsUpdate = true
-    ;(smoke.material as THREE.PointsMaterial).opacity = 0.12 + (1 - daylight) * 0.18
   }
 
   // Lights: strong at night, still a readable warm pool by day
@@ -394,12 +393,12 @@ function animateFire(root: THREE.Object3D, t: number, phase: number, daylight: n
   const fill = root.getObjectByName('fireFill') as THREE.PointLight | undefined
   const torch = root.name === 'torch'
   if (key) {
-    const base = torch ? 2.2 + night * 3.5 : 2.8 + night * 6.5
+    const base = torch ? 28 + night * 55 : 40 + night * 95
     key.intensity = base * flicker
     key.color.setRGB(1, 0.48 + flicker * 0.12, 0.18 + flicker * 0.05)
   }
   if (fill) {
-    const base = torch ? 0.7 + night * 1.4 : 1.0 + night * 2.4
+    const base = torch ? 10 + night * 18 : 14 + night * 32
     fill.intensity = base * (0.85 + flicker * 0.2)
   }
 }
@@ -1033,6 +1032,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       torch.position.copy(torchBase).add(torchSway)
       torch.rotation.set(0.35 + bob * 2, -0.25, 0.15 + sway * 3)
       animateFire(torch, t, 2.1, deps.daylight())
+    } else if (!carried) {
+      // Keep dormant brand lights from leaking into the night
+      const key = torch.getObjectByName('fireLight') as THREE.PointLight | undefined
+      const fill = torch.getObjectByName('fireFill') as THREE.PointLight | undefined
+      if (key) key.intensity = 0
+      if (fill) fill.intensity = 0
     }
 
     for (const b of builds) {
