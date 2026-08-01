@@ -246,8 +246,13 @@ export function createWreckLoot(
     verb: 'Jab',
     label: 'with the spear',
     radius: JAB_RANGE,
-    available: () =>
-      hasSpear && vitals.alive && deps.shark.active && deps.shark.distance < JAB_RANGE,
+    available: () => {
+      if (!hasSpear || !vitals.alive || !deps.shark.active) return false
+      if (deps.shark.distance >= JAB_RANGE) return false
+      const m = deps.shark.mode
+      // The jab answers a run — telegraph or commit — or a body that got too close
+      return m === 'telegraph' || m === 'commit' || (m === 'circle' && deps.shark.distance < 3.2)
+    },
     use: () => {
       lunge = 1
       if (deps.shark.strike()) {

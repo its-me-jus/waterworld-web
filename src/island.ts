@@ -35,6 +35,12 @@ export type Island = {
    * keeps coming back. It's what turns landfall into somewhere you could stay.
    */
   pools: THREE.Vector3[]
+  /**
+   * One inland rock stack — someone marked a place. No marker pointing at it;
+   * you find it by walking the green band. Null only if the terrain couldn't
+   * host one (shouldn't happen on the stock island).
+   */
+  cairn: THREE.Vector3 | null
   update: (camera: THREE.Camera, underwater: boolean, time?: number) => void
   /** Keep aerial perspective matched to the live horizon. */
   setHaze: (color: THREE.Color) => void
@@ -819,6 +825,66 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     }
   }
 
+  // —— inland cairn ————————————————————————————————————————————
+  // A small stack on flat green ground. Not a waypoint — just proof someone
+  // walked inland and left rope. Salvage hangs a takeable find on the world
+  // position; this mesh is the thing you notice first.
+  let cairn: THREE.Vector3 | null = null
+  {
+    const stoneMat = hazeMaterial(haze, { color: 0x6a6358, roughness: 0.97, ...skylight })
+    const candidates: { lx: number; lz: number; h: number; slope: number }[] = []
+    for (let i = 0; i < 700; i++) {
+      const angle = i * 2.618 + 1.1
+      const radius = 70 + ((i * 23) % 180)
+      const lx = Math.cos(angle) * radius
+      const lz = Math.sin(angle) * radius
+      const h = surface(lx, lz)
+      if (h < 9 || h > 38) continue
+      const slope =
+        Math.abs(surface(lx + 3, lz) - h) +
+        Math.abs(surface(lx - 3, lz) - h) +
+        Math.abs(surface(lx, lz + 3) - h) +
+        Math.abs(surface(lx, lz - 3) - h)
+      if (slope > 2.8) continue
+      // Prefer a quiet pocket away from the rain pools
+      if (pools.some((p) => Math.hypot(p.x - (opts.x + lx), p.z - (opts.z + lz)) < 28)) continue
+      candidates.push({ lx, lz, h, slope })
+    }
+    candidates.sort((a, b) => a.slope - b.slope || a.h - b.h)
+    const spot = candidates[0]
+    if (spot) {
+      const { lx, lz, h } = spot
+      const stack = new THREE.Group()
+      stack.position.set(lx, h, lz)
+      const sizes = [
+        [0.55, 0.28, 0.48],
+        [0.42, 0.22, 0.38],
+        [0.28, 0.2, 0.26],
+        [0.18, 0.16, 0.2],
+      ]
+      let y = 0
+      for (let i = 0; i < sizes.length; i++) {
+        const [sx, sy, sz] = sizes[i]
+        const rock = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), stoneMat)
+        rock.position.set((i % 2) * 0.04 - 0.02, y + sy * 0.5, (i % 3) * 0.03 - 0.03)
+        rock.rotation.y = i * 0.55
+        rock.rotation.z = (i % 2) * 0.08 - 0.04
+        stack.add(rock)
+        y += sy * 0.82
+      }
+      // A short upright stick — reads as a marker, not a build
+      const stick = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.025, 0.03, 0.9, 5),
+        hazeMaterial(haze, { color: 0x5a4634, roughness: 1, ...skylight }),
+      )
+      stick.position.set(0.12, y * 0.35 + 0.45, -0.08)
+      stick.rotation.z = 0.12
+      stack.add(stick)
+      group.add(stack)
+      cairn = new THREE.Vector3(opts.x + lx, h, opts.z + lz)
+    }
+  }
+
   // —— collision ————————————————————————————————————————————
   function resolve(p: { x: number; y: number; z: number }) {
     const lx = p.x - opts.x
@@ -883,5 +949,5 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     haze.copy(color).convertLinearToSRGB()
   }
 
-  return { group, centre, heightAt, resolve, shore, pools, update, setHaze }
+  return { group, centre, heightAt, resolve, shore, pools, cairn, update, setHaze }
 }

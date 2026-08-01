@@ -5,16 +5,16 @@ import { sampleOcean } from './waves'
 /**
  * The shark — a rare presence you can actually see.
  *
- * A pass has two acts, so the ocean can warn you without words:
+ * A pass has three acts, so the ocean can warn you without words:
  *
  *  1. Surface cruise — only the dorsal cuts the swell, a dark triangle
  *     sliding past at ~22 m. You spot the fin from the surface.
  *  2. Below — it sinks and takes one slow circle under you, close enough
  *     that diving puts the whole body in the murk where you can read it.
- *
- * Armed (Phase B spear): the underwater circle tightens, and about two
- * passes in three it commits to a run. Jab turns it; a connected bite
- * wounds. Unarmed, it never touches you — foreshadowing only.
+ *  3. Armed (Phase B spear): the circle tightens, then a short telegraph —
+ *     bank, aim, whisper — before the commit run. Jab turns it; a connected
+ *     bite wounds (Bleeding meter until it clots). Unarmed, it never touches
+ *     you — foreshadowing only.
  */
 
 const TAU = Math.PI * 2
@@ -119,7 +119,7 @@ export type SharkOptions = {
   onBite?: () => void
 }
 
-type Mode = 'surface' | 'sink' | 'circle' | 'commit' | 'retreat' | 'flee'
+type Mode = 'surface' | 'sink' | 'circle' | 'telegraph' | 'commit' | 'retreat' | 'flee'
 
 export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
   const { root, tail, dorsalTip } = buildShark()
@@ -136,6 +136,7 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
   let radius = 55
   let mode: Mode = 'surface'
   let saidHello = false
+  let saidTighten = false
   let committed = false
   let runT = 0
   let runMinDist = Infinity
@@ -144,6 +145,8 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
   let tailBeat = 3.4
   /** Depth of the body centre below the local swell (positive = under). */
   let depthBelow = 0.55
+  /** Brief bank-and-aim before the run — the readable telegraph. */
+  let telegraphT = 0
 
   const centre = new THREE.Vector3()
   const pos = new THREE.Vector3()
@@ -152,17 +155,20 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
   const fleeDir = new THREE.Vector3()
   const pushable = { x: 0, y: 0, z: 0 }
 
-  // Surface cruise → sink → one underwater circle → leave
+  // Surface cruise → sink → one underwater circle → (armed: telegraph → commit) → leave
   const SURFACE = 22
   const SINK = 5
   const CIRCLE = 36
+  const TELEGRAPH = 1.55
   const DURATION = 70
 
   function begin(camera: THREE.PerspectiveCamera) {
     active = true
     elapsed = 0
     saidHello = false
+    saidTighten = false
     committed = false
+    telegraphT = 0
     theta = Math.random() * TAU
     radius = 36
     mode = 'surface'
@@ -181,6 +187,12 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
     cooldown = base * calm
   }
 
+  function startTelegraph() {
+    mode = 'telegraph'
+    telegraphT = 0
+    opts.whisper?.('It turns on you.')
+  }
+
   function startCommit() {
     mode = 'commit'
     runT = 0
@@ -191,6 +203,7 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
   function breakAway(struck: boolean) {
     mode = 'flee'
     runT = 0
+    telegraphT = 0
     fleeDir.subVectors(pos, centre)
     fleeDir.y = 0
     if (fleeDir.lengthSq() < 1e-6) fleeDir.set(1, 0, 0)
@@ -201,7 +214,10 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
   }
 
   function strike() {
-    if (!active || mode === 'flee' || mode === 'surface') return false
+    if (!active || mode === 'flee' || mode === 'surface' || mode === 'sink') return false
+    // A jab only answers a real threat — telegraph or the run itself
+    if (mode !== 'telegraph' && mode !== 'commit' && mode !== 'circle') return false
+    if (mode === 'circle' && distance > 3.4) return false
     strikes++
     breakAway(true)
     return true
@@ -247,16 +263,36 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
       if (elapsed >= SURFACE + SINK) mode = 'circle'
     } else if (mode === 'circle') {
       radius = circleR
+      if (armed && !saidTighten) {
+        saidTighten = true
+        opts.whisper?.('The circle tightens.')
+      }
       // Track a few metres below the swimmer's eye so a deep dive still puts
       // the body in frame — murk eats anything past ~15 m
       if (armed && !committed && elapsed > SURFACE + SINK + CIRCLE * 0.45) {
         committed = true
-        if (opts.alwaysCommit || Math.random() < 0.65) startCommit()
+        if (opts.alwaysCommit || Math.random() < 0.65) startTelegraph()
       }
-      if (elapsed >= SURFACE + SINK + CIRCLE) mode = 'retreat'
+      if (elapsed >= SURFACE + SINK + CIRCLE && mode === 'circle') mode = 'retreat'
     }
 
-    if (mode === 'commit') {
+    if (mode === 'telegraph') {
+      telegraphT += dt
+      // Bank in, close the gap a touch, aim the nose — readable before the rush
+      radius = Math.max(4.5, circleR - telegraphT * 2.2)
+      desired.subVectors(camera.position, pos)
+      desired.y = 0
+      if (desired.lengthSq() > 1e-6) desired.normalize()
+      heading.lerp(desired, Math.min(1, dt * 3.2)).normalize()
+      const prefer = camera.position.y - 2.2
+      const swell = sampleOcean(pos.x, pos.z, time).y
+      const targetY = Math.min(prefer, swell - 3.2)
+      pos.y += (targetY - pos.y) * Math.min(1, dt * 2.8)
+      // Creep inward along the heading
+      pos.addScaledVector(heading, 1.1 * dt)
+      distance = camera.position.distanceTo(pos)
+      if (telegraphT >= TELEGRAPH) startCommit()
+    } else if (mode === 'commit') {
       runT += dt
       desired.subVectors(camera.position, pos).normalize()
       heading.lerp(desired, Math.min(1, dt * 2.4)).normalize()
@@ -316,7 +352,7 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
       distance = camera.position.distanceTo(pos)
     }
 
-    if (opts.resolve) {
+    if (opts.resolve && mode !== 'telegraph' && mode !== 'commit' && mode !== 'flee') {
       pushable.x = pos.x
       pushable.y = pos.y
       pushable.z = pos.z
@@ -334,12 +370,25 @@ export function createShark(scene: THREE.Scene, opts: SharkOptions = {}) {
     // Level the body on the surface pass so the dorsal reads as a clean triangle
     if (mode === 'surface') root.rotation.x = 0
 
-    const tailTarget = mode === 'flee' ? 11 : mode === 'commit' ? 7.5 : mode === 'surface' ? 2.6 : 3.4
+    const tailTarget =
+      mode === 'flee'
+        ? 11
+        : mode === 'commit'
+          ? 7.5
+          : mode === 'telegraph'
+            ? 6.2
+            : mode === 'surface'
+              ? 2.6
+              : 3.4
     tailBeat += (tailTarget - tailBeat) * Math.min(1, dt * 3)
-    tail.rotation.y = Math.sin(time * tailBeat) * (mode === 'flee' ? 0.55 : 0.35)
+    tail.rotation.y = Math.sin(time * tailBeat) * (mode === 'flee' ? 0.55 : mode === 'telegraph' ? 0.45 : 0.35)
     if (mode !== 'surface') root.rotation.z = Math.sin(time * 0.9) * 0.06
 
-    proximity = Math.max(0, 1 - distance / 48)
+    // Proximity spikes hard on telegraph/commit so the dread audio reads the run
+    const proxReach = mode === 'commit' || mode === 'telegraph' ? 28 : 48
+    proximity = Math.max(0, 1 - distance / proxReach)
+    if (mode === 'telegraph') proximity = Math.max(proximity, 0.72)
+    if (mode === 'commit') proximity = Math.max(proximity, 0.88)
     if (!saidHello && distance < 36) {
       saidHello = true
       opts.whisper?.('Something large passes below.')
