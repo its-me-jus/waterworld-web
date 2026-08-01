@@ -131,12 +131,18 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     promptBox.classList.toggle('on', text !== '')
   }
 
-  function setStash(stash: Stash, labels: Record<StashKind, { one: string; many: string }>) {
+  function setStash(
+    stash: Stash,
+    labels: Record<StashKind, { one: string; many: string }>,
+    held?: { rawFish?: number },
+  ) {
     const parts: string[] = []
     for (const key of Object.keys(stash) as StashKind[]) {
       const count = stash[key]
       if (count > 0) parts.push(`${count === 1 ? labels[key].one : labels[key].many} ${count}`)
     }
+    const fish = held?.rawFish ?? 0
+    if (fish > 0) parts.push(`Raw fish ${fish}`)
     const text = parts.join('  ·  ')
     if (text === lastStash) return
     lastStash = text

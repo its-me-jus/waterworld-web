@@ -300,6 +300,9 @@ const improvise = createImprovise(scene, {
   rawFish: () => forage.rawFish,
   eatRawFish: () => forage.eatRaw(),
   cookFish: () => forage.cook(),
+  daylight: () => climate.state.daylight,
+  skipTime: (seconds) => climate.skip(seconds),
+  secondsUntilDawn: () => climate.secondsUntilDawn(),
 })
 raftAt = improvise.standAt
 
@@ -345,6 +348,13 @@ const opMenu = createOpMenu(app, {
   salvage,
   loot,
   vitals,
+  rawFish: () => forage.rawFish,
+  eatFish: () => {
+    if (!forage.eatRaw()) return false
+    hud.whisper('Raw fish. It stays down.')
+    return true
+  },
+  grantFish: (n) => forage.grant(n),
   teleport,
   spots: {
     island: { x: beach.x, z: beach.z, y: beach.y + 1.7 },
@@ -652,7 +662,7 @@ function frame() {
   // Mobile action button carries the same words as the centre prompt — verb
   // alone ("Lash") is ambiguous once lean-to and raft share a verb.
   touch.setAction(prompt ? `${prompt.verb} ${prompt.label}` : null)
-  hud.setStash(salvage.stash, salvage.labels)
+  hud.setStash(salvage.stash, salvage.labels, { rawFish: forage.rawFish })
   hud.update(vitals, view.submersion > 0.85, dt)
 
   splash.update(dt, camera.position.y, surfaceY, view.moving, view.submersion)

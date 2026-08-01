@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { DAY_LENGTH } from './climate'
 import type { Hud } from './hud'
 import type { Interactable, Interactions } from './interact'
 import type { PlayerFrame } from './player'
@@ -29,6 +30,12 @@ export type ImproviseDeps = {
   rawFish: () => number
   eatRawFish: () => boolean
   cookFish: () => boolean
+  /** 0 at night … 1 at noon — rest under a lean-to skips to dawn when dark. */
+  daylight: () => number
+  /** Jump the climate clock (seconds of day-cycle time). */
+  skipTime: (seconds: number) => void
+  /** Real seconds until the next dawn. */
+  secondsUntilDawn: () => number
 }
 
 type BuildKind = 'lean-to' | 'fire' | 'raft' | 'catch'
@@ -55,6 +62,10 @@ const RAFT_BARREL_COST: Cost = { plank: 3, rope: 1, barrel: 1 }
 const REACH = 3.2
 const PLACE_AHEAD = 1.7
 const CATCH_REFILL = 220
+/** Daytime nap — a few hours of day-cycle time, not a full night. */
+const NAP_HOURS = 2.8
+/** Don't rest again until you've been awake this long (real seconds). */
+const REST_COOLDOWN = 18
 
 function mats() {
   return {
@@ -230,6 +241,7 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
   const raftPos = new THREE.Vector3()
   const eatPos = new THREE.Vector3()
   const cookPos = new THREE.Vector3()
+  const restPos = new THREE.Vector3()
 
   let yaw = 0
   let onLand = false
@@ -238,6 +250,7 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
   let time = 0
   let px = 0
   let pz = 0
+  let restReadyAt = 0
 
   function nearestOfKind(x: number, z: number, kind: BuildKind, maxDist: number): Build | null {
     let best: Build | null = null
@@ -390,13 +403,41 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
     },
   })
 
+  // Held fish — eat when nothing more urgent is in reach; cook at a fire.
+  // The eat hotspot sits on the body, so without this gate it beats every
+  // world prompt (lash, rest, …) on mobile.
+  function craftPending() {
+    if (!onLand) {
+      return nearWaterline && deps.salvage.has(RAFT_COST) && clearOfBuilds(raftPos.x, raftPos.z, 3.5)
+    }
+    if (groundY > 0.8 && deps.salvage.has(LEAN_COST) && clearOfBuilds(leanPos.x, leanPos.z, 2.2)) {
+      return true
+    }
+    if (
+      groundY > 0.6 &&
+      deps.salvage.has(FIRE_COST) &&
+      !nearestOfKind(firePos.x, firePos.z, 'fire', 3.5) &&
+      clearOfBuilds(firePos.x, firePos.z, 1.4)
+    ) {
+      return true
+    }
+    if (groundY > 1.2 && deps.salvage.has(CATCH_COST) && clearOfBuilds(catchPos.x, catchPos.z, 2.4)) {
+      return true
+    }
+    return nearWaterline && deps.salvage.has(RAFT_COST) && clearOfBuilds(raftPos.x, raftPos.z, 3.5)
+  }
+
   deps.interactions.add({
     position: eatPos,
     verb: 'Eat',
     label: 'Raw fish',
     radius: 1.8,
     available: () =>
-      deps.vitals.alive && deps.rawFish() > 0 && !nearestOfKind(px, pz, 'fire', 2.8),
+      deps.vitals.alive &&
+      deps.rawFish() > 0 &&
+      !nearestOfKind(px, pz, 'fire', 2.8) &&
+      !nearestOfKind(px, pz, 'lean-to', 2.4) &&
+      !craftPending(),
     use: () => {
       if (!deps.eatRawFish()) return
       deps.hud.whisper('Raw fish. It stays down.')
@@ -415,6 +456,59 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
       if (!fire || !deps.cookFish()) return
       deps.vitals.warmth = Math.min(1, deps.vitals.warmth + 0.08)
       deps.hud.whisper('Cooked through. Heat in the hands and the gut.')
+    },
+  })
+
+  deps.interactions.add({
+    position: restPos,
+    verb: 'Rest',
+    label: 'Lean-to',
+    radius: 2.6,
+    available: () =>
+      deps.vitals.alive && onLand && time >= restReadyAt && !!nearestOfKind(px, pz, 'lean-to', 2.4),
+    use: () => {
+      const shelter = nearestOfKind(px, pz, 'lean-to', 2.4)
+      if (!shelter) return
+      const v = deps.vitals
+      if (v.food < 0.1 || v.water < 0.1) {
+        deps.hud.whisper('Too empty to sleep.')
+        return
+      }
+
+      const night = deps.daylight() < 0.38
+      const nearFire = !!nearestOfKind(shelter.x, shelter.z, 'fire', 4.5)
+      let seconds: number
+      let hours: number
+      if (night) {
+        seconds = Math.max(deps.secondsUntilDawn(), (1.5 / 24) * DAY_LENGTH)
+        hours = (seconds / DAY_LENGTH) * 24
+      } else {
+        hours = NAP_HOURS
+        seconds = (hours / 24) * DAY_LENGTH
+      }
+
+      deps.skipTime(seconds)
+
+      // Shelter + optional fire do the warming; sleep itself mends the body
+      const warmthGain = (night ? 0.42 : 0.22) + (nearFire ? 0.18 : 0)
+      v.warmth = Math.min(1, v.warmth + warmthGain)
+      v.stamina = Math.min(1, v.stamina + 0.75)
+      v.food = Math.max(0, v.food - hours * 0.035)
+      v.water = Math.max(0, v.water - hours * 0.045)
+      if (v.wounded) v.woundClock += hours * 35
+
+      restReadyAt = time + (night ? 40 : REST_COOLDOWN)
+      restPos.set(shelter.x, shelter.deckY + 0.6, shelter.z)
+
+      if (night) {
+        deps.hud.whisper(
+          nearFire
+            ? 'Dawn. Embers still warm the lean-to.'
+            : 'Dawn finds you under plank and lashing.',
+        )
+      } else {
+        deps.hud.whisper('You rest. The sun has moved.')
+      }
     },
   })
 
@@ -470,6 +564,10 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
     const fire = nearestOfKind(player.x, player.z, 'fire', 2.8)
     if (fire) cookPos.set(fire.x, fire.deckY + 0.5, fire.z)
     else cookPos.copy(eatPos)
+
+    const lean = nearestOfKind(player.x, player.z, 'lean-to', 2.4)
+    if (lean) restPos.set(lean.x, lean.deckY + 0.6, lean.z)
+    else restPos.copy(eatPos)
 
     for (const b of builds) {
       if (b.kind === 'raft') {
@@ -537,6 +635,7 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
       })
     }
     builds.length = 0
+    restReadyAt = 0
   }
 
   return {

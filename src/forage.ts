@@ -16,7 +16,8 @@ import { eat, type Vitals } from './survival'
  *    once you've kindled a fire. Thrash around and you'll never get near them.
  *
  * Both are plain interactables in the shared registry. Cooking lives in
- * improvise — this module only catches and holds.
+ * improvise — this module only catches and holds. Held fish also shows in the
+ * Pack and the HUD stash strip.
  */
 
 export type ForageDeps = {
@@ -110,9 +111,15 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     rawFish = 0
   }
 
+  /** Dev / tests — put fish in hand without diving. */
+  function grant(n = 1) {
+    rawFish += Math.max(0, n)
+  }
+
   return {
     update,
     reset,
+    grant,
     get rawFish() {
       return rawFish
     },

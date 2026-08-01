@@ -48,7 +48,8 @@ The surface tells its own story: a provision crate still floating by the wreck
 is a first meal; after that, hang still underwater and grab fish by hand — keep
 them raw to eat, or cook them once you've kindled a fire. The debris that drifts
 by — planks, barrels, crates, rope, canvas — goes in the stash, and from there
-you improvise: a lean-to, a fire, a rain-catch, a raft lashed at the waterline.
+you improvise: a lean-to you can rest under, a fire, a rain-catch, a raft lashed
+at the waterline. Caught fish show in the Pack until you eat or cook them.
 Nothing is the "right" path; see [`docs/paths.md`](docs/paths.md). Opening-run
 math: `npm run sim:starts`.
 

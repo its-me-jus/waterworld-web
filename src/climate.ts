@@ -210,7 +210,31 @@ export function createClimate(opts?: ClimateOptions) {
     return state
   }
 
-  return { state, update }
+  /**
+   * Jump the clock — used when you rest under a lean-to. Weather keeps
+   * ticking in short steps so a night's sleep can roll a front in, the same
+   * as waiting it out awake.
+   */
+  function skip(seconds: number) {
+    const step = 2
+    let left = Math.max(0, seconds)
+    while (left > 0) {
+      const dt = Math.min(step, left)
+      update(dt)
+      left -= dt
+    }
+    return state
+  }
+
+  /** Real seconds from now until mid-morning (dayPhase ≈ 0.33 ≈ 8:00). */
+  function secondsUntilDawn() {
+    const phase = (elapsed / DAY_LENGTH) % 1
+    const morning = 0.33
+    const delta = phase < morning ? morning - phase : 1 - phase + morning
+    return delta * DAY_LENGTH
+  }
+
+  return { state, update, skip, secondsUntilDawn }
 }
 
 export type ClimateClock = ReturnType<typeof createClimate>

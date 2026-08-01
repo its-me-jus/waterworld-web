@@ -97,13 +97,18 @@ the materials on you. No craft menu, no markers, no "correct" build order.
 
 | Recipe | Cost | Where | What it does |
 |--------|------|-------|--------------|
-| **Lean-to** | 2 plank + 1 rope | Dry ground (beach or spire) | Local shelter / warmth recovery |
+| **Lean-to** | 2 plank + 1 rope | Dry ground (beach or spire) | Local shelter / warmth; **Rest** under it to nap or sleep until dawn |
 | **Fire** | 1 plank | Dry ground | Heat, and a place to cook fish |
 | **Rain-catch** | 1 canvas + 1 rope | Higher dry ground | Refilling fresh water |
 | **Raft** | 3 plank + 1 rope (+1 barrel if you have it) | Waterline | A small deck you can stand on that rides the swell |
 
-Hand-caught fish stay in hand until you **Eat** them raw or **Cook** them at a
-fire. Cooking is a better meal and a little warmth — not a requirement.
+Hand-caught fish stay in hand — shown in the Pack and the HUD stash strip —
+until you **Eat** them raw or **Cook** them at a fire. Cooking is a better meal
+and a little warmth — not a requirement.
+
+**Rest** under a lean-to: a short nap by day, or sleep through to dawn at night.
+Warmth and strength come back; food and water tick down. A fire nearby helps.
+Too empty to sleep if the tanks are nearly dry.
 
 A raft at the wreck is one path. A camp on the island is another. Working the
 spire with a lean-to and a fire is a third. The sandbox is the point.
@@ -114,8 +119,8 @@ spire with a lean-to and a fire is a third. The sandbox is the point.
 
 - **Shark & spear mid-game** — better telegraph, wound readability, maybe a pass
   that only comes after you've lingered. Half-built already.
-- **More workshop pieces** — smoked fish that keeps, a proper lean-to sleep,
-  driftwood furniture, signal smoke. Same F-to-use pattern.
+- **More workshop pieces** — smoked fish that keeps, driftwood furniture,
+  signal smoke. Same F-to-use pattern.
 - **Memory spine** — the log was one beat. More papers, a name, a reason.
 - **Second landmark** — a spar buoy or rock stack to break the 900 m binary.
 - **Night economy** — biolum, glass-off dive windows, a lantern in the wreck.

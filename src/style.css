@@ -737,6 +737,16 @@ body.underwater #bubbles {
   opacity: 0.35;
 }
 
+.op-cell.op-use {
+  cursor: pointer;
+  border-color: rgba(170, 220, 235, 0.35);
+}
+
+.op-cell.op-use:active {
+  transform: scale(0.97);
+  background: rgba(18, 70, 88, 0.55);
+}
+
 .op-gear {
   display: flex;
   flex-direction: column;
