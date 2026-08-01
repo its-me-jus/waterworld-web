@@ -11,10 +11,12 @@ import { eat, type Vitals } from './survival'
  *    wreck. Pry it open for hardtack and dried beans — the tutorial meal that
  *    proves the world can feed you.
  *  - Hand-fishing (forever): hang still underwater and the schools drift back
- *    in. Grab at one and it's a coin toss — raw fish now, or empty fingers.
- *    Thrash around and you'll never get near them.
+ *    in. Grab at one and it's a coin toss — raw fish in hand, or empty
+ *    fingers. Eat it raw from the pack of what you're holding, or cook it
+ *    once you've kindled a fire. Thrash around and you'll never get near them.
  *
- * Both are plain interactables in the shared registry.
+ * Both are plain interactables in the shared registry. Cooking lives in
+ * improvise — this module only catches and holds.
  */
 
 export type ForageDeps = {
@@ -50,6 +52,7 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
   // Hand-fishing: one prompt that rides the nearest fish, and only while
   // you're hanging still enough not to have spooked the school
   let current = -1
+  let rawFish = 0
   const fishPos = new THREE.Vector3()
   deps.interactions.add({
     position: fishPos,
@@ -64,8 +67,8 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
       // is a coin toss even then
       if (Math.random() < 0.55) {
         deps.fish.fling(index, true)
-        eat(vitals, 0.14, 0.02)
-        hud.whisper('Raw fish. It stays down.')
+        rawFish += 1
+        hud.whisper(rawFish > 1 ? 'Another. Keep it for the fire.' : 'Raw fish. Keep it, or eat it.')
       } else {
         deps.fish.fling(index, false)
         hud.whisper('It slips through your fingers.')
@@ -88,5 +91,32 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     }
   }
 
-  return { update }
+  function eatRaw() {
+    if (rawFish <= 0) return false
+    rawFish -= 1
+    eat(vitals, 0.14, 0.02)
+    return true
+  }
+
+  function cook() {
+    if (rawFish <= 0) return false
+    rawFish -= 1
+    // Fire buys you a real meal — more food, a little water from the juices
+    eat(vitals, 0.32, 0.06)
+    return true
+  }
+
+  function reset() {
+    rawFish = 0
+  }
+
+  return {
+    update,
+    reset,
+    get rawFish() {
+      return rawFish
+    },
+    eatRaw,
+    cook,
+  }
 }

@@ -5,6 +5,7 @@ import { createClimate } from './climate'
 import { createTouchControls } from './controls'
 import { createForage } from './forage'
 import { createHud } from './hud'
+import { createImprovise } from './improvise'
 import { createInputState, isLowPowerDevice, preferTouchUI } from './input'
 import { createInteractions } from './interact'
 import { createIsland } from './island'
@@ -136,9 +137,11 @@ const collide = (p: { x: number; y: number; z: number }) => {
   island.resolve(p)
 }
 
-// Two pieces of standable world — the island's shelf and the reef spire beside
-// the wreck. Whichever is higher under your feet is the ground you're on.
-const groundAt = (x: number, z: number) => Math.max(island.heightAt(x, z), wreck.standAt(x, z))
+// Terrain you can plant on — island shelf and reef spire. Raft decks layer on
+// top via improvise.standAt once that system is wired below.
+const terrainAt = (x: number, z: number) => Math.max(island.heightAt(x, z), wreck.standAt(x, z))
+let raftAt = (_x: number, _z: number) => -1000
+const groundAt = (x: number, z: number) => Math.max(terrainAt(x, z), raftAt(x, z))
 /** True while the ground under you is the spire rather than the island. */
 const onPerchAt = (x: number, z: number) => wreck.standAt(x, z) > island.heightAt(x, z)
 
@@ -288,12 +291,26 @@ const forage = createForage(hud, vitals, {
   fish: underwaterWorld.fish,
 })
 
+const improvise = createImprovise(scene, {
+  interactions,
+  salvage,
+  vitals,
+  hud,
+  groundAt: terrainAt,
+  rawFish: () => forage.rawFish,
+  eatRawFish: () => forage.eatRaw(),
+  cookFish: () => forage.cook(),
+})
+raftAt = improvise.standAt
+
 function restart() {
   spawn()
   resetVitals(vitals)
   salvage.reset(new THREE.Vector3(player.x, player.y, player.z))
   wreck.reset()
   loot.reset()
+  forage.reset()
+  improvise.reset()
   swimmer.setSurvivalSuit(false)
   hud.clearDead()
   hud.setPrompt(null)
@@ -354,7 +371,22 @@ if (import.meta.env.DEV) {
   if (knife) spots.knife = knife.toArray()
 
   Object.assign(w, {
-    ww: { player, camera, vitals, interactions, salvage, island, wreck, climate, shore, shark, loot, opMenu },
+    ww: {
+      player,
+      camera,
+      vitals,
+      interactions,
+      salvage,
+      island,
+      wreck,
+      climate,
+      shore,
+      shark,
+      loot,
+      forage,
+      improvise,
+      opMenu,
+    },
     __shark: shark,
     __spots: spots,
     // Aim the swimmer's eye at the shark — headless combat tests and tuning
@@ -475,15 +507,23 @@ function frame() {
   const onLand = view.walking && view.groundY > 0.3
   const onPerch = onLand && onPerchAt(player.x, player.z)
   // A wave-washed spire gives back far less heat than dry sand up the beach,
-  // and the beach itself is better the further you are from the wash
-  const shelter = onPerch ? 0.42 : Math.min(1, 0.55 + view.groundY * 0.12)
+  // and the beach itself is better the further you are from the wash. Lean-tos
+  // and fires layer on top wherever you've planted them.
+  const terrainShelter = onPerch ? 0.42 : Math.min(1, 0.55 + view.groundY * 0.12)
+  const shelter = onLand
+    ? improvise.shelterAt(player.x, player.z, terrainShelter)
+    : terrainShelter
+  // A raft deck counts as out of the water — chill perch, but dry feet
+  const onRaft = !onLand && improvise.standAt(player.x, player.z) > -100
+  const dry = onLand || onRaft
+  const raftShelter = onRaft ? improvise.shelterAt(player.x, player.z, 0.5) : shelter
   if (onLand) landfall(onPerch)
   updateVitals(vitals, dt, {
     submerged: view.submersion > 0.85,
     depth,
     effort: view.effort,
-    onLand,
-    shelter,
+    onLand: dry,
+    shelter: onRaft ? raftShelter : shelter,
     cold: weather.cold,
     swimCost: weather.swimCost,
     whisper: hud.whisper,
@@ -601,6 +641,7 @@ function frame() {
   salvage.update(t, camera.position)
   loot.update(dt, view)
   forage.update(camera, view)
+  improvise.update(dt, t, player, view, player.yaw)
   shark.update(dt, t, camera, hasDived)
   oceanAudio.setDanger(shark.proximity)
 
