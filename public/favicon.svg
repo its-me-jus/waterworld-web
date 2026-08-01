@@ -1,56 +1,60 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="WaterWorld">
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#5f9dbe"/>
-      <stop offset="0.62" stop-color="#a9cfdd"/>
-      <stop offset="1" stop-color="#d8e9ed"/>
+      <stop offset="0" stop-color="#3a6f8c"/>
+      <stop offset="0.55" stop-color="#6fa3b8"/>
+      <stop offset="1" stop-color="#b7d4de"/>
     </linearGradient>
     <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2b93a8"/>
-      <stop offset="0.45" stop-color="#17708c"/>
-      <stop offset="1" stop-color="#07344a"/>
+      <stop offset="0" stop-color="#1f8aa3"/>
+      <stop offset="0.42" stop-color="#146f8a"/>
+      <stop offset="1" stop-color="#062f44"/>
     </linearGradient>
-    <linearGradient id="canvas" x1="0.2" y1="0" x2="0.8" y2="1">
-      <stop offset="0" stop-color="#f0e8d6"/>
-      <stop offset="1" stop-color="#bfb298"/>
+    <linearGradient id="canvas" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#f3ead6"/>
+      <stop offset="1" stop-color="#c4b497"/>
     </linearGradient>
+    <radialGradient id="sunGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fff6de" stop-opacity="0.55"/>
+      <stop offset="0.55" stop-color="#fff6de" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#fff6de" stop-opacity="0"/>
+    </radialGradient>
   </defs>
 
+  <!-- Open sky over the wreck -->
   <rect width="512" height="512" fill="url(#sky)"/>
 
-  <!-- Sun low over an open horizon -->
-  <circle cx="398" cy="118" r="96" fill="#ffffff" opacity="0.13"/>
-  <circle cx="398" cy="118" r="44" fill="#fff4d8" opacity="0.62"/>
+  <!-- Low sun / late light — one bright disc that still reads at 48 px -->
+  <circle cx="392" cy="122" r="108" fill="url(#sunGlow)"/>
+  <circle cx="392" cy="122" r="48" fill="#fff1c9"/>
 
-  <!-- The Wanderer. A mast raked hard over, snapped at the head, with the
-       yard still across it and a rag of sail hanging by gravity. -->
+  <!-- The Wanderer: raked mast, yard, and a rag of sail. Shapes stay thick
+       enough that the silhouette still reads as a wreck on a phone home screen. -->
   <g>
-    <!-- One shroud still made off under the water. Two of them turn the whole
-         thing into a tripod and the silhouette stops reading as a wreck. -->
-    <path d="M262 196 L386 372" stroke="#2b3b46" stroke-width="4" opacity="0.55" fill="none"/>
+    <!-- Single remaining shroud — one line only, so it never reads as a tripod -->
+    <path d="M268 210 L392 378" stroke="#1a2832" stroke-width="7" stroke-linecap="round" opacity="0.5" fill="none"/>
 
-    <!-- sail -->
-    <path d="M178 196 L300 162 L306 286 L290 302 L276 272 L258 298 L240 268 L222 294 L204 266 L186 290 Z" fill="url(#canvas)"/>
-    <path d="M178 196 L300 162 L302 200 L180 234 Z" fill="#cfc3a7" opacity="0.55"/>
+    <!-- Torn sail hanging under gravity from the yard -->
+    <path d="M168 198 L312 158 L318 292 L298 312 L280 278 L258 308 L238 274 L216 304 L196 270 L174 296 Z" fill="url(#canvas)"/>
+    <path d="M168 198 L312 158 L314 206 L170 246 Z" fill="#d9cdb0" opacity="0.45"/>
 
-    <!-- mast -->
-    <path d="M352 430 L195 75 L182 81 L324 442 Z" fill="#22303a"/>
-    <!-- splintered head -->
-    <path d="M188 78 L178 42 L196 74 Z" fill="#22303a"/>
-    <path d="M192 76 L207 46 L204 78 Z" fill="#22303a"/>
+    <!-- Mast — thick, dark, splintered at the head -->
+    <path d="M348 438 L198 68 L178 76 L318 452 Z" fill="#1a2832"/>
+    <path d="M192 74 L178 28 L208 70 Z" fill="#1a2832"/>
+    <path d="M198 72 L222 34 L216 76 Z" fill="#243440"/>
 
-    <!-- yard -->
-    <path d="M152 207 L332 157 L328 143 L148 193 Z" fill="#2c3b45"/>
+    <!-- Yard across the mast -->
+    <path d="M140 212 L340 156 L334 136 L134 192 Z" fill="#243440"/>
   </g>
 
-  <!-- Sea: a hard horizon, then swell that still reads at 16 px -->
-  <path d="M0 330 H512 V512 H0 Z" fill="url(#sea)"/>
-  <path d="M0 330 C 84 317, 140 346, 220 332 C 300 318, 356 346, 436 332 C 470 326, 494 330, 512 334 L512 352 H0 Z" fill="#2f9ab0"/>
-  <path d="M0 378 C 70 364, 128 392, 206 378 C 288 363, 344 392, 424 378 C 462 371, 490 376, 512 381 L512 408 H0 Z" fill="#1c7b96" opacity="0.95"/>
-  <path d="M0 434 C 78 418, 146 450, 232 434 C 314 419, 372 450, 452 435 C 476 430, 496 432, 512 436 L512 470 H0 Z" fill="#11597a"/>
-  <path d="M0 482 C 96 464, 166 496, 258 482 C 344 468, 404 498, 480 484 C 492 482, 504 482, 512 484 L512 512 H0 Z" fill="#093f5c"/>
+  <!-- Sea: hard horizon, then layered swell that holds at small sizes -->
+  <path d="M0 318 H512 V512 H0 Z" fill="url(#sea)"/>
+  <path d="M0 318 C 88 300, 148 338, 232 318 C 316 298, 372 336, 452 318 C 478 312, 498 316, 512 320 L512 348 H0 Z" fill="#2aa0b6"/>
+  <path d="M0 372 C 76 352, 136 390, 220 370 C 304 350, 360 388, 444 370 C 470 364, 494 368, 512 372 L512 410 H0 Z" fill="#17708c"/>
+  <path d="M0 430 C 84 408, 152 448, 246 428 C 332 410, 392 448, 472 430 C 490 426, 504 428, 512 430 L512 472 H0 Z" fill="#0d5470"/>
+  <path d="M0 478 C 100 456, 172 498, 268 478 C 356 460, 416 500, 488 482 C 500 480, 508 480, 512 482 L512 512 H0 Z" fill="#062f44"/>
 
-  <!-- Foam catching the light -->
-  <path d="M56 372 C 100 364, 126 380, 172 374" stroke="#cfeff5" stroke-width="9" stroke-linecap="round" fill="none" opacity="0.72"/>
-  <path d="M312 430 C 354 421, 382 438, 428 430" stroke="#cfeff5" stroke-width="10" stroke-linecap="round" fill="none" opacity="0.66"/>
+  <!-- Foam catching the light — short strokes that survive downscaling -->
+  <path d="M48 364 C 96 352, 130 372, 178 360" stroke="#d7f3f8" stroke-width="11" stroke-linecap="round" fill="none" opacity="0.75"/>
+  <path d="M300 424 C 348 412, 382 432, 434 420" stroke="#d7f3f8" stroke-width="12" stroke-linecap="round" fill="none" opacity="0.68"/>
 </svg>
