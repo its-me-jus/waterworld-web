@@ -134,7 +134,7 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
   function setStash(
     stash: Stash,
     labels: Record<StashKind, { one: string; many: string }>,
-    held?: { rawFish?: number },
+    held?: { rawFish?: number; smokedFish?: number },
   ) {
     const parts: string[] = []
     for (const key of Object.keys(stash) as StashKind[]) {
@@ -143,6 +143,8 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     }
     const fish = held?.rawFish ?? 0
     if (fish > 0) parts.push(`Raw fish ${fish}`)
+    const smoked = held?.smokedFish ?? 0
+    if (smoked > 0) parts.push(`Smoked fish ${smoked}`)
     const text = parts.join('  ·  ')
     if (text === lastStash) return
     lastStash = text

@@ -300,6 +300,8 @@ const improvise = createImprovise(scene, {
   rawFish: () => forage.rawFish,
   eatRawFish: () => forage.eatRaw(),
   cookFish: () => forage.cook(),
+  takeRawForSmoke: () => forage.takeRawForSmoke(),
+  addSmoked: (n) => forage.addSmoked(n),
   daylight: () => climate.state.daylight,
   skipTime: (seconds) => climate.skip(seconds),
   secondsUntilDawn: () => climate.secondsUntilDawn(),
@@ -349,9 +351,15 @@ const opMenu = createOpMenu(app, {
   loot,
   vitals,
   rawFish: () => forage.rawFish,
+  smokedFish: () => forage.smokedFish,
   eatFish: () => {
     if (!forage.eatRaw()) return false
     hud.whisper('Raw fish. It stays down.')
+    return true
+  },
+  eatSmoked: () => {
+    if (!forage.eatSmoked()) return false
+    hud.whisper('Smoked fish. It travels well.')
     return true
   },
   grantFish: (n) => forage.grant(n),
@@ -662,7 +670,10 @@ function frame() {
   // Mobile action button carries the same words as the centre prompt — verb
   // alone ("Lash") is ambiguous once lean-to and raft share a verb.
   touch.setAction(prompt ? `${prompt.verb} ${prompt.label}` : null)
-  hud.setStash(salvage.stash, salvage.labels, { rawFish: forage.rawFish })
+  hud.setStash(salvage.stash, salvage.labels, {
+    rawFish: forage.rawFish,
+    smokedFish: forage.smokedFish,
+  })
   hud.update(vitals, view.submersion > 0.85, dt)
 
   splash.update(dt, camera.position.y, surfaceY, view.moving, view.submersion)

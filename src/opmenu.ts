@@ -20,10 +20,14 @@ export type OpMenuDeps = {
   salvage: Salvage
   loot: WreckLoot
   vitals: Vitals
-  /** Hand-caught fish waiting to be eaten or cooked. */
+  /** Hand-caught fish waiting to be eaten, cooked, or smoked. */
   rawFish: () => number
-  /** Eat one held fish (from the Pack cell). */
+  /** Smoked fish kept in the Pack. */
+  smokedFish: () => number
+  /** Eat one held raw fish (from the Pack cell). */
   eatFish?: () => boolean
+  /** Eat one smoked fish (from the Pack cell). */
+  eatSmoked?: () => boolean
   /** Dev only — put fish in hand. */
   grantFish?: (n?: number) => void
   teleport: (spot: TeleportSpot) => void
@@ -108,6 +112,10 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     rows.push(
       `<div class="op-cell${fish ? '' : ' empty'}${fish ? ' op-use' : ''}" data-eat-fish="1"><span class="n">${fish}</span><span class="k">Raw fish</span></div>`,
     )
+    const smoked = deps.smokedFish()
+    rows.push(
+      `<div class="op-cell${smoked ? '' : ' empty'}${smoked ? ' op-use' : ''}" data-eat-smoked="1"><span class="n">${smoked}</span><span class="k">Smoked fish</span></div>`,
+    )
     stashBox.innerHTML = rows.join('')
   }
 
@@ -161,6 +169,11 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     const eatFish = (e.target as HTMLElement).closest<HTMLElement>('[data-eat-fish]')
     if (eatFish && deps.rawFish() > 0) {
       if (deps.eatFish?.()) render()
+      return
+    }
+    const eatSmoked = (e.target as HTMLElement).closest<HTMLElement>('[data-eat-smoked]')
+    if (eatSmoked && deps.smokedFish() > 0) {
+      if (deps.eatSmoked?.()) render()
       return
     }
 

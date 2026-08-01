@@ -5,19 +5,19 @@ import type { PlayerFrame } from './player'
 import { eat, type Vitals } from './survival'
 
 /**
- * Forage — food in two registers:
+ * Forage — food in three registers:
  *
  *  - The provision crate (once per run): lashed shut, still floating by the
  *    wreck. Pry it open for hardtack and dried beans — the tutorial meal that
  *    proves the world can feed you.
  *  - Hand-fishing (forever): hang still underwater and the schools drift back
  *    in. Grab at one and it's a coin toss — raw fish in hand, or empty
- *    fingers. Eat it raw from the pack of what you're holding, or cook it
- *    once you've kindled a fire. Thrash around and you'll never get near them.
+ *    fingers. Eat it raw, cook it at a fire for a meal now, or smoke it to
+ *    keep for later.
+ *  - Smoked fish: portable, better than raw, sits in the Pack until you eat it.
  *
- * Both are plain interactables in the shared registry. Cooking lives in
- * improvise — this module only catches and holds. Held fish also shows in the
- * Pack and the HUD stash strip.
+ * Catching lives here. Cooking / smoking live in improvise; this module only
+ * holds the counts and applies the bite.
  */
 
 export type ForageDeps = {
@@ -54,6 +54,7 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
   // you're hanging still enough not to have spooked the school
   let current = -1
   let rawFish = 0
+  let smokedFish = 0
   const fishPos = new THREE.Vector3()
   deps.interactions.add({
     position: fishPos,
@@ -99,16 +100,36 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     return true
   }
 
+  /** Cook over the fire — a meal now, nothing left to carry. */
   function cook() {
     if (rawFish <= 0) return false
     rawFish -= 1
-    // Fire buys you a real meal — more food, a little water from the juices
     eat(vitals, 0.32, 0.06)
+    return true
+  }
+
+  /** Spend one raw fish to hang over the smoke. Returns false if none left. */
+  function takeRawForSmoke() {
+    if (rawFish <= 0) return false
+    rawFish -= 1
+    return true
+  }
+
+  function addSmoked(n = 1) {
+    smokedFish += Math.max(0, n)
+  }
+
+  function eatSmoked() {
+    if (smokedFish <= 0) return false
+    smokedFish -= 1
+    // Almost a cooked meal, and it kept
+    eat(vitals, 0.28, 0.04)
     return true
   }
 
   function reset() {
     rawFish = 0
+    smokedFish = 0
   }
 
   /** Dev / tests — put fish in hand without diving. */
@@ -123,7 +144,13 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     get rawFish() {
       return rawFish
     },
+    get smokedFish() {
+      return smokedFish
+    },
     eatRaw,
     cook,
+    takeRawForSmoke,
+    addSmoked,
+    eatSmoked,
   }
 }

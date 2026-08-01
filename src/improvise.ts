@@ -30,6 +30,10 @@ export type ImproviseDeps = {
   rawFish: () => number
   eatRawFish: () => boolean
   cookFish: () => boolean
+  /** Hang one raw fish over the fire — returns false if none left. */
+  takeRawForSmoke: () => boolean
+  /** Finish a smoke cycle into the Pack. */
+  addSmoked: (n?: number) => void
   /** 0 at night … 1 at noon — rest under a lean-to skips to dawn when dark. */
   daylight: () => number
   /** Jump the climate clock (seconds of day-cycle time). */
@@ -40,6 +44,11 @@ export type ImproviseDeps = {
 
 type BuildKind = 'lean-to' | 'fire' | 'raft' | 'catch'
 
+type SmokeRack = {
+  readyAt: number
+  mesh: THREE.Object3D
+}
+
 type Build = {
   kind: BuildKind
   object: THREE.Group
@@ -49,6 +58,12 @@ type Build = {
   radius: number
   shelter: number
   water?: number
+  /** Barrel rafts pole a little harder. */
+  buoyant?: boolean
+  vx?: number
+  vz?: number
+  /** Fish hanging over this fire, waiting on the smoke. */
+  smoking?: SmokeRack[]
   /** Extra hotspots this build registered (drink, etc.) — cleared on reset. */
   items: Interactable[]
 }
@@ -66,6 +81,12 @@ const CATCH_REFILL = 220
 const NAP_HOURS = 2.8
 /** Don't rest again until you've been awake this long (real seconds). */
 const REST_COOLDOWN = 18
+/** Real seconds for one fish to smoke through. */
+const SMOKE_TIME = 28
+const SMOKE_MAX = 2
+/** How hard you can pole a raft (m/s). */
+const POLE_SPEED = 1.85
+const POLE_SPEED_BARREL = 2.35
 
 function mats() {
   return {
@@ -103,6 +124,12 @@ function mats() {
       opacity: 0.72,
     }),
     iron: new THREE.MeshStandardMaterial({ color: 0x5a5048, roughness: 0.65, metalness: 0.55 }),
+    fish: new THREE.MeshStandardMaterial({
+      color: 0x8a7a5c,
+      roughness: 0.85,
+      emissive: 0x3a2010,
+      emissiveIntensity: 0.35,
+    }),
   }
 }
 
@@ -210,6 +237,14 @@ function raftMesh(m: ReturnType<typeof mats>, withBarrel: boolean) {
   return g
 }
 
+function smokedFishMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.28, 3, 6), m.fish)
+  body.rotation.z = Math.PI / 2
+  g.add(body)
+  return g
+}
+
 function costLabel(cost: Cost, labels: Salvage['labels']) {
   return (Object.keys(cost) as StashKind[])
     .filter((k) => (cost[k] ?? 0) > 0)
@@ -241,6 +276,8 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
   const raftPos = new THREE.Vector3()
   const eatPos = new THREE.Vector3()
   const cookPos = new THREE.Vector3()
+  const smokePos = new THREE.Vector3()
+  const takeSmokePos = new THREE.Vector3()
   const restPos = new THREE.Vector3()
 
   let yaw = 0
@@ -251,6 +288,7 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
   let px = 0
   let pz = 0
   let restReadyAt = 0
+  let saidPole = false
 
   function nearestOfKind(x: number, z: number, kind: BuildKind, maxDist: number): Build | null {
     let best: Build | null = null
@@ -394,11 +432,16 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
       const z = raftPos.z
       const sea = sampleOcean(x, z, time).y
       const radius = withBarrel ? 2.1 : 1.7
-      addBuild('raft', raftMesh(m, withBarrel), x, z, sea + 0.22, radius, 0.55)
+      const raft = addBuild('raft', raftMesh(m, withBarrel), x, z, sea + 0.22, radius, 0.55, {
+        buoyant: withBarrel,
+        vx: 0,
+        vz: 0,
+      })
+      void raft
       deps.hud.whisper(
         withBarrel
-          ? 'Barrels under planks. It bears weight.'
-          : 'Three planks and a lashing. It floats — for now.',
+          ? 'Barrels under planks. It bears weight. Pole from the deck.'
+          : 'Three planks and a lashing. Pole it from the deck.',
       )
     },
   })
@@ -435,7 +478,8 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
     available: () =>
       deps.vitals.alive &&
       deps.rawFish() > 0 &&
-      !nearestOfKind(px, pz, 'fire', 2.8) &&
+      // Near a campfire, cook or smoke instead of eating raw
+      !nearestOfKind(px, pz, 'fire', 10) &&
       !nearestOfKind(px, pz, 'lean-to', 2.4) &&
       !craftPending(),
     use: () => {
@@ -448,14 +492,71 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
     position: cookPos,
     verb: 'Cook',
     label: 'Fish',
-    radius: 2.8,
-    available: () =>
-      deps.vitals.alive && deps.rawFish() > 0 && !!nearestOfKind(px, pz, 'fire', 2.8),
+    radius: 2.6,
+    available: () => {
+      if (!deps.vitals.alive || deps.rawFish() <= 0) return false
+      const fire = nearestOfKind(px, pz, 'fire', 2.8)
+      if (!fire) return false
+      // Hungry → cook now. Otherwise leave the prompt to Smoke when there's a rack slot.
+      const hanging = fire.smoking?.length ?? 0
+      if (deps.vitals.food >= 0.55 && hanging < SMOKE_MAX) return false
+      return true
+    },
     use: () => {
       const fire = nearestOfKind(px, pz, 'fire', 2.8)
       if (!fire || !deps.cookFish()) return
       deps.vitals.warmth = Math.min(1, deps.vitals.warmth + 0.08)
       deps.hud.whisper('Cooked through. Heat in the hands and the gut.')
+    },
+  })
+
+  deps.interactions.add({
+    position: smokePos,
+    verb: 'Smoke',
+    label: 'Fish',
+    radius: 2.6,
+    available: () => {
+      if (!deps.vitals.alive || deps.rawFish() <= 0) return false
+      const fire = nearestOfKind(px, pz, 'fire', 2.8)
+      if (!fire) return false
+      const hanging = fire.smoking?.length ?? 0
+      return hanging < SMOKE_MAX
+    },
+    use: () => {
+      const fire = nearestOfKind(px, pz, 'fire', 2.8)
+      if (!fire || !deps.takeRawForSmoke()) return
+      if (!fire.smoking) fire.smoking = []
+      const slot = fire.smoking.length
+      const mesh = smokedFishMesh(m)
+      mesh.position.set((slot - 0.5) * 0.28, 0.85, 0.15)
+      fire.object.add(mesh)
+      fire.smoking.push({ readyAt: time + SMOKE_TIME, mesh })
+      deps.hud.whisper(
+        slot === 0 ? 'Hung in the smoke. Patience.' : 'Another in the smoke.',
+      )
+    },
+  })
+
+  deps.interactions.add({
+    position: takeSmokePos,
+    verb: 'Take',
+    label: 'Smoked fish',
+    radius: 2.6,
+    available: () => {
+      if (!deps.vitals.alive) return false
+      const fire = nearestOfKind(px, pz, 'fire', 2.8)
+      if (!fire?.smoking?.length) return false
+      return fire.smoking.some((s) => time >= s.readyAt)
+    },
+    use: () => {
+      const fire = nearestOfKind(px, pz, 'fire', 2.8)
+      if (!fire?.smoking) return
+      const idx = fire.smoking.findIndex((s) => time >= s.readyAt)
+      if (idx < 0) return
+      const [done] = fire.smoking.splice(idx, 1)
+      fire.object.remove(done.mesh)
+      deps.addSmoked(1)
+      deps.hud.whisper('Smoked through. It will keep.')
     },
   })
 
@@ -477,6 +578,21 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
 
       const night = deps.daylight() < 0.38
       const nearFire = !!nearestOfKind(shelter.x, shelter.z, 'fire', 4.5)
+      let smokedDone = 0
+      // Sleep finishes anything hanging in a nearby smoke rack
+      if (nearFire) {
+        for (const b of builds) {
+          if (b.kind !== 'fire' || !b.smoking?.length) continue
+          if (Math.hypot(b.x - shelter.x, b.z - shelter.z) > 4.5) continue
+          const left = b.smoking
+          b.smoking = []
+          for (const s of left) {
+            b.object.remove(s.mesh)
+            deps.addSmoked(1)
+            smokedDone++
+          }
+        }
+      }
       let seconds: number
       let hours: number
       if (night) {
@@ -500,7 +616,11 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
       restReadyAt = time + (night ? 40 : REST_COOLDOWN)
       restPos.set(shelter.x, shelter.deckY + 0.6, shelter.z)
 
-      if (night) {
+      if (smokedDone > 0) {
+        deps.hud.whisper(
+          smokedDone > 1 ? 'The smoke rack is done. Fish for the road.' : 'Smoked fish waits in the Pack.',
+        )
+      } else if (night) {
         deps.hud.whisper(
           nearFire
             ? 'Dawn. Embers still warm the lean-to.'
@@ -519,7 +639,7 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
   function update(
     dt: number,
     t: number,
-    player: { x: number; y: number; z: number },
+    player: { x: number; y: number; z: number; dirX: number; dirZ: number },
     view: PlayerFrame,
     facingYaw: number,
   ) {
@@ -534,6 +654,7 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
     const fireAt = offset(player, facingYaw, 0.9, 0)
     const catchAt = offset(player, facingYaw, PLACE_AHEAD, 1.1)
     const raftAt = offset(player, facingYaw, 2.2, 0)
+    const smokeAt = offset(player, facingYaw, 1.1, -0.7)
 
     const aheadY = deps.groundAt(ahead.x, ahead.z)
     const fireY = deps.groundAt(fireAt.x, fireAt.z)
@@ -562,8 +683,17 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
 
     eatPos.set(player.x, player.y - 0.2, player.z)
     const fire = nearestOfKind(player.x, player.z, 'fire', 2.8)
-    if (fire) cookPos.set(fire.x, fire.deckY + 0.5, fire.z)
-    else cookPos.copy(eatPos)
+    if (fire) {
+      cookPos.set(fire.x, fire.deckY + 0.5, fire.z)
+      smokePos.set(fire.x + (smokeAt.x - player.x) * 0.15, fire.deckY + 0.55, fire.z + (smokeAt.z - player.z) * 0.15)
+      // Prefer a clear side offset so Cook and Smoke don't share one spot
+      smokePos.set(fire.x + 0.55, fire.deckY + 0.55, fire.z + 0.35)
+      takeSmokePos.set(fire.x - 0.4, fire.deckY + 0.55, fire.z - 0.35)
+    } else {
+      cookPos.copy(eatPos)
+      smokePos.copy(eatPos)
+      takeSmokePos.copy(eatPos)
+    }
 
     const lean = nearestOfKind(player.x, player.z, 'lean-to', 2.4)
     if (lean) restPos.set(lean.x, lean.deckY + 0.6, lean.z)
@@ -571,11 +701,53 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
 
     for (const b of builds) {
       if (b.kind === 'raft') {
+        const prevX = b.x
+        const prevZ = b.z
+        const onDeck =
+          view.walking && Math.hypot(player.x - b.x, player.z - b.z) <= b.radius * 0.92
+        const top = b.buoyant ? POLE_SPEED_BARREL : POLE_SPEED
+        let vx = b.vx ?? 0
+        let vz = b.vz ?? 0
+        if (onDeck && view.speed > 0.2) {
+          const aimX = player.dirX
+          const aimZ = player.dirZ
+          const blend = 1 - Math.exp(-2.4 * dt)
+          vx += (aimX * top - vx) * blend
+          vz += (aimZ * top - vz) * blend
+          if (!saidPole && Math.hypot(vx, vz) > 0.4) {
+            saidPole = true
+            deps.hud.whisper('The deck answers the pole.')
+          }
+        } else {
+          const drag = Math.exp(-1.15 * dt)
+          vx *= drag
+          vz *= drag
+        }
+        b.vx = vx
+        b.vz = vz
+        b.x += vx * dt
+        b.z += vz * dt
+
         const sea = sampleOcean(b.x, b.z, t)
         b.deckY = sea.y + 0.22
-        b.object.position.y = b.deckY
+        b.object.position.set(b.x, b.deckY, b.z)
         b.object.rotation.x = sea.normal.z * 0.35
         b.object.rotation.z = -sea.normal.x * 0.35
+        // Yaw a little into the push so the raft reads as steered
+        if (Math.hypot(vx, vz) > 0.15) {
+          const want = Math.atan2(-vx, -vz)
+          let dyaw = want - b.object.rotation.y
+          while (dyaw > Math.PI) dyaw -= Math.PI * 2
+          while (dyaw < -Math.PI) dyaw += Math.PI * 2
+          b.object.rotation.y += dyaw * (1 - Math.exp(-1.2 * dt))
+        }
+
+        if (onDeck) {
+          player.x += b.x - prevX
+          player.z += b.z - prevZ
+          px = player.x
+          pz = player.z
+        }
       }
       if (b.kind === 'fire') {
         const flame = b.object.getObjectByName('flame')
@@ -636,6 +808,7 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
     }
     builds.length = 0
     restReadyAt = 0
+    saidPole = false
   }
 
   return {
