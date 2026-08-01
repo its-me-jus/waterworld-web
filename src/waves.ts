@@ -55,6 +55,38 @@ export function applyStormToWaves(storm: number) {
  */
 export const oceanState = { amp: 1 }
 
+/**
+ * The island's lee. Inside `inner` the swell is down to a lap; by `outer` the
+ * open ocean has it all back. One zone, set once from main — and mirrored in
+ * the ocean vertex shader, so the water you see is the water you float on.
+ */
+const shelter = { x: 0, z: 0, inner: 0, outer: -1 }
+
+export function setShelter(x: number, z: number, inner: number, outer: number) {
+  shelter.x = x
+  shelter.z = z
+  shelter.inner = inner
+  shelter.outer = outer
+}
+
+const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
+
+/** 1 on the beach, 0 out at the wreck — how sheltered this spot is. */
+export function shelterAt(x: number, z: number) {
+  if (shelter.outer <= shelter.inner) return 0
+  const d = Math.hypot(x - shelter.x, z - shelter.z)
+  const t = clamp01((d - shelter.inner) / (shelter.outer - shelter.inner))
+  return 1 - t * t * (3 - 2 * t)
+}
+
+/**
+ * Long swell dies hardest against the island; the short stuff keeps enough of
+ * a pulse to read as lapping on the sand. Keep GLSL in sync (ocean.ts).
+ */
+function shelterKeep(wavelength: number) {
+  return 0.1 + 0.35 * (1 - Math.min(1, wavelength / 60))
+}
+
 /** Cheap hash noise for chop / caustics (matches GLSL hash vibe). */
 export function hash2(x: number, z: number) {
   const n = Math.sin(x * 127.1 + z * 311.7) * 43758.5453
@@ -88,6 +120,7 @@ export function fbm(x: number, z: number) {
 }
 
 export function sampleOcean(x: number, z: number, time: number, amp = oceanState.amp) {
+  const lee = shelterAt(x, z)
   let y = 0
   let tangentX = 1
   let tangentY = 0
@@ -104,7 +137,7 @@ export function sampleOcean(x: number, z: number, time: number, amp = oceanState
     const k = (Math.PI * 2) / wave.wavelength
     const c = Math.sqrt(9.8 / k) * wave.speed
     const f = k * (dX * x + dZ * z - c * time) + wave.phase
-    const steepness = wave.steepness * amp
+    const steepness = wave.steepness * amp * (1 + (shelterKeep(wave.wavelength) - 1) * lee)
     const a = steepness / k
     const cosF = Math.cos(f)
     const sinF = Math.sin(f)
@@ -122,11 +155,13 @@ export function sampleOcean(x: number, z: number, time: number, amp = oceanState
 
   // Wind chop — breaks repeating Gerstner ridges. Storms raise chopScale;
   // the sea state's amp oils it down on a glass-off so calm reads as calm.
+  // The island's lee hushes it too, leaving just a ripple against the sand.
   const chop =
     ((fbm(x * 0.08 + time * 0.07, z * 0.08 - time * 0.05) - 0.5) * 0.55 +
       (fbm(x * 0.22 - time * 0.11, z * 0.22) - 0.5) * 0.22) *
     chopScale *
-    amp
+    amp *
+    (1 - 0.65 * lee)
   y += chop
 
   const nx = binormalY * tangentZ - binormalZ * tangentY

@@ -175,6 +175,57 @@ function palm(seed: number) {
   return { trunk, leaves, nuts }
 }
 
+/** A weathered beach rock — lumpy icosahedron, never quite round. */
+function rockChunk(seed: number) {
+  const rand = (n: number) => fbm(seed * 9.1 + n * 3.7, seed * 5.3 - n * 1.8)
+  const geo = new THREE.IcosahedronGeometry(1.1 + rand(1) * 1.6, 0)
+  const pos = geo.attributes.position
+  for (let i = 0; i < pos.count; i++) {
+    const s = 0.7 + rand(i + 2) * 0.7
+    pos.setXYZ(i, pos.getX(i) * s, pos.getY(i) * (0.55 + rand(i + 5) * 0.5), pos.getZ(i) * s)
+  }
+  geo.computeVertexNormals()
+  geo.rotateY(rand(8) * Math.PI * 2)
+  geo.rotateX((rand(9) - 0.5) * 0.6)
+  return geo
+}
+
+/** A bleached plank or log washed up on the sand. */
+function driftwood(seed: number) {
+  const rand = (n: number) => fbm(seed * 11.3 + n * 2.4, seed * 4.7 - n * 6.1)
+  const len = 2.2 + rand(1) * 3.4
+  const geo = new THREE.CylinderGeometry(0.1 + rand(2) * 0.12, 0.14 + rand(3) * 0.14, len, 5, 1)
+  geo.rotateZ(Math.PI / 2)
+  const pos = geo.attributes.position
+  for (let i = 0; i < pos.count; i++) {
+    pos.setY(i, pos.getY(i) + Math.sin(pos.getX(i) * 2.2) * 0.08)
+  }
+  geo.computeVertexNormals()
+  geo.rotateY(rand(4) * Math.PI * 2)
+  geo.rotateX((rand(5) - 0.5) * 0.25)
+  return geo
+}
+
+/** Low dune scrub — a clump of bent cones that reads as bush from a few metres. */
+function scrubBush(seed: number) {
+  const rand = (n: number) => fbm(seed * 6.8 + n * 5.1, seed * 3.2 - n * 2.7)
+  const parts: THREE.BufferGeometry[] = []
+  const clumps = 4 + Math.floor(rand(1) * 3)
+  for (let i = 0; i < clumps; i++) {
+    const h = 1.1 + rand(i + 2) * 1.4
+    const cone = new THREE.ConeGeometry(0.55 + rand(i + 4) * 0.65, h, 5)
+    cone.translate(
+      (rand(i + 6) - 0.5) * 1.2,
+      h * 0.45,
+      (rand(i + 7) - 0.5) * 1.2,
+    )
+    cone.rotateY(rand(i + 8) * Math.PI * 2)
+    cone.rotateZ((rand(i + 9) - 0.5) * 0.35)
+    parts.push(cone)
+  }
+  return mergeGeometries(parts, false) as THREE.BufferGeometry
+}
+
 export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const low = opts.lowPower ?? false
   const haze = opts.hazeColor.clone().convertLinearToSRGB()
@@ -199,7 +250,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   // Sand, scrub and basalt painted per vertex — one material, one draw call
   const normal = geometry.attributes.normal
   const seabed = new THREE.Color('#5c6a5b')
-  const wetSand = new THREE.Color('#b3a179')
+  const tide = new THREE.Color('#7a6a4e')
+  const wetSand = new THREE.Color('#a8946e')
   const drySand = new THREE.Color('#ddcaa4')
   const scrub = new THREE.Color('#5c7f42')
   const bush = new THREE.Color('#3f6135')
@@ -215,9 +267,19 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const y = position.getY(i)
     const z = position.getZ(i)
     const mottle = fbm(x * 0.02 + 2.3, z * 0.02 - 5.1)
+    const grit = fbm(x * 0.09 - 1.4, z * 0.09 + 3.7)
 
-    shade.copy(seabed).lerp(wetSand, THREE.MathUtils.smoothstep(y, -9, -1))
-    shade.lerp(drySand, THREE.MathUtils.smoothstep(y, -0.5, 4))
+    // Underwater shelf → wet sand → dry beach. The tide band sits right at the
+    // waterline so the beach reads as recently washed, not one flat tan.
+    shade.copy(seabed).lerp(wetSand, THREE.MathUtils.smoothstep(y, -9, -0.6))
+    const wetBand =
+      THREE.MathUtils.smoothstep(y, -1.1, 0.2) * (1 - THREE.MathUtils.smoothstep(y, 0.5, 2.6))
+    shade.lerp(tide, wetBand * (0.55 + grit * 0.35))
+    shade.lerp(drySand, THREE.MathUtils.smoothstep(y, 1.0, 5.2))
+    // Fine grit on the sand — breaks the painted-plane look up close
+    const onSand = THREE.MathUtils.smoothstep(y, -2, 1) * (1 - THREE.MathUtils.smoothstep(y, 6, 14))
+    shade.multiplyScalar(1 + (grit - 0.5) * 0.22 * onSand)
+
     growth.copy(scrub).lerp(bush, mottle)
     shade.lerp(growth, THREE.MathUtils.smoothstep(y, 4, 15))
     // Steep faces shed soil — bare rock on the cliffs and up around the crater.
@@ -255,16 +317,35 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const trunks: THREE.BufferGeometry[] = []
   const leaves: THREE.BufferGeometry[] = []
   const nuts: THREE.BufferGeometry[] = []
-  const wanted = low ? 10 : 20
+  const rocks: THREE.BufferGeometry[] = []
+  const wood: THREE.BufferGeometry[] = []
+  const scrubParts: THREE.BufferGeometry[] = []
 
-  for (let i = 0; i < 600 && trunks.length < wanted; i++) {
+  const palmWanted = low ? 12 : 24
+  const rockWanted = low ? 40 : 80
+  const woodWanted = low ? 14 : 28
+  const scrubWanted = low ? 45 : 90
+
+  const placeAt = (geo: THREE.BufferGeometry, lx: number, h: number, lz: number, sink = 0.15) => {
+    const m = new THREE.Matrix4().setPosition(lx, h - sink, lz)
+    return geo.applyMatrix4(m)
+  }
+
+  // Palms — clustered a bit so the beach has groves, not a picket fence
+  for (let i = 0; i < 800 && trunks.length < palmWanted; i++) {
     const angle = i * 2.399
-    const radius = 150 + ((i * 13) % 210)
-    const lx = Math.cos(angle) * radius
-    const lz = Math.sin(angle) * radius
+    const radius = 160 + ((i * 13) % 200)
+    // Pull every third candidate toward the previous successful plant for clusters
+    const cluster = trunks.length > 0 && i % 3 === 0
+    const prev = cluster ? shore[shore.length - 1] : null
+    const lx = prev
+      ? prev.x - opts.x + (fbm(i, 1.1) - 0.5) * 18
+      : Math.cos(angle) * radius
+    const lz = prev
+      ? prev.z - opts.z + (fbm(i, 2.2) - 0.5) * 18
+      : Math.sin(angle) * radius
     const h = ground(lx, lz)
     if (h < 2.4 || h > 13) continue
-    // Palms want flat ground, not a cliff face
     const slope = Math.abs(ground(lx + 7, lz) - h) + Math.abs(ground(lx, lz + 7) - h)
     if (slope > 4.5) continue
 
@@ -275,6 +356,47 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     for (const blade of tree.leaves) leaves.push(blade.applyMatrix4(place))
     for (const nut of tree.nuts) nuts.push(nut.applyMatrix4(place))
     shore.push(new THREE.Vector3(opts.x + lx, h, opts.z + lz))
+  }
+
+  // Beach rocks — frame the waterline and break empty sand
+  for (let i = 0; i < 900 && rocks.length < rockWanted; i++) {
+    const angle = i * 2.193
+    const radius = 200 + ((i * 17) % 220)
+    const lx = Math.cos(angle) * radius
+    const lz = Math.sin(angle) * radius
+    const h = ground(lx, lz)
+    if (h < 0.3 || h > 5.5) continue
+    const slope = Math.abs(ground(lx + 4, lz) - h) + Math.abs(ground(lx, lz + 4) - h)
+    if (slope > 3.5) continue
+    // Skip if buried under a palm trunk
+    if (shore.some((s) => Math.hypot(s.x - opts.x - lx, s.z - opts.z - lz) < 3.5)) continue
+    rocks.push(placeAt(rockChunk(i + 40), lx, h, lz, 0.2 + (i % 5) * 0.04))
+  }
+
+  // Driftwood — mid-beach, sparse, sells the wash-up
+  for (let i = 0; i < 700 && wood.length < woodWanted; i++) {
+    const angle = i * 2.618
+    const radius = 210 + ((i * 23) % 180)
+    const lx = Math.cos(angle) * radius
+    const lz = Math.sin(angle) * radius
+    const h = ground(lx, lz)
+    if (h < 0.8 || h > 4.5) continue
+    const slope = Math.abs(ground(lx + 5, lz) - h) + Math.abs(ground(lx, lz + 5) - h)
+    if (slope > 2.8) continue
+    wood.push(placeAt(driftwood(i + 90), lx, h, lz, 0.08))
+  }
+
+  // Dune scrub — sits where sand turns green, softens the colour cliff
+  for (let i = 0; i < 1100 && scrubParts.length < scrubWanted; i++) {
+    const angle = i * 2.071
+    const radius = 150 + ((i * 19) % 230)
+    const lx = Math.cos(angle) * radius
+    const lz = Math.sin(angle) * radius
+    const h = ground(lx, lz)
+    if (h < 3.8 || h > 16) continue
+    const slope = Math.abs(ground(lx + 6, lz) - h) + Math.abs(ground(lx, lz + 6) - h)
+    if (slope > 5.5) continue
+    scrubParts.push(placeAt(scrubBush(i + 120), lx, h, lz, 0.05))
   }
 
   if (trunks.length) {
@@ -299,6 +421,38 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       new THREE.Mesh(
         mergeGeometries(nuts, false) as THREE.BufferGeometry,
         hazeMaterial(haze, { color: 0x6d5334, roughness: 1 }),
+      ),
+    )
+  }
+
+  if (rocks.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(rocks, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, { color: 0x6e6758, roughness: 0.97, ...skylight }),
+      ),
+    )
+  }
+
+  if (wood.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(wood, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, { color: 0x8a7355, roughness: 1, ...skylight }),
+      ),
+    )
+  }
+
+  if (scrubParts.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(scrubParts, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, {
+          color: 0x3d5c2e,
+          roughness: 0.92,
+          side: THREE.DoubleSide,
+          ...skylight,
+        }),
       ),
     )
   }

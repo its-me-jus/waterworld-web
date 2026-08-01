@@ -9,6 +9,7 @@ import { createInputState, isLowPowerDevice, preferTouchUI } from './input'
 import { createInteractions } from './interact'
 import { createIsland } from './island'
 import { createOcean } from './ocean'
+import { createOpMenu, type TeleportSpot } from './opmenu'
 import { bindKeyboardMouse, createPlayer, updatePlayer } from './player'
 import { createSalvage } from './salvage'
 import { createSeaState } from './sea'
@@ -25,7 +26,7 @@ import {
   updateVitals,
 } from './survival'
 import { createUnderwaterWorld } from './underwater'
-import { applyStormToWaves, oceanState, sampleOcean } from './waves'
+import { applyStormToWaves, oceanState, sampleOcean, setShelter } from './waves'
 import { createWreck } from './wreck'
 import { createWreckLoot } from './wreckloot'
 
@@ -106,6 +107,23 @@ const island = createIsland(scene, {
   lowPower,
   hazeColor: skyRig.horizonColor,
 })
+
+// The island shelters its waterline: fully calm over the beach ring, the
+// whole swell back a few hundred metres offshore. CPU and GPU both read it.
+setShelter(island.centre.x, island.centre.z, 430, 800)
+;(oceanMat.uniforms.uShelter.value as THREE.Vector4).set(
+  island.centre.x,
+  island.centre.z,
+  430,
+  800,
+)
+// Shallows: ankle-deep over the inner beach (~240 m), opaque blue again past ~400 m
+;(oceanMat.uniforms.uShelf.value as THREE.Vector4).set(
+  island.centre.x,
+  island.centre.z,
+  240,
+  400,
+)
 
 const shore = createShoreSurf(scene, {
   centre: island.centre,
@@ -250,6 +268,37 @@ function restart() {
   hasDived = false
 }
 
+// —— the operating menu: pack + dev field kit ————————————————————————
+function teleport(spot: TeleportSpot) {
+  player.x = spot.x
+  player.z = spot.z
+  if (spot.y !== undefined) {
+    player.y = spot.y
+  } else {
+    const ground = island.heightAt(spot.x, spot.z)
+    player.y =
+      ground > 0.3 ? ground + 1.7 : sampleOcean(spot.x, spot.z, 0).y + 1.5
+  }
+  if (spot.yaw !== undefined) player.yaw = spot.yaw
+  player.pitch = -0.05
+  player.vy = 0
+  player.speed = 0
+  collide(player)
+}
+
+const beach = island.shore.length > 0 ? island.shore[0] : island.centre
+const opMenu = createOpMenu(app, {
+  salvage,
+  loot,
+  vitals,
+  teleport,
+  spots: {
+    island: { x: beach.x, z: beach.z, y: beach.y + 1.7 },
+    wreck: { x: wreck.group.position.x + 5, z: wreck.group.position.z + 5 },
+  },
+  resetRun: restart,
+})
+
 const desktop = bindKeyboardMouse(renderer.domElement, player, {
   enablePointerLock: !mobile,
   onLockChange: (locked) => {
@@ -268,7 +317,7 @@ if (import.meta.env.DEV) {
   if (knife) spots.knife = knife.toArray()
 
   Object.assign(w, {
-    ww: { player, camera, vitals, interactions, salvage, island, wreck, climate, shore, shark, loot },
+    ww: { player, camera, vitals, interactions, salvage, island, wreck, climate, shore, shark, loot, opMenu },
     __shark: shark,
     __spots: spots,
     // Aim the swimmer's eye at the shark — headless combat tests and tuning
@@ -402,6 +451,7 @@ function frame() {
 
   if (!vitals.alive && !dead) {
     dead = true
+    opMenu.setOpen(false)
     hud.setDead(vitals.cause, vitals.elapsed)
     if (document.pointerLockElement) document.exitPointerLock()
   }

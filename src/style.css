@@ -568,3 +568,244 @@ body.underwater #bubbles {
 #whisper.on {
   opacity: 1;
 }
+
+/* —— operating menu —— */
+#op-open {
+  position: fixed;
+  z-index: 7;
+  left: 50%;
+  bottom: max(1.1rem, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid rgba(150, 220, 235, 0.28);
+  background: rgba(4, 30, 38, 0.55);
+  color: #a8e4f2;
+  cursor: pointer;
+  backdrop-filter: blur(3px);
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+}
+
+#op-open svg {
+  width: 22px;
+  height: 22px;
+}
+
+#op-open:hover,
+#op-open.active {
+  background: rgba(10, 58, 72, 0.75);
+  border-color: rgba(168, 228, 242, 0.6);
+}
+
+#op-open:active {
+  transform: translateX(-50%) scale(0.94);
+}
+
+#op-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(2, 10, 15, 0.55);
+  backdrop-filter: blur(4px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+
+#op-menu.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.op-panel {
+  width: min(420px, 94vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  padding: 1.1rem 1.2rem 1.3rem;
+  border-radius: 16px;
+  border: 1px solid rgba(150, 220, 235, 0.22);
+  background: linear-gradient(180deg, rgba(7, 28, 37, 0.96), rgba(4, 17, 24, 0.97));
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  color: #d6eaf4;
+  transform: translateY(8px) scale(0.98);
+  transition: transform 0.22s ease;
+}
+
+#op-menu.open .op-panel {
+  transform: none;
+}
+
+.op-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.op-head h2 {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #a8e4f2;
+}
+
+.op-close {
+  border: 0;
+  background: none;
+  color: rgba(214, 234, 244, 0.7);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.1rem 0.4rem;
+}
+
+.op-close:hover {
+  color: #fff;
+}
+
+.op-section {
+  margin-top: 0.9rem;
+}
+
+.op-section h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(168, 228, 242, 0.6);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.op-section h3 span {
+  font-size: 0.55rem;
+  letter-spacing: 0.14em;
+  padding: 0.08rem 0.4rem;
+  border-radius: 99px;
+  border: 1px solid rgba(255, 200, 120, 0.4);
+  color: rgba(255, 214, 150, 0.85);
+}
+
+.op-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 0.45rem;
+}
+
+.op-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.55rem 0.3rem;
+  border-radius: 10px;
+  border: 1px solid rgba(150, 220, 235, 0.16);
+  background: rgba(10, 40, 52, 0.45);
+}
+
+.op-cell .n {
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #eaf7fc;
+}
+
+.op-cell .k {
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(168, 228, 242, 0.65);
+}
+
+.op-cell.empty {
+  opacity: 0.35;
+}
+
+.op-gear {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.op-gear-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid rgba(150, 220, 235, 0.16);
+  background: rgba(10, 40, 52, 0.45);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+}
+
+.op-gear-item .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6fe3a8;
+  box-shadow: 0 0 8px rgba(111, 227, 168, 0.8);
+}
+
+.op-gear-item.missing {
+  opacity: 0.45;
+}
+
+.op-gear-item.missing .dot {
+  background: transparent;
+  border: 1px solid rgba(214, 234, 244, 0.5);
+  box-shadow: none;
+}
+
+.op-cheats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.45rem;
+}
+
+.op-cheats button {
+  padding: 0.55rem 0.3rem;
+  border-radius: 10px;
+  border: 1px solid rgba(150, 220, 235, 0.22);
+  background: rgba(10, 48, 62, 0.55);
+  color: #cfeef8;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.op-cheats button:hover {
+  background: rgba(18, 78, 98, 0.75);
+}
+
+.op-cheats button:active {
+  transform: scale(0.95);
+}
+
+.op-cheats button.warn {
+  border-color: rgba(255, 150, 130, 0.35);
+  color: rgba(255, 190, 175, 0.9);
+}
+
+/* The swim UI goes quiet while the menu is up, so the panel owns the screen */
+body.menu-open #hud,
+body.menu-open #touch-controls,
+body.menu-open #crosshair,
+body.menu-open #depth {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}

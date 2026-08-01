@@ -34,6 +34,8 @@ const vertexShader = /* glsl */ `
 uniform float uTime;
 uniform float uChopScale;
 uniform float uAmp;
+// The island's lee: xy = centre, z = fully-calm radius, w = fully-open radius
+uniform vec4 uShelter;
 uniform vec4 uWaves[${WAVE_COUNT}];
 uniform vec2 uWaveExtra[${WAVE_COUNT}];
 
@@ -43,8 +45,8 @@ varying float vCrest;
 
 ${noiseGLSL}
 
-vec3 gerstner(vec2 p, vec4 wave, vec2 extra, inout vec3 tangent, inout vec3 binormal) {
-  float steepness = wave.z * uAmp;
+vec3 gerstner(vec2 p, vec4 wave, vec2 extra, float att, inout vec3 tangent, inout vec3 binormal) {
+  float steepness = wave.z * uAmp * att;
   float wavelength = wave.w;
   float k = 6.28318530718 / wavelength;
   float c = sqrt(9.8 / k) * extra.y;
@@ -70,20 +72,30 @@ void main() {
   // Waves live in world space so the mesh can follow the camera seamlessly
   vec3 world = (modelMatrix * vec4(position, 1.0)).xyz;
 
+  // 1 on the beach, 0 in the open sea — matches shelterAt() in waves.ts
+  float lee = 0.0;
+  if (uShelter.w > uShelter.z) {
+    float sd = length(world.xz - uShelter.xy);
+    lee = 1.0 - smoothstep(uShelter.z, uShelter.w, sd);
+  }
+
   vec3 tangent = vec3(1.0, 0.0, 0.0);
   vec3 binormal = vec3(0.0, 0.0, 1.0);
   vec3 disp = vec3(0.0);
 
   for (int i = 0; i < ${WAVE_COUNT}; i++) {
-    disp += gerstner(world.xz, uWaves[i], uWaveExtra[i], tangent, binormal);
+    // Long swell dies against the island; short waves keep a lap — waves.ts
+    float keep = 0.1 + 0.35 * (1.0 - clamp(uWaves[i].w / 60.0, 0.0, 1.0));
+    float att = mix(1.0, keep, lee);
+    disp += gerstner(world.xz, uWaves[i], uWaveExtra[i], att, tangent, binormal);
   }
 
   // Chop rides the sea state's amp (glass-offs oil it down) and the storm's
-  // chopScale (squalls whip it up) — the two multipliers stay independent
+  // chopScale (squalls whip it up) — the lee hushes it to a ripple
   float chop =
     (fbm(world.xz * 0.08 + vec2(uTime * 0.07, -uTime * 0.05), 4) - 0.5) * 0.55 * uAmp +
     (fbm(world.xz * 0.22 + vec2(-uTime * 0.11, uTime * 0.03), 3) - 0.5) * 0.22 * uAmp;
-  disp.y += chop * uChopScale;
+  disp.y += chop * uChopScale * (1.0 - 0.65 * lee);
 
   world += disp;
 
@@ -107,6 +119,10 @@ uniform vec3 uHorizonColor;
 uniform float uUnderwater;
 uniform float uTime;
 uniform float uChopScale;
+// Same lee as the vertex stage: xy = centre, z = calm radius, w = open radius
+uniform vec4 uShelter;
+// Island shelf for shallows: xy = centre, z = ankle-deep radius, w = deep-again
+uniform vec4 uShelf;
 
 varying vec3 vWorldPos;
 varying vec3 vNormal;
@@ -151,9 +167,16 @@ void main() {
   float dist = length(uCameraPos - vWorldPos);
   vec3 L = normalize(uSunDir);
 
+  // The lee flattens micro-chop too, or the glitter still reads "rough sea"
+  float lee = 0.0;
+  if (uShelter.w > uShelter.z) {
+    float sd = length(vWorldPos.xz - uShelter.xy);
+    lee = 1.0 - smoothstep(uShelter.z, uShelter.w, sd);
+  }
+
   float fade = 1.0 / (1.0 + dist * 0.035);
   vec3 base = normalize(vNormal);
-  vec3 detail = detailNormal(vWorldPos.xz, fade);
+  vec3 detail = detailNormal(vWorldPos.xz, fade * (1.0 - 0.78 * lee));
   vec3 N = normalize(base + vec3(detail.x, 0.0, detail.z) * 0.7);
   N.y = max(N.y, 0.12);
   N = normalize(N);
@@ -211,9 +234,23 @@ void main() {
   float facing = clamp(N.y, 0.0, 1.0);
   vec3 body = mix(uDeepColor, uShallowColor, pow(facing, 2.2));
 
+  // Island shelf — ankle-deep water over the sand, opaque blue again offshore.
+  // Approximates depth from radial distance (volcanic cone); good enough that
+  // the hard cut softens and a band of turquoise reads as shallows.
+  float shelf = 0.0;
+  if (uShelf.w > uShelf.z) {
+    float rd = length(vWorldPos.xz - uShelf.xy);
+    shelf = 1.0 - smoothstep(uShelf.z, uShelf.w, rd);
+  }
+  vec3 sandTint = vec3(0.45, 0.72, 0.7);
+  body = mix(body, mix(uShallowColor * 1.55, sandTint, 0.4), shelf * 0.75);
+
   // Subsurface glow where the sun shines through a wave back
   float sss = pow(max(dot(-L, V) * 0.5 + 0.5, 0.0), 3.0) * (1.0 - facing);
   body += vec3(0.05, 0.3, 0.24) * sss * 0.8;
+
+  // Shallows give the sand more of a say — less mirror, more body colour
+  fres *= 1.0 - 0.45 * shelf;
 
   vec3 color = mix(body, sky, fres);
 
@@ -221,22 +258,29 @@ void main() {
   float ao = 0.68 + 0.32 * smoothstep(-2.0, 1.4, vWorldPos.y);
   color *= ao;
 
-  // Sun glitter: sharp near, broader far
+  // Sun glitter: sharp near, broader far — dialled back over the shelf so it
+  // doesn't glitter like open ocean on ankle-deep water
   float rough = mix(0.05, 0.2, clamp(dist * 0.006, 0.0, 1.0));
-  color += uSunColor * ggx(N, V, L, rough) * 1.6;
+  rough = mix(rough, 0.22, shelf);
+  color += uSunColor * ggx(N, V, L, rough) * mix(1.6, 0.7, shelf);
 
   // Whitecaps on crests + a little foam streaking in the chop
   float streak = fbm(vWorldPos.xz * 0.9 + vec2(uTime * 0.25, -uTime * 0.2), 3);
   float foam = clamp(vCrest * smoothstep(0.45, 0.95, streak), 0.0, 1.0);
   foam *= smoothstep(0.35, 0.8, facing);
   foam = min(1.0, foam * (1.0 + uChopScale * 0.55));
+  foam *= 1.0 - 0.85 * shelf; // no whitecaps in the lap
   color = mix(color, vec3(0.88, 0.94, 0.97), foam * (0.5 + uChopScale * 0.12));
 
   // Blend to horizon so the mesh edge disappears
   float far = smoothstep(220.0, 430.0, dist);
   color = mix(color, uHorizonColor * 0.85, far * 0.6);
 
-  gl_FragColor = vec4(color, 1.0);
+  // Soft edge: only the last few metres over the beach go translucent, so sand
+  // peeks through without turning the whole shelf into grey mud.
+  float alpha = mix(1.0, 0.52, shelf * shelf * shelf);
+
+  gl_FragColor = vec4(color, alpha);
 
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -264,6 +308,8 @@ export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: O
       uTime: { value: 0 },
       uChopScale: { value: 1 },
       uAmp: { value: 1 },
+      uShelter: { value: new THREE.Vector4(0, 0, 0, -1) },
+      uShelf: { value: new THREE.Vector4(0, 0, 0, -1) },
       uWaves: { value: uWaves },
       uWaveExtra: { value: uWaveExtra },
       uEnvMap: { value: null },
