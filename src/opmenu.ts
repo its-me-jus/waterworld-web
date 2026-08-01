@@ -6,12 +6,12 @@ import type { WreckLoot } from './wreckloot'
 /**
  * The operating menu — one bag icon that opens the modal the game is run from.
  *
- * Two halves:
- *  - Stash: what you're actually carrying (salvage counts + knife/spear). A
- *    real readout, not the corner strip's sentence.
- *  - Field kit (DEV only): the cheats the world gets built with — teleport to
- *    the island or the wreck, refill the body, arm up. Stripped from prod
- *    builds automatically since `import.meta.env.DEV` is compile-time.
+ * Three halves:
+ *  - Stash: what you're actually carrying (salvage counts, held fish, knife /
+ *    spear). A real readout, not the corner strip's sentence.
+ *  - Field kit: island / wreck teleport and fill-stash — always on, so you can
+ *    keep building on a live deploy without a swim.
+ *  - Dev extras (DEV only): vitals, fish, arms, reset run.
  */
 
 export type TeleportSpot = { x: number; z: number; y?: number; yaw?: number }
@@ -20,6 +20,12 @@ export type OpMenuDeps = {
   salvage: Salvage
   loot: WreckLoot
   vitals: Vitals
+  /** Hand-caught fish waiting to be eaten or cooked. */
+  rawFish: () => number
+  /** Eat one held fish (from the Pack cell). */
+  eatFish?: () => boolean
+  /** Dev only — put fish in hand. */
+  grantFish?: (n?: number) => void
   teleport: (spot: TeleportSpot) => void
   spots: Record<string, TeleportSpot>
   /** Full run restart — the menu's reset is the real one, not a vitals patch. */
@@ -61,21 +67,23 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
         <h3>Gear</h3>
         <div id="op-gear" class="op-gear"></div>
       </div>
-      ${
-        dev
-          ? `<div class="op-section op-dev">
-        <h3>Field kit <span>dev</span></h3>
+      <div class="op-section op-dev">
+        <h3>Field kit</h3>
         <div class="op-cheats">
           <button data-tp="island" type="button">Island</button>
           <button data-tp="wreck" type="button">Wreck</button>
-          <button data-cheat="fill" type="button">Fill vitals</button>
+          <button data-cheat="stash" type="button">Fill stash</button>
+          ${
+            dev
+              ? `<button data-cheat="fill" type="button">Fill vitals</button>
+          <button data-cheat="fish" type="button">Fish</button>
           <button data-cheat="knife" type="button">Knife</button>
           <button data-cheat="spear" type="button">Spear</button>
-          <button data-cheat="reset" type="button" class="warn">Reset run</button>
+          <button data-cheat="reset" type="button" class="warn">Reset run</button>`
+              : ''
+          }
         </div>
-      </div>`
-          : ''
-      }
+      </div>
     </div>`
   app.appendChild(overlay)
 
@@ -96,6 +104,10 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
       const name = n === 1 ? labels[key].one : labels[key].many
       return `<div class="op-cell${n ? '' : ' empty'}"><span class="n">${n}</span><span class="k">${name}</span></div>`
     })
+    const fish = deps.rawFish()
+    rows.push(
+      `<div class="op-cell${fish ? '' : ' empty'}${fish ? ' op-use' : ''}" data-eat-fish="1"><span class="n">${fish}</span><span class="k">Raw fish</span></div>`,
+    )
     stashBox.innerHTML = rows.join('')
   }
 
@@ -146,6 +158,12 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
 
   // —— cheats ——————————————————————————————————————————————————————
   overlay.addEventListener('click', (e) => {
+    const eatFish = (e.target as HTMLElement).closest<HTMLElement>('[data-eat-fish]')
+    if (eatFish && deps.rawFish() > 0) {
+      if (deps.eatFish?.()) render()
+      return
+    }
+
     const el = (e.target as HTMLElement).closest<HTMLElement>('[data-tp],[data-cheat]')
     if (!el) return
 
@@ -160,6 +178,16 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
       case 'fill':
         resetVitals(deps.vitals)
         break
+      case 'stash':
+        deps.salvage.stash.plank += 6
+        deps.salvage.stash.rope += 3
+        deps.salvage.stash.canvas += 2
+        deps.salvage.stash.barrel += 2
+        deps.salvage.stash.crate += 1
+        break
+      case 'fish':
+        deps.grantFish?.(2)
+        break
       case 'knife':
         deps.loot.grant('knife')
         break
@@ -171,8 +199,7 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
         setOpen(false)
         return
     }
-    renderStash(deps.salvage.stash, deps.salvage.labels)
-    renderGear()
+    render()
   })
 
   return {

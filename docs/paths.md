@@ -82,16 +82,36 @@ still a kilometre of open water in the dark.
 
 ## Still parked
 
-**Expandable craft-a-raft.** A lone swimmer lashing a growing multi-stage deck
-out of flotsam is a genre borrow, not this ocean. The spire and the suit answer
-"where do I stand?" and "how long have I got?" without a vehicle.
+**Plank/barrel as a swim aid.** A buff while carrying them, not a build —
+different from the lashed raft below.
 
-**Plank/barrel as a swim aid.** A buff, not a path.
+**Burden and jettison.** Heavy stash slowing the swim is still an open lever.
 
-**Stash as craft currency.** `plank / barrel / crate / rope / canvas` still has
-no sink. That's now a deliberate open question rather than an unkept promise —
-the README no longer says it builds a raft. Options: burden and jettison, a
-one-off spend (wedge a door, weight a dive), or island building.
+---
+
+## Improvise (sandbox)
+
+The stash is a spend currency. Recipes announce themselves the same way
+everything else does — F-to-use when you're standing where they'd work, with
+the materials on you. No craft menu, no markers, no "correct" build order.
+
+| Recipe | Cost | Where | What it does |
+|--------|------|-------|--------------|
+| **Lean-to** | 2 plank + 1 rope | Dry ground (beach or spire) | Local shelter / warmth; **Rest** under it to nap or sleep until dawn |
+| **Fire** | 1 plank | Dry ground | Heat, and a place to cook fish |
+| **Rain-catch** | 1 canvas + 1 rope | Higher dry ground | Refilling fresh water |
+| **Raft** | 3 plank + 1 rope (+1 barrel if you have it) | Waterline | A small deck you can stand on that rides the swell |
+
+Hand-caught fish stay in hand — shown in the Pack and the HUD stash strip —
+until you **Eat** them raw or **Cook** them at a fire. Cooking is a better meal
+and a little warmth — not a requirement.
+
+**Rest** under a lean-to: a short nap by day, or sleep through to dawn at night.
+Warmth and strength come back; food and water tick down. A fire nearby helps.
+Too empty to sleep if the tanks are nearly dry.
+
+A raft at the wreck is one path. A camp on the island is another. Working the
+spire with a lean-to and a fire is a third. The sandbox is the point.
 
 ---
 
@@ -99,13 +119,14 @@ one-off spend (wedge a door, weight a dive), or island building.
 
 - **Shark & spear mid-game** — better telegraph, wound readability, maybe a pass
   that only comes after you've lingered. Half-built already.
-- **Island workshop** — fire, cooked fish, a lean-to. The rain pools opened this
-  door; fire is the next honest step.
+- **More workshop pieces** — smoked fish that keeps, driftwood furniture,
+  signal smoke. Same F-to-use pattern.
 - **Memory spine** — the log was one beat. More papers, a name, a reason.
 - **Second landmark** — a spar buoy or rock stack to break the 900 m binary.
 - **Night economy** — biolum, glass-off dive windows, a lantern in the wreck.
 - **Currents** — swell that carries you, so the sea moves between inputs.
 - **Soft fails** — only if runs start feeling cruel rather than sharp.
+- **Raft locomotion** — push / pole / drift a lashed raft; today it is a perch.
 
 ---
 

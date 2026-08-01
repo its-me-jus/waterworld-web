@@ -442,12 +442,17 @@ body.underwater #bubbles {
   display: none;
   width: auto;
   min-width: 56px;
-  padding: 0 1rem;
-  height: 46px;
+  max-width: min(46vw, 11rem);
+  padding: 0 0.85rem;
+  height: auto;
+  min-height: 46px;
   border-radius: 23px;
-  font-size: 0.7rem;
-  letter-spacing: 0.16em;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
+  line-height: 1.2;
+  white-space: normal;
+  text-align: center;
 }
 
 .touch-use.on {
@@ -730,6 +735,16 @@ body.underwater #bubbles {
 
 .op-cell.empty {
   opacity: 0.35;
+}
+
+.op-cell.op-use {
+  cursor: pointer;
+  border-color: rgba(170, 220, 235, 0.35);
+}
+
+.op-cell.op-use:active {
+  transform: scale(0.97);
+  background: rgba(18, 70, 88, 0.55);
 }
 
 .op-gear {

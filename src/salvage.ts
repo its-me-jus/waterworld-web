@@ -186,6 +186,23 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     retire(find)
   }
 
+  /** True when every listed cost is covered. */
+  const has = (cost: Partial<Record<StashKind, number>>) => {
+    for (const key of Object.keys(cost) as StashKind[]) {
+      if (stash[key] < (cost[key] ?? 0)) return false
+    }
+    return true
+  }
+
+  /** Spend materials. Returns false and changes nothing if short. */
+  const spend = (cost: Partial<Record<StashKind, number>>) => {
+    if (!has(cost)) return false
+    for (const key of Object.keys(cost) as StashKind[]) {
+      stash[key] -= cost[key] ?? 0
+    }
+    return true
+  }
+
   const consume = (find: Find, food: number, water: number) => {
     eat(vitals, food, water)
     retire(find)
@@ -406,7 +423,7 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
   const origin = new THREE.Vector3()
   drifters.forEach((find, i) => scatter(find, origin, 18 + i * 14, 40 + i * 20))
 
-  return { stash, labels: STASH_LABEL, update, reset }
+  return { stash, labels: STASH_LABEL, has, spend, update, reset }
 }
 
 export type Salvage = ReturnType<typeof createSalvage>
