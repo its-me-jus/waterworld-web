@@ -496,11 +496,13 @@ export function createSky(scene: THREE.Scene, elevationDeg = 30, azimuthDeg = 15
         .lerp(STORM_CLOUD_SHADOW, storm)
       cloudMat.uniforms.uOpacity.value = THREE.MathUtils.lerp(0.55, 1, Math.max(storm, 1 - day * 0.5))
 
-      // Lights — after dusk the directional becomes cool moon fill from the moon
+      // Lights — after dusk the directional becomes cool moon fill from the moon.
+      // Keep a readable floor of fill so silhouettes hold, but leave room for
+      // campfire PointLights to own the warm pools on the sand.
       const sunUp = Math.max(0, climate.sunElevation / 62)
       const moonLift = night * (1 - storm * 0.75)
       const dayIntensity = THREE.MathUtils.lerp(0.15, 2.6, sunUp * sunUp) * (1 - storm * 0.6)
-      const nightIntensity = THREE.MathUtils.lerp(0.22, 0.28, fair) * moonLift
+      const nightIntensity = THREE.MathUtils.lerp(0.28, 0.38, fair) * moonLift
       sunLight.intensity = Math.max(dayIntensity, nightIntensity)
 
       sunTint.setRGB(1, 0.94, 0.83).lerp(new THREE.Color('#8a9bb8'), night)
@@ -517,8 +519,8 @@ export function createSky(scene: THREE.Scene, elevationDeg = 30, azimuthDeg = 15
 
       dayHemiSky.setRGB(0.62, 0.78, 0.91).lerp(new THREE.Color('#1a2838'), night)
       dayHemiSky.lerp(new THREE.Color('#3a4550'), storm * 0.55)
-      dayHemiGround.setRGB(0.03, 0.125, 0.17).lerp(new THREE.Color('#050a10'), night)
-      hemi.intensity = THREE.MathUtils.lerp(0.22, 0.5, day) * (1 - storm * 0.3)
+      dayHemiGround.setRGB(0.03, 0.125, 0.17).lerp(new THREE.Color('#0a1218'), night)
+      hemi.intensity = THREE.MathUtils.lerp(0.28, 0.5, day) * (1 - storm * 0.3)
 
       // Stars fade in after dusk, wash out under a storm
       const starOp = Math.max(0, night * 0.95 - storm * 0.7)

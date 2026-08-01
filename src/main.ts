@@ -291,7 +291,7 @@ const forage = createForage(hud, vitals, {
   fish: underwaterWorld.fish,
 })
 
-const improvise = createImprovise(scene, {
+const improvise = createImprovise(scene, camera, {
   interactions,
   salvage,
   vitals,

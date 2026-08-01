@@ -98,14 +98,17 @@ the materials on you. No craft menu, no markers, no "correct" build order.
 | Recipe | Cost | Where | What it does |
 |--------|------|-------|--------------|
 | **Lean-to** | 2 plank + 1 rope | Dry ground (beach or spire) | Local shelter / warmth; **Rest** under it to nap or sleep until dawn |
-| **Fire** | 1 plank | Dry ground | Heat, and a place to cook fish |
+| **Fire** | 1 plank | Dry ground | Heat, cook/smoke fish, and a warm light at night. **Take** it as a brand to carry; **Plant** it to set camp again. Diving puts it out. |
 | **Rain-catch** | 1 canvas + 1 rope | Higher dry ground | Refilling fresh water |
 | **Raft** | 3 plank + 1 rope (+1 barrel if you have it) | Waterline | A small deck you can stand on that rides the swell |
 
 Hand-caught fish stay in hand — shown in the Pack and the HUD stash strip —
 until you **Eat** them raw, **Cook** them at a fire for a meal now, or **Smoke**
 them (~30s, or overnight under a lean-to) into portable smoked fish. Cooking is
-immediate; smoking is the road meal.
+immediate; smoking is the road meal. A planted fire throws real light onto the
+sand at night; **Take** it and the brand travels with you (warmth and a pool of
+orange light), **Plant** it on dry ground to set it down. Submerge and it
+hisses out — kindle another when you're ashore.
 
 **Rest** under a lean-to: a short nap by day, or sleep through to dawn at night.
 Warmth and strength come back; food and water tick down. A fire nearby helps,
@@ -127,6 +130,7 @@ Working the spire with a lean-to and a fire is a third. The sandbox is the point
 - **Memory spine** — the log was one beat. More papers, a name, a reason.
 - **Second landmark** — a spar buoy or rock stack to break the 900 m binary.
 - **Night economy** — biolum, glass-off dive windows, a lantern in the wreck.
+  (Fire brands cover the beach walk; wreck lantern still open.)
 - **Currents** — swell that carries you, so the sea moves between inputs.
 - **Soft fails** — only if runs start feeling cruel rather than sharp.
 - **Burden and jettison** — heavy stash slowing the swim.

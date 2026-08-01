@@ -76,7 +76,7 @@ one the world planted for you.
 
 - **Touch / on-screen:** left stick move · drag anywhere to look · ▲▼ depth ·
   action button appears when something is in reach (take, eat, drink, lash,
-  kindle, cook — same verbs as desktop **F**)
+  kindle, cook, take/plant fire — same verbs as desktop **F**)
 - **Desktop:** WASD · click for mouse-look · Space/E up · Shift/Q dive · **F**
   to take, eat, drink, open, pry, cut, jab, lash, kindle or cook
 
