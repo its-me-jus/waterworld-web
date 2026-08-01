@@ -740,6 +740,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let saidSail = false
   let swimming = false
   let onRaftDeck = false
+  /** Seconds of stickiness after Climb — kills leftover swim speed that throws you off. */
+  let boardGrace = 0
   /** Live player ref — Climb mutates this to seat you on the deck. */
   let live: {
     x: number
@@ -1010,6 +1012,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       live.y = raft.deckY + WALK_EYE
       live.vy = 0
       live.submersion = 0
+      boardGrace = 1.4
       deps.hud.whisper('Hands on the gunwale. Up.')
     },
   })
@@ -1384,6 +1387,24 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     onRaftDeck =
       view.walking && !!nearestOfKind(player.x, player.z, 'raft', 3.4) && view.groundY > -0.5
 
+    // After Climb, kill swim inertia and keep them seated for a beat
+    if (boardGrace > 0) {
+      boardGrace = Math.max(0, boardGrace - dt)
+      player.speed = 0
+      const raft = nearestOfKind(player.x, player.z, 'raft', CLIMB_RANGE)
+      if (raft) {
+        player.mode = 'walk'
+        player.submersion = 0
+        player.vy = 0
+        if (Math.hypot(player.x - raft.x, player.z - raft.z) > raft.radius * 0.7) {
+          player.x = raft.x
+          player.z = raft.z
+        }
+        player.y = raft.deckY + WALK_EYE
+        onRaftDeck = true
+        swimming = false
+      }
+    }
     const ahead = offset(player, facingYaw, PLACE_AHEAD, 0)
     const fireAt = offset(player, facingYaw, 0.9, 0)
     const catchAt = offset(player, facingYaw, PLACE_AHEAD, 1.1)
