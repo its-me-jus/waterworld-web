@@ -192,9 +192,10 @@ export function createTouchControls(parent: HTMLElement) {
   }
 
   /** The use button only exists while something is in reach. */
-  function setAction(verb: string | null) {
-    useBtn.textContent = verb ?? ''
-    useBtn.classList.toggle('on', verb !== null)
+  function setAction(label: string | null) {
+    useBtn.textContent = label ?? ''
+    useBtn.setAttribute('aria-label', label ? label : 'Use')
+    useBtn.classList.toggle('on', label !== null)
   }
 
   return { apply, setVisible, setAction, root: wrap }

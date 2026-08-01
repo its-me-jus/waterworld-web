@@ -647,8 +647,11 @@ function frame() {
 
   const reachable = vitals.alive ? interactions.find(camera) : null
   if (reachable && input.interact) reachable.use()
-  hud.setPrompt(reachable ? { verb: reachable.verb, label: reachable.label } : null)
-  touch.setAction(reachable ? reachable.verb : null)
+  const prompt = reachable ? { verb: reachable.verb, label: reachable.label } : null
+  hud.setPrompt(prompt)
+  // Mobile action button carries the same words as the centre prompt — verb
+  // alone ("Lash") is ambiguous once lean-to and raft share a verb.
+  touch.setAction(prompt ? `${prompt.verb} ${prompt.label}` : null)
   hud.setStash(salvage.stash, salvage.labels)
   hud.update(vitals, view.submersion > 0.85, dt)
 
