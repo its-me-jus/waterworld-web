@@ -456,9 +456,11 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
 
     const foot = deps.groundAt(player.x, player.z)
     const seaHere = sampleOcean(player.x, player.z, t).y
+    // Wading a beach/spire edge, or swimming at the surface anywhere — a raft
+    // is something you lash in the water, not only where the mesh shelves.
     nearWaterline =
       (view.walking && foot > -0.2 && foot < 1.6) ||
-      (!view.walking && view.submersion < 0.55 && foot > -1.5 && foot < 2.2)
+      (!view.walking && view.submersion < 0.55 && player.y > seaHere - 0.8)
 
     const raftSea = sampleOcean(raftAt.x, raftAt.z, t).y
     setAnchor(raftPos, raftAt.x, raftAt.z, Math.max(raftSea, foot) + 0.25)
