@@ -35,7 +35,7 @@ export type Island = {
    * keeps coming back. It's what turns landfall into somewhere you could stay.
    */
   pools: THREE.Vector3[]
-  update: (camera: THREE.Camera, underwater: boolean) => void
+  update: (camera: THREE.Camera, underwater: boolean, time?: number) => void
   /** Keep aerial perspective matched to the live horizon. */
   setHaze: (color: THREE.Color) => void
 }
@@ -74,6 +74,10 @@ function ground(lx: number, lz: number) {
     cone(lx, lz, 64, 208, 124, 26, 1.35)
 
   h *= 1 + relief(lx, lz) * 1.15
+  // Micro-relief: root flares and hummocks under the green band so the ground
+  // isn't a smooth plane once the grass and trees are in
+  const greenBand = THREE.MathUtils.smoothstep(h, 3, 14) * (1 - THREE.MathUtils.smoothstep(h, 40, 90))
+  h += (noise2(lx * 0.09 + 5.5, lz * 0.09 - 3.3) - 0.5) * 1.1 * greenBand
   h -= SEA_CUT
   // The last few metres either side of the waterline flatten into beach and
   // shallows, instead of the cone driving straight into the sea
@@ -181,6 +185,93 @@ function palm(seed: number) {
   return { trunk, leaves, nuts }
 }
 
+/**
+ * A broadleaf mid-story tree: short trunk, a few lumpy canopy blobs. This is
+ * the layer that turns "beach with palms" into "overgrown interior" — it
+ * fills the silhouette between the palm crowns and the ground.
+ */
+function broadleaf(seed: number) {
+  const rand = (n: number) => fbm(seed * 8.3 + n * 3.1, seed * 5.7 - n * 2.3)
+  const height = 3.8 + rand(1) * 3.2
+  const trunk = new THREE.CylinderGeometry(0.16, 0.3, height, 5, 2)
+  trunk.translate(0, height / 2, 0)
+  trunk.rotateY(rand(2) * Math.PI * 2)
+  trunk.rotateZ((rand(3) - 0.5) * 0.22)
+
+  const canopy: THREE.BufferGeometry[] = []
+  const blobs = 3 + Math.floor(rand(4) * 2)
+  for (let i = 0; i < blobs; i++) {
+    const r = 1.5 + rand(i + 5) * 1.7
+    const blob = new THREE.IcosahedronGeometry(r, 0)
+    const pos = blob.attributes.position
+    for (let v = 0; v < pos.count; v++) {
+      const s = 0.82 + rand(i * 31 + v) * 0.36
+      pos.setXYZ(v, pos.getX(v) * s, pos.getY(v) * s * 0.82, pos.getZ(v) * s)
+    }
+    blob.computeVertexNormals()
+    blob.translate(
+      (rand(i + 9) - 0.5) * 3.0,
+      height + (rand(i + 11) - 0.5) * 1.6,
+      (rand(i + 13) - 0.5) * 3.0,
+    )
+    canopy.push(blob)
+  }
+
+  return { trunk, canopy }
+}
+
+/** A hanging vine — a drooping strip of quads down a rock face or trunk. */
+function vine(seed: number) {
+  const rand = (n: number) => fbm(seed * 6.3 + n * 2.9, seed * 3.7 - n * 1.4)
+  const len = 1.6 + rand(1) * 2.8
+  const geo = new THREE.PlaneGeometry(0.22 + rand(2) * 0.2, len, 1, 4)
+  const pos = geo.attributes.position
+  for (let i = 0; i < pos.count; i++) {
+    const t = (pos.getY(i) + len / 2) / len // 0 bottom → 1 top
+    // Droop outward as it hangs, slight S-curve
+    pos.setZ(i, pos.getZ(i) + (1 - t) * (1 - t) * (0.3 + rand(3) * 0.5))
+    pos.setX(i, pos.getX(i) + Math.sin(t * 4 + rand(4) * 6) * 0.12)
+  }
+  geo.translate(0, -len / 2, 0) // hang from the anchor point
+  geo.rotateY(rand(5) * Math.PI * 2)
+  geo.computeVertexNormals()
+  return geo
+}
+
+/** A bleached dead trunk — a snag that sells "this island has weather". */
+function deadTree(seed: number) {
+  const rand = (n: number) => fbm(seed * 7.7 + n * 3.9, seed * 4.1 - n * 2.2)
+  const height = 2.6 + rand(1) * 3.4
+  const geo = new THREE.CylinderGeometry(0.09, 0.24, height, 5, 3)
+  const pos = geo.attributes.position
+  for (let i = 0; i < pos.count; i++) {
+    const t = (pos.getY(i) + height / 2) / height
+    pos.setX(i, pos.getX(i) + t * t * (rand(2) - 0.5) * 2.2)
+  }
+  geo.translate(0, height / 2, 0)
+  geo.rotateY(rand(3) * Math.PI * 2)
+  geo.rotateZ((rand(4) - 0.5) * 0.5)
+  geo.computeVertexNormals()
+  return geo
+}
+
+/** A grass / fern tuft: a few bent blades as thin cones, merged. */
+function grassTuft(seed: number) {
+  const rand = (n: number) => fbm(seed * 5.9 + n * 2.7, seed * 3.3 - n * 1.9)
+  const blades: THREE.BufferGeometry[] = []
+  const count = 4 + Math.floor(rand(1) * 3)
+  for (let i = 0; i < count; i++) {
+    const h = 0.5 + rand(i + 2) * 0.9
+    const blade = new THREE.ConeGeometry(0.06 + rand(i + 4) * 0.06, h, 3)
+    blade.translate(0, h / 2, 0)
+    blade.rotateZ((rand(i + 6) - 0.5) * 0.9)
+    blade.rotateY(rand(i + 8) * Math.PI * 2)
+    blade.translate((rand(i + 10) - 0.5) * 0.5, 0, (rand(i + 12) - 0.5) * 0.5)
+    blades.push(blade)
+  }
+  return mergeGeometries(blades, false) as THREE.BufferGeometry
+}
+
 /** A weathered beach rock — lumpy icosahedron, never quite round. */
 function rockChunk(seed: number) {
   const rand = (n: number) => fbm(seed * 9.1 + n * 3.7, seed * 5.3 - n * 1.8)
@@ -282,14 +373,17 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
 
   // Sand, scrub and basalt painted per vertex — one material, one draw call
   const normal = geometry.attributes.normal
-  const seabed = new THREE.Color('#5c6a5b')
-  const tide = new THREE.Color('#7a6a4e')
+  const seabed = new THREE.Color('#4e5f4a')
+  const tide = new THREE.Color('#6e5f44')
   const wetSand = new THREE.Color('#a8946e')
-  const drySand = new THREE.Color('#ddcaa4')
-  const scrub = new THREE.Color('#5c7f42')
-  const bush = new THREE.Color('#3f6135')
-  const rock = new THREE.Color('#79705f')
-  const basalt = new THREE.Color('#4e453d')
+  const drySand = new THREE.Color('#e2d2ac')
+  const moss = new THREE.Color('#3f6132')
+  const fern = new THREE.Color('#2e4f24')
+  const scrub = new THREE.Color('#55793d')
+  const bush = new THREE.Color('#2f4f24')
+  const litter = new THREE.Color('#5c4a30')
+  const rock = new THREE.Color('#6e6656')
+  const basalt = new THREE.Color('#453d34')
   const shade = new THREE.Color()
   const growth = new THREE.Color()
   const stone = new THREE.Color()
@@ -301,6 +395,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const z = position.getZ(i)
     const mottle = fbm(x * 0.02 + 2.3, z * 0.02 - 5.1)
     const grit = fbm(x * 0.09 - 1.4, z * 0.09 + 3.7)
+    const gully = fbm(x * 0.006 - 8.2, z * 0.006 + 4.4)
 
     // Underwater shelf → wet sand → dry beach. The tide band sits right at the
     // waterline so the beach reads as recently washed, not one flat tan.
@@ -313,7 +408,13 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const onSand = THREE.MathUtils.smoothstep(y, -2, 1) * (1 - THREE.MathUtils.smoothstep(y, 6, 14))
     shade.multiplyScalar(1 + (grit - 0.5) * 0.22 * onSand)
 
-    growth.copy(scrub).lerp(bush, mottle)
+    // Green band: moss in the dips, fern under canopy, scrub on the shoulders.
+    // Gully noise keeps it patchy so it reads overgrown, not a green wash.
+    growth.copy(moss).lerp(fern, THREE.MathUtils.clamp(gully * 1.4 - 0.2, 0, 1))
+    growth.lerp(scrub, THREE.MathUtils.smoothstep(y, 18, 42))
+    growth.lerp(bush, mottle * 0.6)
+    // Leaf litter under the interior — browns where the canopy is thickest
+    growth.lerp(litter, THREE.MathUtils.smoothstep(gully, 0.55, 0.8) * 0.45)
     shade.lerp(growth, THREE.MathUtils.smoothstep(y, 4, 15))
     // Steep faces shed soil — bare rock on the cliffs and up around the crater.
     // MathUtils.smoothstep has no inverted range, so the slope ramp is flipped
@@ -322,11 +423,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     shade.lerp(
       stone,
       Math.max(
-        THREE.MathUtils.smoothstep(y, 118, 182),
+        THREE.MathUtils.smoothstep(y, 108, 172),
         1 - THREE.MathUtils.smoothstep(normal.getY(i), 0.36, 0.62),
       ),
     )
-    shade.multiplyScalar(0.92 + mottle * 0.16)
+    shade.multiplyScalar(0.9 + mottle * 0.2)
 
     colors[i * 3] = shade.r
     colors[i * 3 + 1] = shade.g
@@ -353,11 +454,22 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const rocks: THREE.BufferGeometry[] = []
   const wood: THREE.BufferGeometry[] = []
   const scrubParts: THREE.BufferGeometry[] = []
+  const broadTrunks: THREE.BufferGeometry[] = []
+  const broadCanopy: THREE.BufferGeometry[] = []
+  const grassParts: THREE.BufferGeometry[] = []
+  const deadParts: THREE.BufferGeometry[] = []
+  const vineParts: THREE.BufferGeometry[] = []
+  const pathParts: THREE.BufferGeometry[] = []
 
-  const palmWanted = low ? 12 : 24
+  const palmWanted = low ? 16 : 34
   const rockWanted = low ? 40 : 80
   const woodWanted = low ? 14 : 28
-  const scrubWanted = low ? 45 : 90
+  const scrubWanted = low ? 60 : 130
+  const broadWanted = low ? 40 : 90
+  const grassWanted = low ? 700 : 1600
+  const deadWanted = low ? 8 : 16
+  const vineWanted = low ? 60 : 140
+  const pathWanted = low ? 24 : 44
 
   const placeAt = (geo: THREE.BufferGeometry, lx: number, h: number, lz: number, sink = 0.15) => {
     const m = new THREE.Matrix4().setPosition(lx, h - sink, lz)
@@ -390,6 +502,26 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     for (const blade of tree.leaves) leaves.push(blade.applyMatrix4(place))
     for (const nut of tree.nuts) nuts.push(nut.applyMatrix4(place))
     shore.push(new THREE.Vector3(opts.x + lx, h, opts.z + lz))
+  }
+
+  // Broadleaf mid-story — the overgrown interior. Sits above the beach band,
+  // thicker in the gullies where the relief dips.
+  for (let i = 0; i < 1400 && broadTrunks.length < broadWanted; i++) {
+    const angle = i * 2.197
+    const radius = 60 + ((i * 17) % 260)
+    const lx = Math.cos(angle) * radius
+    const lz = Math.sin(angle) * radius
+    const h = surface(lx, lz)
+    if (h < 5 || h > 70) continue
+    const slope = Math.abs(surface(lx + 6, lz) - h) + Math.abs(surface(lx, lz + 6) - h)
+    if (slope > 7) continue
+    // Gullies grow thicker — sample the local dip
+    const dip = surface(lx + 14, lz) + surface(lx - 14, lz) + surface(lx, lz + 14) + surface(lx, lz - 14) - h * 4
+    if (dip < -2.5 && i % 2 === 0) continue
+    const tree = broadleaf(i + 300)
+    const place = new THREE.Matrix4().setPosition(lx, h - 0.25, lz)
+    broadTrunks.push(tree.trunk.applyMatrix4(place))
+    for (const blob of tree.canopy) broadCanopy.push(blob.applyMatrix4(place))
   }
 
   // Beach rocks — frame the waterline and break empty sand
@@ -431,6 +563,71 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const slope = Math.abs(surface(lx + 6, lz) - h) + Math.abs(surface(lx, lz + 6) - h)
     if (slope > 5.5) continue
     scrubParts.push(placeAt(scrubBush(i + 120), lx, h, lz, 0.05))
+  }
+
+  // Grass — dense ground cover across the green band, hugging the camera side
+  // of the island so the tufts land where you're actually walking
+  for (let i = 0; i < 6000 && grassParts.length < grassWanted; i++) {
+    const angle = i * 2.39996
+    const radius = 40 + ((i * 29) % 260)
+    const lx = Math.cos(angle) * radius + (fbm(i, 7.7) - 0.5) * 9
+    const lz = Math.sin(angle) * radius + (fbm(i, 8.8) - 0.5) * 9
+    const h = surface(lx, lz)
+    if (h < 3.2 || h > 55) continue
+    const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
+    if (slope > 4) continue
+    grassParts.push(placeAt(grassTuft(i + 500), lx, h, lz, 0.02))
+  }
+
+  // Dead snags — scattered through the green, the island's weather showing
+  for (let i = 0; i < 500 && deadParts.length < deadWanted; i++) {
+    const angle = i * 2.513
+    const radius = 90 + ((i * 31) % 240)
+    const lx = Math.cos(angle) * radius
+    const lz = Math.sin(angle) * radius
+    const h = surface(lx, lz)
+    if (h < 4 || h > 40) continue
+    const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
+    if (slope > 5) continue
+    deadParts.push(placeAt(deadTree(i + 700), lx, h, lz, 0.1))
+  }
+
+  // Vines — hang off steeper faces in the green band, and off the broadleaf
+  // trunks, so the rock reads draped rather than bare
+  for (let i = 0; i < 900 && vineParts.length < vineWanted; i++) {
+    const angle = i * 2.341
+    const radius = 70 + ((i * 23) % 250)
+    const lx = Math.cos(angle) * radius
+    const lz = Math.sin(angle) * radius
+    const h = surface(lx, lz)
+    if (h < 5 || h > 80) continue
+    const slope = Math.abs(surface(lx + 4, lz) - h) + Math.abs(surface(lx, lz + 4) - h)
+    // Want a face with some pitch — not flat ground, not a cliff
+    if (slope < 2.2 || slope > 9) continue
+    const anchor = h + 1.2 + fbm(i, 3.3) * 2.4
+    vineParts.push(placeAt(vine(i + 900), lx, anchor, lz, 0))
+  }
+
+  // A worn path from the landing beach up toward the interior — flat stones
+  // and trampled ground, subtle enough that you find it by walking it
+  {
+    const from = shore.length > 0 ? shore[0] : null
+    if (from) {
+      const sx = from.x - opts.x
+      const sz = from.z - opts.z
+      const heading = Math.atan2(-sx, -sz) // toward island centre
+      for (let i = 0; i < pathWanted; i++) {
+        const dist = 4 + i * 3.1
+        const wobble = (fbm(i * 0.7, 11.1) - 0.5) * 3.2
+        const lx = sx + Math.sin(heading) * -dist + Math.cos(heading) * wobble
+        const lz = sz + Math.cos(heading) * -dist - Math.sin(heading) * wobble
+        const h = surface(lx, lz)
+        if (h < 1.5 || h > 30) continue
+        const stone = new THREE.CylinderGeometry(0.5 + fbm(i, 5.5) * 0.5, 0.6 + fbm(i, 6.6) * 0.5, 0.16, 6)
+        stone.rotateY(fbm(i, 7.7) * Math.PI)
+        pathParts.push(placeAt(stone, lx, h, lz, 0.05))
+      }
+    }
   }
 
   if (trunks.length) {
@@ -487,6 +684,71 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
           side: THREE.DoubleSide,
           ...skylight,
         }),
+      ),
+    )
+  }
+
+  if (broadTrunks.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(broadTrunks, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, { color: 0x54432e, roughness: 0.96, ...skylight }),
+      ),
+    )
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(broadCanopy, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, {
+          color: 0x35662b,
+          roughness: 0.9,
+          ...skylight,
+        }),
+      ),
+    )
+  }
+
+  if (grassParts.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(grassParts, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, {
+          color: 0x4a7031,
+          roughness: 0.95,
+          side: THREE.DoubleSide,
+          ...skylight,
+        }),
+      ),
+    )
+  }
+
+  if (deadParts.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(deadParts, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, { color: 0x8d8272, roughness: 1, ...skylight }),
+      ),
+    )
+  }
+
+  if (vineParts.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(vineParts, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, {
+          color: 0x3a5c28,
+          roughness: 0.92,
+          side: THREE.DoubleSide,
+          ...skylight,
+        }),
+      ),
+    )
+  }
+
+  if (pathParts.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(pathParts, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, { color: 0x7d7462, roughness: 0.98, ...skylight }),
       ),
     )
   }
@@ -571,10 +833,49 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
 
   const centre = new THREE.Vector3(opts.x, 0, opts.z)
 
-  function update(camera: THREE.Camera, underwater: boolean) {
+  // —— birds —————————————————————————————————————————————————
+  // A few silhouettes riding the thermals over the peak. Cheap: one merged
+  // geometry per bird (two wings), orbited in update. They sell the island as
+  // alive from half a kilometre out.
+  const birds: THREE.Mesh[] = []
+  {
+    const birdMat = new THREE.MeshBasicMaterial({ color: 0x1c2226, side: THREE.DoubleSide })
+    const birdCount = low ? 3 : 6
+    for (let i = 0; i < birdCount; i++) {
+      const wing = new THREE.PlaneGeometry(0.9, 0.28)
+      wing.translate(0.45, 0, 0)
+      const left = wing.clone()
+      const right = wing.clone()
+      left.rotateZ(0.35)
+      right.rotateY(Math.PI)
+      right.rotateZ(0.35)
+      const geo = mergeGeometries([left, right], false) as THREE.BufferGeometry
+      const bird = new THREE.Mesh(geo, birdMat)
+      bird.userData = {
+        radius: 60 + i * 22 + fbm(i, 3.3) * 30,
+        height: 90 + i * 14 + fbm(i, 4.4) * 30,
+        speed: 0.12 + fbm(i, 5.5) * 0.1,
+        phase: fbm(i, 6.6) * Math.PI * 2,
+      }
+      bird.frustumCulled = false
+      group.add(bird)
+      birds.push(bird)
+    }
+  }
+
+  function update(camera: THREE.Camera, underwater: boolean, time = 0) {
     // Nothing is visible 700 m through water. Close in it's the shelf you dive,
     // so keep it once the island is the thing you're swimming around.
     group.visible = !underwater || camera.position.distanceToSquared(centre) < 420 * 420
+
+    for (const bird of birds) {
+      const { radius, height, speed, phase } = bird.userData
+      const a = time * speed + phase
+      bird.position.set(Math.cos(a) * radius, height + Math.sin(time * 0.5 + phase) * 3, Math.sin(a) * radius)
+      bird.rotation.y = -a - Math.PI / 2
+      // Wing flap — a slow bob on the z-axis reads as a glide-flap mix at range
+      bird.rotation.z = Math.sin(time * 6 + phase * 3) * 0.28
+    }
   }
 
   /** Keep aerial perspective matched to the live horizon as day and storms move. */

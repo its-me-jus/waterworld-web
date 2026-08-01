@@ -596,7 +596,7 @@ function frame() {
   })
 
   wreck.update(t, camera)
-  island.update(camera, underwater)
+  island.update(camera, underwater, t)
   shore.update(t, camera, underwater)
   salvage.update(t, camera.position)
   loot.update(dt, view)
