@@ -1,11 +1,19 @@
 /**
  * The day and the weather — one clock that every other system reads.
  *
- * A full day is ~8 real minutes so night arrives within a run. Storms roll
- * through every few minutes: swell climbs, the sky closes, the wash gets
- * louder, and swimming costs more. Nothing here draws — it only names the
- * numbers the ocean, sky, audio and vitals already know how to feel.
+ * A full day is ~8 real minutes so night arrives within a run.
+ *
+ * Weather is not a metronome. The sea runs in *spells*: long stretches of fair
+ * sky, a breezy afternoon, then — less often — something that closes over you.
+ * Each spell picks its own strength and length, then rolls into the next over
+ * a slow front, so weather arrives instead of switching. Fair weather is the
+ * overwhelming majority of any run, which is what makes a gale mean something.
+ *
+ * Nothing here draws — it only names the numbers the ocean, sky, audio and
+ * vitals already know how to feel.
  */
+
+export type Regime = 'glass' | 'fair' | 'breezy' | 'unsettled' | 'squall' | 'gale'
 
 export type Climate = {
   /** 0..1 through the day, midnight at 0 / 1. */
@@ -23,17 +31,43 @@ export type Climate = {
   cold: number
   /** 0..1 how hard the jellies should glow. */
   biolum: number
+  /** What the sky is currently doing, for anything that wants to read ahead. */
+  regime: Regime
+  /** 1 in settled weather, 0 at the height of a gale — the inverse of trouble. */
+  fair: number
 }
 
 /** Real seconds for one full day cycle. */
 export const DAY_LENGTH = 480
-/** First squall arrives after this many seconds of calm. */
-const STORM_FIRST = 95
-/** Quiet stretch between the end of one squall and the start of the next. */
-const STORM_GAP = 155
-/** How long a squall spends at full force, not counting the ramps. */
-const STORM_HOLD = 48
-const STORM_RAMP = 22
+
+/**
+ * The weather table. `weight` is how often a spell is drawn, `hold` how long it
+ * sits once it arrives — fair weather is both more likely *and* longer-lived,
+ * so calm water dominates a run the way it dominates a real ocean.
+ */
+type Spell = {
+  name: Regime
+  /** Storm strength range this spell settles into. */
+  storm: [number, number]
+  /** Seconds it holds before the next front. */
+  hold: [number, number]
+  weight: number
+}
+
+const SPELLS: Spell[] = [
+  { name: 'glass', storm: [0.0, 0.04], hold: [150, 300], weight: 20 },
+  { name: 'fair', storm: [0.02, 0.12], hold: [240, 460], weight: 36 },
+  { name: 'breezy', storm: [0.16, 0.32], hold: [140, 280], weight: 22 },
+  { name: 'unsettled', storm: [0.38, 0.56], hold: [90, 170], weight: 13 },
+  { name: 'squall', storm: [0.7, 0.92], hold: [45, 105], weight: 8 },
+  { name: 'gale', storm: [0.94, 1.0], hold: [70, 130], weight: 1 },
+]
+
+/** Past this a spell counts as weather you'd rather not be swimming in. */
+const FOUL = 0.35
+
+/** Seconds a front takes to roll in — weather arrives, it doesn't switch. */
+const FRONT = [26, 52] as const
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
 const smooth = (a: number, b: number, t: number) => {
@@ -56,33 +90,91 @@ function sunElevation(phase: number) {
   return -18
 }
 
-/** A raised-cosine pulse: 0 → 1 → 0 over ramp/hold/ramp. */
-function stormEnvelope(age: number) {
-  if (age < 0) return 0
-  if (age < STORM_RAMP) return smooth(0, STORM_RAMP, age)
-  if (age < STORM_RAMP + STORM_HOLD) return 1
-  if (age < STORM_RAMP * 2 + STORM_HOLD) {
-    return 1 - smooth(STORM_RAMP + STORM_HOLD, STORM_RAMP * 2 + STORM_HOLD, age)
-  }
-  return 0
+export type ClimateOptions = {
+  hour?: number
+  /** Pin the storm strength (?storm=1) — skips the spell clock entirely. */
+  storm?: number
+  /** Deterministic weather, for the shot suite and the sim. */
+  random?: () => number
 }
 
-export function createClimate(opts?: { hour?: number; storm?: number }) {
+export function createClimate(opts?: ClimateOptions) {
   // Start mid-morning so the first swim has light, then the day turns
   let elapsed = ((opts?.hour ?? 9.5) / 24) * DAY_LENGTH
   const forcedStorm = opts?.storm
-  let stormAge = -STORM_FIRST
-  let nextGap = STORM_GAP
+  const rand = opts?.random ?? Math.random
+
+  const pick = (from: Spell[]) => {
+    let total = 0
+    for (const s of from) total += s.weight
+    let roll = rand() * total
+    for (const s of from) {
+      roll -= s.weight
+      if (roll <= 0) return s
+    }
+    return from[from.length - 1]
+  }
+
+  const range = ([lo, hi]: readonly [number, number]) => lo + rand() * (hi - lo)
+
+  /**
+   * Two foul spells back to back reads as the game punishing you rather than
+   * the sky doing its own thing, so weather always clears before it turns
+   * again. The ocean gets to be cruel, not relentless.
+   */
+  function nextSpell(previous: Spell | null) {
+    const settled = previous && previous.storm[1] > FOUL
+    return pick(settled ? SPELLS.filter((s) => s.storm[1] <= FOUL) : SPELLS)
+  }
+
+  // Every run opens settled — the wreck deserves to be found in daylight and
+  // flat water before the sky is allowed to have an opinion.
+  let spell: Spell = SPELLS[1]
+  let target = range(SPELLS[1].storm)
+  let from = target
+  let holdLeft = range([200, 320])
+  let frontLeft = 0
+  let frontLength = 1
 
   const state: Climate = {
     dayPhase: 0,
     sunElevation: 30,
     sunAzimuth: 155,
     daylight: 1,
-    storm: 0,
+    storm: target,
     swimCost: 1,
     cold: 1,
     biolum: 0,
+    regime: spell.name,
+    fair: 1,
+  }
+
+  function advanceWeather(dt: number) {
+    if (frontLeft > 0) {
+      frontLeft -= dt
+      const f = smooth(0, 1, 1 - Math.max(0, frontLeft) / frontLength)
+      state.storm = from + (target - from) * f
+      if (frontLeft <= 0) state.storm = target
+      return
+    }
+
+    holdLeft -= dt
+    // A spell breathes a little inside its own band, so even a fair afternoon
+    // isn't a flat line
+    const wander = Math.sin(elapsed * 0.021) * 0.5 + Math.sin(elapsed * 0.0073 + 2.1) * 0.5
+    const band = (spell.storm[1] - spell.storm[0]) * 0.5
+    state.storm = clamp01(target + wander * band * 0.35)
+
+    if (holdLeft <= 0) {
+      const next = nextSpell(spell)
+      spell = next
+      state.regime = next.name
+      from = state.storm
+      target = range(next.storm)
+      holdLeft = range(next.hold)
+      frontLength = range(FRONT)
+      frontLeft = frontLength
+    }
   }
 
   function update(dt: number) {
@@ -101,18 +193,14 @@ export function createClimate(opts?: { hour?: number; storm?: number }) {
 
     if (forcedStorm !== undefined) {
       state.storm = clamp01(forcedStorm)
+      state.regime = forcedStorm > 0.9 ? 'gale' : forcedStorm > FOUL ? 'squall' : 'fair'
     } else {
-      stormAge += dt
-      const pulse = stormEnvelope(stormAge)
-      if (stormAge > STORM_RAMP * 2 + STORM_HOLD + nextGap) {
-        stormAge = 0
-        // Slight jitter so storms don't land on a metronome
-        nextGap = STORM_GAP + (Math.random() - 0.5) * 50
-      }
-      // Night storms hit a touch harder — less sun to burn them off
-      state.storm = pulse * (0.85 + (1 - state.daylight) * 0.25)
+      advanceWeather(dt)
+      // Night weather hits a touch harder — less sun to burn it off
+      state.storm = clamp01(state.storm * (0.9 + (1 - state.daylight) * 0.18))
     }
 
+    state.fair = 1 - clamp01((state.storm - 0.15) / 0.7)
     state.swimCost = 1 + state.storm * 0.85
     // Night cold is the big one; a storm on top of wet is the killer
     state.cold = 1 + (1 - state.daylight) * 1.6 + state.storm * 0.55

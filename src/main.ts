@@ -136,6 +136,12 @@ const collide = (p: { x: number; y: number; z: number }) => {
   island.resolve(p)
 }
 
+// Two pieces of standable world — the island's shelf and the reef spire beside
+// the wreck. Whichever is higher under your feet is the ground you're on.
+const groundAt = (x: number, z: number) => Math.max(island.heightAt(x, z), wreck.standAt(x, z))
+/** True while the ground under you is the spire rather than the island. */
+const onPerchAt = (x: number, z: number) => wreck.standAt(x, z) > island.heightAt(x, z)
+
 const oceanAudio = createOceanAudio()
 let heave = 0
 let prevSurfaceForAudio = Number.NaN
@@ -206,6 +212,7 @@ const salvage = createSalvage(scene, {
   reefResolve: wreck.resolve,
   hatch: wreck.hatch,
   shore: island.shore,
+  pools: island.pools,
 })
 
 const input = createInputState()
@@ -216,6 +223,23 @@ const hud = createHud(app, { touch: mobile, onRestart: restart })
 let dead = false
 let deathT = 0
 let hasDived = false
+
+// First time out of the water, whichever way you managed it. The line is the
+// only reward — no counter, no achievement, just the body noticing.
+let saidPerch = false
+let saidShore = false
+
+function landfall(onPerch: boolean) {
+  if (onPerch) {
+    if (saidPerch) return
+    saidPerch = true
+    hud.whisper('Rock under you, and the sea below it. Your heat comes back slowly.')
+    return
+  }
+  if (saidShore) return
+  saidShore = true
+  hud.whisper('Sand. You are out of the ocean, and it cannot reach you here.')
+}
 
 // —— the shark, and the wreck's answer to it ————————————————————————
 // The fin is a rare event until you've dived the wreck; the mate's spear,
@@ -240,12 +264,22 @@ loot = createWreckLoot(app, camera, hud, vitals, {
   lockerState: () => wreck.lockerState,
   cutLashing: wreck.cutLashing,
   stripLocker: wreck.stripLocker,
+  gearSpot: wreck.gearSpot,
+  gearState: () => wreck.gearLockerState,
+  pryGear: wreck.pryGear,
+  takeSuit: wreck.takeSuit,
+  tinSpot: wreck.tinSpot,
+  takeTin: wreck.takeTin,
+  logSpot: wreck.logSpot,
+  takeLog: wreck.takeLog,
+  onSuit: () => swimmer.setSurvivalSuit(true),
   shark,
   thump: (i) => oceanAudio.impact(i),
 })
-// ?knife=1 skips the deck dive, ?spear=1 starts armed — both for tuning
+// ?knife=1 skips the deck dive, ?spear=1 starts armed, ?suit=1 already dressed
 if (params.has('knife')) loot.grant('knife')
 if (params.has('spear')) loot.grant('spear')
+if (params.has('suit')) loot.grant('suit')
 
 const forage = createForage(hud, vitals, {
   interactions,
@@ -260,12 +294,15 @@ function restart() {
   salvage.reset(new THREE.Vector3(player.x, player.y, player.z))
   wreck.reset()
   loot.reset()
+  swimmer.setSurvivalSuit(false)
   hud.clearDead()
   hud.setPrompt(null)
   touch.setAction(null)
   dead = false
   deathT = 0
   hasDived = false
+  saidPerch = false
+  saidShore = false
 }
 
 // —— the operating menu: pack + dev field kit ————————————————————————
@@ -393,7 +430,9 @@ function frame() {
   const weather = climate.update(dt)
   applyStormToWaves(weather.storm)
   syncWaves()
-  // The sea breathes under the squalls — glass-offs oil the chop down
+  // The sea breathes under the squalls — glass-offs oil the chop down, and
+  // they only come while the sky is settled
+  sea.setFair(weather.fair)
   sea.update(dt, t)
   oceanAudio.setSeaWeight(sea.weight)
 
@@ -428,17 +467,23 @@ function frame() {
   // Last frame's tanks drive this frame's body — one frame of lag on a
   // minutes-long decline is nothing
   const limits = swimLimits(vitals)
-  const view = updatePlayer(player, camera, input, dt, t, collide, island.heightAt, limits)
+  const view = updatePlayer(player, camera, input, dt, t, collide, groundAt, limits)
   const { underwater, surfaceY, depth } = view
   if (depth > 1) hasDived = true
 
   // Ashore and on dry ground — wading the shallows still counts as in the sea
   const onLand = view.walking && view.groundY > 0.3
+  const onPerch = onLand && onPerchAt(player.x, player.z)
+  // A wave-washed spire gives back far less heat than dry sand up the beach,
+  // and the beach itself is better the further you are from the wash
+  const shelter = onPerch ? 0.42 : Math.min(1, 0.55 + view.groundY * 0.12)
+  if (onLand) landfall(onPerch)
   updateVitals(vitals, dt, {
     submerged: view.submersion > 0.85,
     depth,
     effort: view.effort,
     onLand,
+    shelter,
     cold: weather.cold,
     swimCost: weather.swimCost,
     whisper: hud.whisper,
