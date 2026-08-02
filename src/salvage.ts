@@ -15,7 +15,7 @@ import { barrelObject, crateObject, plankObject } from './wreck'
  * the beach — exist once per run and stay taken.
  */
 
-export type StashKind = 'plank' | 'barrel' | 'crate' | 'rope' | 'canvas' | 'plastic' | 'can'
+export type StashKind = 'plank' | 'barrel' | 'crate' | 'rope' | 'canvas' | 'plastic' | 'can' | 'leaf'
 export type Stash = Record<StashKind, number>
 
 const STASH_LABEL: Record<StashKind, { one: string; many: string }> = {
@@ -26,6 +26,7 @@ const STASH_LABEL: Record<StashKind, { one: string; many: string }> = {
   canvas: { one: 'Canvas', many: 'Canvas' },
   plastic: { one: 'Bottle', many: 'Bottles' },
   can: { one: 'Can', many: 'Cans' },
+  leaf: { one: 'Frond', many: 'Fronds' },
 }
 
 /** How far a drifter gets before it counts as left behind. */
@@ -221,7 +222,16 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
   const mat = materials()
   const { interactions, vitals } = opts
 
-  const stash: Stash = { plank: 0, barrel: 0, crate: 0, rope: 0, canvas: 0, plastic: 0, can: 0 }
+  const stash: Stash = {
+    plank: 0,
+    barrel: 0,
+    crate: 0,
+    rope: 0,
+    canvas: 0,
+    plastic: 0,
+    can: 0,
+    leaf: 0,
+  }
   const finds: Find[] = []
   const up = new THREE.Vector3(0, 1, 0)
   const waveUp = new THREE.Vector3()
@@ -443,6 +453,16 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     if (kind === 'canvas') return canvasObject(mat)
     if (kind === 'plastic') return plasticBottleObject(mat)
     if (kind === 'can') return tinCanObject(mat)
+    if (kind === 'leaf') {
+      const g = new THREE.Group()
+      for (let i = 0; i < 3; i++) {
+        const blade = new THREE.Mesh(new THREE.PlaneGeometry(0.35, 1.4, 1, 3), mat.weed)
+        blade.position.set((i - 1) * 0.12, 0.2, i * 0.05)
+        blade.rotation.z = (i - 1) * 0.2
+        g.add(blade)
+      }
+      return g
+    }
     return plankObject(2.2, 0.3, mat.wood)
   }
 

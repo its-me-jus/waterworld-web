@@ -35,6 +35,8 @@ type Node = {
   taken: boolean
   /** Grass comes back; wood does not. */
   returnAt: number
+  /** Palm: pull fronds first, then fell the trunk. */
+  palmStage?: 'fronds' | 'trunk' | 'gone'
 }
 
 function mats() {
@@ -82,11 +84,13 @@ function palmMesh(m: Mats, seed: number) {
     blade.rotation.order = 'YXZ'
     blade.rotation.y = (i / 8) * Math.PI * 2
     blade.rotation.x = 0.85 + (i % 3) * 0.12
+    blade.name = 'frond'
     g.add(blade)
   }
   for (let i = 0; i < 2; i++) {
     const nut = new THREE.Mesh(new THREE.IcosahedronGeometry(0.14, 0), m.nut)
     nut.position.set(Math.cos(i * 2.2) * 0.22, h - 0.4, Math.sin(i * 2.2) * 0.22)
+    nut.name = 'nut'
     g.add(nut)
   }
   const stump = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.24, 0.35, 6), m.stump)
@@ -206,15 +210,26 @@ export function createHarvest(scene: THREE.Scene, deps: HarvestDeps) {
       palmMesh(m, i + 3),
       x,
       z,
-      'Fell',
-      'Palm',
+      'Pull',
+      'Fronds',
       (node) => {
+        if (node.palmStage === 'fronds') {
+          node.palmStage = 'trunk'
+          for (const child of node.object.children) {
+            if (child.name === 'frond' || child.name === 'nut') child.visible = false
+          }
+          deps.salvage.stash.leaf += 2
+          node.item.verb = 'Fell'
+          node.item.label = 'Palm'
+          deps.hud.whisper('Fronds strip clean. Good for a roof.')
+          return
+        }
         if (!deps.hasKnife()) {
           deps.hud.whisper('The trunk will not give without a blade.')
           return
         }
         node.taken = true
-        // Hide crown and trunk; leave the stump
+        node.palmStage = 'gone'
         for (const child of node.object.children) {
           if (child.name === 'stump') child.visible = true
           else child.visible = false
@@ -224,6 +239,8 @@ export function createHarvest(scene: THREE.Scene, deps: HarvestDeps) {
       },
       3.2,
     )
+    const last = nodes[nodes.length - 1]
+    last.palmStage = 'fronds'
     palms++
   }
 
@@ -308,6 +325,9 @@ export function createHarvest(scene: THREE.Scene, deps: HarvestDeps) {
       node.returnAt = 0
       node.object.visible = true
       if (node.kind === 'palm') {
+        node.palmStage = 'fronds'
+        node.item.verb = 'Pull'
+        node.item.label = 'Fronds'
         for (const child of node.object.children) {
           child.visible = child.name !== 'stump'
         }

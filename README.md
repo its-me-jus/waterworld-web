@@ -52,8 +52,11 @@ by — planks, barrels, crates, rope, canvas, bottles, cans — goes in the stas
 you improvise: a lean-to you can rest under, a fire to cook or smoke fish (and
 carry as a brand at night), a rain-catch, a raft you Climb aboard and fit with
 sail, rail, locker, oar, floats and a wider deck, and ashore a seat, drying rack,
-signal smoke, dug rain hollows and tin drips. Island wood and grass are workable —
-Break driftwood, Fell a palm with the knife, Pull grass into rope. Caught
+signal smoke, dug rain hollows and tin drips. Shelters are fashioned in stages —
+Raise a frame, Lash walls, Roof with fronds or a canvas tarp (or scrap bottles),
+then Rest once covered. Barrels plant as cisterns or sit under the eaves and
+catch rain. Island wood and grass are workable — Pull palm fronds, Break
+driftwood, Fell a palm with the knife, Pull grass into rope. Caught
 fish show in the Pack until you eat, cook, smoke, or hang them to dry. A heavy
 stash slows the swim; a plank, barrel or bottle under the arm buys a little float; Drop
 sheds the heaviest piece when nothing else is in reach. The sea itself carries
@@ -82,9 +85,10 @@ you're quick enough), rain stands in hollows in the rock above the beach, and
 inland a small cairn holds rope someone left under the stones. Driftwood
 breaks into planks, palms fell once you have the knife, and long grass twists
 into rope. Gulls, lizards and butterflies keep the place from reading empty.
-Bring salvage ashore and you can improvise a lean-to, a fire, a rain-catch, a
-seat, a drying rack, a signal on the ridge, dig a hollow for rain, hang a tin
-drip — a camp you made, not one the world planted for you.
+Bring salvage ashore and you can improvise a frame and fashion it into a
+shelter (walls, leaf or canvas roof), a fire, a rain-catch, a seat, a drying
+rack, a signal on the ridge, dig a hollow for rain, hang a tin drip, plant a
+barrel as a cistern — a camp you made, not one the world planted for you.
 
 ## Controls
 

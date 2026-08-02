@@ -13,9 +13,10 @@ import { barrelObject, crateObject, plankObject } from './wreck'
  *
  * No craft menu, no markers. Recipes announce themselves the same way
  * everything else does: when you're standing where they'd work, with the
- * materials on you. A lean-to on the beach, a fire on the spire, a raft
- * lashed at the wreck's waterline — same F-to-use verbs, different ground.
- * The stash finally has a sink, and none of the recipes is the "right" path.
+ * materials on you. A shelter frame on the beach (walls and roof fashioned
+ * later), a fire on the spire, a raft lashed at the wreck's waterline — same
+ * F-to-use verbs, different ground. The stash finally has a sink, and none of
+ * the recipes is the "right" path.
  */
 
 export type Cost = Partial<Record<StashKind, number>>
@@ -48,7 +49,17 @@ export type ImproviseDeps = {
   current?: () => { x: number; z: number; strength: number }
 }
 
-type BuildKind = 'lean-to' | 'fire' | 'raft' | 'catch' | 'seat' | 'rack' | 'signal' | 'pit' | 'drip'
+type BuildKind =
+  | 'lean-to'
+  | 'fire'
+  | 'raft'
+  | 'catch'
+  | 'seat'
+  | 'rack'
+  | 'signal'
+  | 'pit'
+  | 'drip'
+  | 'cistern'
 
 type SmokeRack = {
   readyAt: number
@@ -56,6 +67,8 @@ type SmokeRack = {
 }
 
 type Hold = Record<StashKind, number>
+
+type RoofKind = 'none' | 'leaf' | 'canvas' | 'scrap'
 
 type Build = {
   kind: BuildKind
@@ -82,6 +95,12 @@ type Build = {
   floats?: boolean
   /** How many times the deck has been widened (cap 3). */
   expands?: number
+  /** Progressive shelter: walls lashed (0–2). */
+  sides?: number
+  /** Progressive shelter: roof covering. */
+  roof?: RoofKind
+  /** Barrel set under the lean-to as a cistern / windbreak. */
+  hasBarrel?: boolean
   /** Materials stowed in the deck locker. */
   hold?: Hold
   /** Stern scratched with the mate's mark. */
@@ -91,6 +110,12 @@ type Build = {
 }
 
 const LEAN_COST: Cost = { plank: 2, rope: 1 }
+const SIDE_COST: Cost = { plank: 1 }
+const ROOF_LEAF_COST: Cost = { leaf: 2 }
+const ROOF_CANVAS_COST: Cost = { canvas: 1 }
+const ROOF_SCRAP_COST: Cost = { plastic: 3, rope: 1 }
+const SHELTER_BARREL_COST: Cost = { barrel: 1 }
+const CISTERN_COST: Cost = { barrel: 1 }
 const FIRE_COST: Cost = { plank: 1 }
 const CATCH_COST: Cost = { canvas: 1, rope: 1 }
 const RAFT_COST: Cost = { plank: 3, rope: 1 }
@@ -107,6 +132,7 @@ const FLOAT_COST: Cost = { plastic: 2 }
 const DRIP_COST: Cost = { can: 1, rope: 1 }
 /** Max times you can widen one raft. */
 const EXPAND_MAX = 3
+const SIDE_MAX = 2
 
 const REACH = 3.2
 const PLACE_AHEAD = 1.7
@@ -131,9 +157,11 @@ const POLE_FLOAT_BONUS = 0.28
 /** Passive sail drift (m/s) once the mast is rigged. */
 const SAIL_SPEED = 0.95
 const SAIL_SPEED_BARREL = 1.35
-/** Dug hollow / tin drip refill (seconds to full). */
+/** Dug hollow / tin drip / cistern refill (seconds to full). */
 const PIT_REFILL = 200
 const DRIP_REFILL = 160
+const CISTERN_REFILL = 280
+const SHELTER_BARREL_REFILL = 240
 /** Standing eye height — match player.ts so Climb seats you on the deck. */
 const WALK_EYE = 1.62
 /** How far out you can still Climb aboard from the water. */
@@ -156,6 +184,7 @@ const emptyHold = (): Hold => ({
   canvas: 0,
   plastic: 0,
   can: 0,
+  leaf: 0,
 })
 
 function holdCount(h: Hold) {
@@ -277,28 +306,176 @@ function mats() {
       metalness: 0.7,
     }),
     sand: new THREE.MeshStandardMaterial({ color: 0x9a8460, roughness: 1 }),
+    leaf: new THREE.MeshStandardMaterial({
+      color: 0x4a6e32,
+      roughness: 0.92,
+      side: THREE.DoubleSide,
+    }),
   }
 }
 
-function leanToMesh(m: ReturnType<typeof mats>) {
+/**
+ * Progressive shelter — start with a frame, then fashion walls and a roof.
+ * Rest only once something is over your head.
+ */
+function shelterFrameMesh(m: ReturnType<typeof mats>) {
   const g = new THREE.Group()
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.08, 1.6), m.wood)
-  roof.position.set(0, 1.15, 0.15)
-  roof.rotation.x = -0.55
-  g.add(roof)
+  g.name = 'lean-to'
+  for (const [x, z, h] of [
+    [-1.0, 0.55, 1.35],
+    [1.0, 0.55, 1.35],
+    [-0.95, -0.55, 1.05],
+    [0.95, -0.55, 1.05],
+  ] as const) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, h, 0.1), m.wood)
+    post.position.set(x, h / 2, z)
+    g.add(post)
+  }
+  const ridge = plankObject(2.2, 0.1, m.wood)
+  ridge.position.set(0, 1.35, 0.35)
+  ridge.rotation.x = -0.35
+  g.add(ridge)
+  const cross = plankObject(1.5, 0.08, m.wood)
+  cross.rotation.y = Math.PI / 2
+  cross.position.set(0, 0.95, 0)
+  g.add(cross)
   for (const [x, z] of [
     [-1.0, 0.55],
     [1.0, 0.55],
-    [-0.95, -0.55],
   ] as const) {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.35, 0.1), m.wood)
-    post.position.set(x, 0.55, z)
-    g.add(post)
+    const lash = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.025, 4, 8), m.rope)
+    lash.position.set(x, 1.2, z)
+    g.add(lash)
   }
-  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.03, 4, 8), m.rope)
-  lash.position.set(-1.0, 1.05, 0.55)
-  g.add(lash)
+  const sideSlot = new THREE.Group()
+  sideSlot.name = 'sideSlot'
+  g.add(sideSlot)
+  const roofSlot = new THREE.Group()
+  roofSlot.name = 'roofSlot'
+  g.add(roofSlot)
+  const barrelSlot = new THREE.Group()
+  barrelSlot.name = 'barrelSlot'
+  barrelSlot.visible = false
+  g.add(barrelSlot)
   return g
+}
+
+function fitShelterSide(shelter: THREE.Group, m: ReturnType<typeof mats>, n: number) {
+  const slot = shelter.getObjectByName('sideSlot') as THREE.Group
+  if (!slot) return
+  const z = n === 1 ? 0.55 : -0.55
+  for (let i = 0; i < 4; i++) {
+    const slat = plankObject(1.9, 0.07, m.wood)
+    slat.position.set(0, 0.25 + i * 0.28, z)
+    slat.rotation.x = n === 1 ? -0.08 : 0.08
+    slot.add(slat)
+  }
+  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.022, 4, 8), m.rope)
+  lash.position.set(-0.9, 0.7, z)
+  slot.add(lash)
+}
+
+function fitShelterRoof(
+  shelter: THREE.Group,
+  m: ReturnType<typeof mats>,
+  kind: 'leaf' | 'canvas' | 'scrap',
+) {
+  const slot = shelter.getObjectByName('roofSlot') as THREE.Group
+  if (!slot) return
+  while (slot.children.length) slot.remove(slot.children[0])
+  if (kind === 'leaf') {
+    for (let i = 0; i < 10; i++) {
+      const frond = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 1.8, 1, 3), m.leaf)
+      const pos = frond.geometry.attributes.position
+      for (let v = 0; v < pos.count; v++) {
+        const t = (pos.getY(v) + 0.9) / 1.8
+        pos.setZ(v, (1 - t) * 0.25)
+      }
+      frond.geometry.computeVertexNormals()
+      frond.position.set((i - 4.5) * 0.24, 1.2, 0.1)
+      frond.rotation.x = -0.55
+      frond.rotation.z = ((i % 3) - 1) * 0.08
+      slot.add(frond)
+    }
+  } else if (kind === 'canvas') {
+    const sheet = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 2.0, 3, 3), m.cloth)
+    const pos = sheet.geometry.attributes.position
+    for (let i = 0; i < pos.count; i++) {
+      pos.setZ(i, Math.sin(pos.getX(i) * 1.2) * 0.04)
+    }
+    sheet.geometry.computeVertexNormals()
+    sheet.position.set(0, 1.25, 0.12)
+    sheet.rotation.x = -0.55
+    slot.add(sheet)
+    const edge = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 2.4, 4), m.rope)
+    edge.rotation.z = Math.PI / 2
+    edge.position.set(0, 1.05, 0.85)
+    slot.add(edge)
+  } else {
+    // Scrap tarp — bottles flattened under rope courses
+    for (let i = 0; i < 6; i++) {
+      const scrap = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 1.1), m.plastic)
+      scrap.position.set((i - 2.5) * 0.4, 1.22, 0.05 + (i % 2) * 0.08)
+      scrap.rotation.x = -0.55
+      slot.add(scrap)
+    }
+    const course = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 2.5, 4), m.rope)
+    course.rotation.z = Math.PI / 2
+    course.position.set(0, 1.15, 0.4)
+    slot.add(course)
+  }
+}
+
+function fitShelterBarrel(shelter: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = shelter.getObjectByName('barrelSlot') as THREE.Group
+  if (!slot || slot.children.length) {
+    if (slot) slot.visible = true
+    return
+  }
+  const barrel = barrelObject(m.wood, m.iron)
+  barrel.position.set(0.75, 0.35, -0.15)
+  slot.add(barrel)
+  const water = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.08, 10), m.water)
+  water.position.set(0.75, 0.72, -0.15)
+  water.name = 'water'
+  water.visible = false
+  slot.add(water)
+  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.03, 4, 8), m.rope)
+  lash.position.set(0.75, 0.55, -0.15)
+  lash.rotation.x = Math.PI / 2
+  slot.add(lash)
+  slot.visible = true
+}
+
+function cisternMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  g.name = 'cistern'
+  const barrel = barrelObject(m.wood, m.iron)
+  barrel.position.y = 0.35
+  g.add(barrel)
+  const water = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.1, 10), m.water)
+  water.position.y = 0.72
+  water.name = 'water'
+  water.visible = false
+  g.add(water)
+  // Open bung — reads as a rain mouth
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.025, 4, 10), m.iron)
+  rim.rotation.x = Math.PI / 2
+  rim.position.y = 0.78
+  g.add(rim)
+  return g
+}
+
+function recomputeShelter(b: Build) {
+  let s = 0.28
+  s += (b.sides ?? 0) * 0.2
+  if (b.roof === 'leaf') s += 0.38
+  else if (b.roof === 'canvas') s += 0.52
+  else if (b.roof === 'scrap') s += 0.32
+  if (b.hasBarrel) s += 0.1
+  // Height band: inland frames hold heat a touch better
+  if (b.deckY > 2) s += 0.08
+  b.shelter = s
 }
 
 /** Rising spark bits / smoke puffs — positions rewritten each frame in animateFire. */
@@ -1068,8 +1245,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
   deps.interactions.add({
     position: leanPos,
-    verb: 'Lash',
-    label: 'Lean-to',
+    verb: 'Raise',
+    label: 'Frame',
     radius: REACH,
     available: () =>
       deps.vitals.alive &&
@@ -1082,8 +1259,199 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const x = leanPos.x
       const z = leanPos.z
       const y = deps.groundAt(x, z)
-      addBuild('lean-to', leanToMesh(m), x, z, y, 2.8, groundY > 2 ? 1.05 : 0.88)
-      deps.hud.whisper('Lashed. The wind finds less of you.')
+      const build = addBuild('lean-to', shelterFrameMesh(m), x, z, y, 2.8, 0.28, {
+        sides: 0,
+        roof: 'none',
+        hasBarrel: false,
+        water: 0,
+      })
+      recomputeShelter(build)
+      deps.hud.whisper('Posts in the sand. Walls and a roof still to fashion.')
+    },
+  })
+
+  function nearestShelter(maxDist = 2.8) {
+    return nearestOfKind(px, pz, 'lean-to', maxDist)
+  }
+
+  function shelterComplete(b: Build) {
+    return (b.roof ?? 'none') !== 'none'
+  }
+
+  function attachBarrelDrink(build: Build, label: string) {
+    const drink = deps.interactions.add({
+      position: build.object.position,
+      verb: 'Drink',
+      label,
+      radius: 2.5,
+      available: () => deps.vitals.alive && (build.water ?? 0) > 0.1,
+      use: () => {
+        const left = build.water ?? 0
+        if (left <= 0.1) return
+        const sip = Math.min(0.4, left)
+        build.water = left - sip
+        eat(deps.vitals, 0, sip * 0.88)
+        const waterMesh = build.object.getObjectByName('water')
+        if (waterMesh) waterMesh.visible = (build.water ?? 0) > 0.08
+        deps.hud.whisper(
+          (build.water ?? 0) > 0.15 ? 'From the barrel. Cool and still.' : 'The cask runs low.',
+        )
+      },
+    })
+    build.items.push(drink)
+  }
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Lash',
+    label: 'Wall',
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      return (
+        !!s &&
+        deps.vitals.alive &&
+        onLand &&
+        (s.sides ?? 0) < SIDE_MAX &&
+        deps.salvage.has(SIDE_COST)
+      )
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(SIDE_COST)) return
+      s.sides = (s.sides ?? 0) + 1
+      fitShelterSide(s.object, m, s.sides)
+      recomputeShelter(s)
+      deps.hud.whisper(
+        s.sides === 1
+          ? 'One wall. The wind finds less of you.'
+          : 'Both sides closed. Only the roof left open.',
+      )
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Roof',
+    label: 'Fronds',
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      return (
+        !!s &&
+        deps.vitals.alive &&
+        onLand &&
+        (s.roof ?? 'none') === 'none' &&
+        deps.salvage.has(ROOF_LEAF_COST)
+      )
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(ROOF_LEAF_COST)) return
+      s.roof = 'leaf'
+      fitShelterRoof(s.object, m, 'leaf')
+      recomputeShelter(s)
+      deps.hud.whisper('Fronds layered thick. Shade enough to Rest.')
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Roof',
+    label: 'Tarp',
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      return (
+        !!s &&
+        deps.vitals.alive &&
+        onLand &&
+        (s.roof ?? 'none') === 'none' &&
+        deps.salvage.has(ROOF_CANVAS_COST)
+      )
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(ROOF_CANVAS_COST)) return
+      s.roof = 'canvas'
+      fitShelterRoof(s.object, m, 'canvas')
+      recomputeShelter(s)
+      deps.hud.whisper('Canvas stretched taut. A real roof. Rest under it.')
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Roof',
+    label: 'Scrap',
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      // Prefer canvas/leaf when you have them — scrap is the improviser's last roof
+      if (!s || (s.roof ?? 'none') !== 'none') return false
+      if (deps.salvage.has(ROOF_CANVAS_COST) || deps.salvage.has(ROOF_LEAF_COST)) return false
+      return deps.vitals.alive && onLand && deps.salvage.has(ROOF_SCRAP_COST)
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(ROOF_SCRAP_COST)) return
+      s.roof = 'scrap'
+      fitShelterRoof(s.object, m, 'scrap')
+      recomputeShelter(s)
+      deps.hud.whisper('Bottles and rope. Ugly — but it keeps the rain off.')
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Set',
+    label: 'Barrel',
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      return (
+        !!s &&
+        deps.vitals.alive &&
+        onLand &&
+        !s.hasBarrel &&
+        deps.salvage.has(SHELTER_BARREL_COST)
+      )
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(SHELTER_BARREL_COST)) return
+      s.hasBarrel = true
+      s.water = 0.25
+      fitShelterBarrel(s.object, m)
+      recomputeShelter(s)
+      attachBarrelDrink(s, 'Barrel')
+      deps.hud.whisper('Barrel under the eaves. Rain will fill it. Drink when it does.')
+    },
+  })
+
+  // Standalone cistern — a barrel planted open to the sky, no shelter needed
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Plant',
+    label: 'Cistern',
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      onLand &&
+      groundY > 0.6 &&
+      deps.salvage.has(CISTERN_COST) &&
+      // Don't steal the Set Barrel prompt when you're at a frame
+      !(nearestShelter(2.8) && !nearestShelter(2.8)?.hasBarrel) &&
+      clearOfBuilds(leanPos.x, leanPos.z, 1.8) &&
+      !nearestOfKind(leanPos.x, leanPos.z, 'cistern', 3.5),
+    use: () => {
+      if (!deps.salvage.spend(CISTERN_COST)) return
+      const x = leanPos.x
+      const z = leanPos.z
+      const y = deps.groundAt(x, z)
+      const build = addBuild('cistern', cisternMesh(m), x, z, y, 1.5, 0.05, { water: 0.2 })
+      attachBarrelDrink(build, 'Cistern')
+      deps.hud.whisper('Barrel open to the sky. Patience fills it.')
     },
   })
 
@@ -1477,7 +1845,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const raft = nearestRaftOnDeck()
       if (!raft?.locker || !deps.vitals.alive) return false
       const s = deps.salvage.stash
-      return s.plank + s.barrel + s.crate + s.rope + s.canvas + s.plastic + s.can > 0
+      return (
+        s.plank + s.barrel + s.crate + s.rope + s.canvas + s.plastic + s.can + s.leaf > 0
+      )
     },
     use: () => {
       const raft = nearestRaftOnDeck()
@@ -1722,6 +2092,24 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     if (groundY > 0.8 && deps.salvage.has(LEAN_COST) && clearOfBuilds(leanPos.x, leanPos.z, 2.2)) {
       return true
     }
+    {
+      const s = nearestShelter(2.8)
+      if (s) {
+        if ((s.sides ?? 0) < SIDE_MAX && deps.salvage.has(SIDE_COST)) return true
+        if ((s.roof ?? 'none') === 'none') {
+          if (deps.salvage.has(ROOF_LEAF_COST)) return true
+          if (deps.salvage.has(ROOF_CANVAS_COST)) return true
+          if (deps.salvage.has(ROOF_SCRAP_COST)) return true
+        }
+        if (!s.hasBarrel && deps.salvage.has(SHELTER_BARREL_COST)) return true
+      } else if (
+        groundY > 0.6 &&
+        deps.salvage.has(CISTERN_COST) &&
+        clearOfBuilds(leanPos.x, leanPos.z, 1.8)
+      ) {
+        return true
+      }
+    }
     if (groundY > 0.8 && deps.salvage.has(SEAT_COST) && clearOfBuilds(seatPos.x, seatPos.z, 1.6)) {
       return true
     }
@@ -1846,13 +2234,16 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   deps.interactions.add({
     position: restPos,
     verb: 'Rest',
-    label: 'Lean-to',
+    label: 'Shelter',
     radius: 2.6,
-    available: () =>
-      deps.vitals.alive && onLand && time >= restReadyAt && !!nearestOfKind(px, pz, 'lean-to', 2.4),
+    available: () => {
+      if (!deps.vitals.alive || !onLand || time < restReadyAt) return false
+      const s = nearestOfKind(px, pz, 'lean-to', 2.4)
+      return !!s && shelterComplete(s)
+    },
     use: () => {
       const shelter = nearestOfKind(px, pz, 'lean-to', 2.4)
-      if (!shelter) return
+      if (!shelter || !shelterComplete(shelter)) return
       const v = deps.vitals
       if (v.food < 0.1 || v.water < 0.1) {
         deps.hud.whisper('Too empty to sleep.')
@@ -2278,11 +2669,17 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           ;(child.material as THREE.MeshBasicMaterial).opacity = 0.22 * (1 - life)
         }
       }
-      if (b.kind === 'catch' || b.kind === 'pit' || b.kind === 'drip') {
+      if (b.kind === 'catch' || b.kind === 'pit' || b.kind === 'drip' || b.kind === 'cistern') {
         const storm = deps.storm?.() ?? 0
         const rainRate = 1 + storm * CATCH_STORM_BOOST
         const refill =
-          b.kind === 'catch' ? CATCH_REFILL : b.kind === 'pit' ? PIT_REFILL : DRIP_REFILL
+          b.kind === 'catch'
+            ? CATCH_REFILL
+            : b.kind === 'pit'
+              ? PIT_REFILL
+              : b.kind === 'drip'
+                ? DRIP_REFILL
+                : CISTERN_REFILL
         b.water = Math.min(1, (b.water ?? 0) + (dt / refill) * rainRate)
         const waterMesh = b.object.getObjectByName('water')
         if (waterMesh) {
@@ -2291,10 +2688,21 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
             waterMesh.scale.y = 0.4 + (b.water ?? 0) * 0.8
           } else if (b.kind === 'pit') {
             waterMesh.scale.y = 0.5 + (b.water ?? 0) * 1.2
-          } else {
+          } else if (b.kind === 'drip') {
             waterMesh.scale.setScalar(0.6 + (b.water ?? 0) * 0.9)
+          } else {
+            waterMesh.scale.y = 0.5 + (b.water ?? 0) * 1.4
           }
         }
+      }
+      if (b.kind === 'lean-to' && b.hasBarrel) {
+        const storm = deps.storm?.() ?? 0
+        const rainRate = 1 + storm * CATCH_STORM_BOOST
+        // Roofed shelter barrels fill slower — eave drip, not open sky
+        const roofMul = (b.roof ?? 'none') !== 'none' ? 0.7 : 1.15
+        b.water = Math.min(1, (b.water ?? 0) + (dt / SHELTER_BARREL_REFILL) * rainRate * roofMul)
+        const waterMesh = b.object.getObjectByName('water')
+        if (waterMesh) waterMesh.visible = (b.water ?? 0) > 0.08
       }
     }
   }
@@ -2382,6 +2790,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         signal: 0,
         pit: 0,
         drip: 0,
+        cistern: 0,
       }
       for (const b of builds) out[b.kind]++
       if (carried) out.fire++
@@ -2389,6 +2798,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
     costs: {
       leanTo: LEAN_COST,
+      side: SIDE_COST,
+      roofLeaf: ROOF_LEAF_COST,
+      roofCanvas: ROOF_CANVAS_COST,
+      roofScrap: ROOF_SCRAP_COST,
+      shelterBarrel: SHELTER_BARREL_COST,
+      cistern: CISTERN_COST,
       fire: FIRE_COST,
       catch: CATCH_COST,
       raft: RAFT_COST,

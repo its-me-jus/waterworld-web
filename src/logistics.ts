@@ -18,10 +18,20 @@ export const BURDEN_WEIGHT: Record<StashKind, number> = {
   canvas: 0.5,
   plastic: 0.2,
   can: 0.28,
+  leaf: 0.12,
 }
 
 /** Heaviest-first — Drop sheds the piece that hurts the swim most. */
-const JETTISON_ORDER: StashKind[] = ['crate', 'barrel', 'plank', 'canvas', 'can', 'rope', 'plastic']
+const JETTISON_ORDER: StashKind[] = [
+  'crate',
+  'barrel',
+  'plank',
+  'canvas',
+  'can',
+  'rope',
+  'plastic',
+  'leaf',
+]
 
 export function burdenOf(stash: Stash): number {
   let n = 0

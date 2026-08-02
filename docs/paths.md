@@ -111,7 +111,13 @@ the materials on you. No craft menu, no markers, no "correct" build order.
 
 | Recipe | Cost | Where | What it does |
 |--------|------|-------|--------------|
-| **Lean-to** | 2 plank + 1 rope | Dry ground (beach or spire) | Local shelter / warmth; **Rest** under it to nap or sleep until dawn |
+| **Raise frame** | 2 plank + 1 rope | Dry ground | Posts and a ridge — the start of a shelter. Walls and roof still to fashion. |
+| **Lash wall** | 1 plank | At a frame | One side closed (twice for both). Wind finds less of you. |
+| **Roof fronds** | 2 frond | At a frame | Leaf thatch — enough shade to **Rest** |
+| **Roof tarp** | 1 canvas | At a frame | Canvas stretched taut — the proper roof |
+| **Roof scrap** | 3 bottle + 1 rope | At a frame | Ugly bottle-and-rope cover when you have nothing better |
+| **Set barrel** | 1 barrel | At a frame | Cistern under the eaves; rain fills it; **Drink** |
+| **Plant cistern** | 1 barrel | Dry ground | Open barrel alone — rain store without a shelter |
 | **Fire** | 1 plank | Dry ground | Heat, cook/smoke fish, and a warm light at night. **Take** it as a brand to carry; **Plant** it to set camp again. Diving puts it out. |
 | **Rain-catch** | 1 canvas + 1 rope | Higher dry ground | Refilling fresh water |
 | **Raft** | 3 plank + 1 rope (+1 barrel) | Waterline | A real deck: gunwales, push pole, climb-aboard. Pole to steer. |
@@ -130,7 +136,17 @@ the materials on you. No craft menu, no markers, no "correct" build order.
 
 Fall off and **Climb** the raft from the water (F when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft.
 
-Island harvest sits on top of the scenery: **Break** driftwood into a plank, **Fell** a palm once you have the galley knife (two planks), **Pull** long grass and twist it into rope. Ocean junk adds **bottles** and **cans** to the drifter pool — bottles are a light swim aid and lash into raft floats; cans hang as a tin drip ashore.
+Island harvest sits on top of the scenery: **Pull** palm fronds for thatch,
+**Break** driftwood into a plank, **Fell** a stripped palm once you have the
+galley knife (two planks), **Pull** long grass and twist it into rope. Ocean junk
+adds **bottles** and **cans** to the drifter pool — bottles are a light swim aid
+and lash into raft floats or a scrap roof; cans hang as a tin drip ashore.
+**Barrels** plant as cisterns or sit under a shelter eave and fill with rain.
+
+A shelter is fashioned in pieces, not summoned whole: **Raise** a frame, **Lash**
+walls, **Roof** with fronds / canvas tarp / scrap bottles, then **Rest** once
+something is over your head. Set a barrel under the eaves if you want water
+waiting when you wake.
 
 Hand-caught fish stay in hand — shown in the Pack and the HUD stash strip —
 until you **Eat** them raw, **Cook** them at a fire for a meal now, or **Smoke**
