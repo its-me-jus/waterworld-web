@@ -85,6 +85,12 @@ type Build = {
   buoyant?: boolean
   vx?: number
   vz?: number
+  /**
+   * Heading in radians, stored off the mesh. Wave pitch/roll is applied as
+   * Euler X/Z every frame — reading rotation.y after that corrupts yaw and
+   * the raft spins. Keep the true heading here.
+   */
+  yaw?: number
   /** Fish hanging over this fire, waiting on the smoke. */
   smoking?: SmokeRack[]
   /** Deck fittings — only meaningful on rafts. */
@@ -160,6 +166,13 @@ const POLE_SPEED = 1.85
 const POLE_SPEED_BARREL = 2.35
 const POLE_OAR_BONUS = 0.55
 const POLE_FLOAT_BONUS = 0.28
+/**
+ * Deck radius fraction: inside this is for walking / fittings; at or past it,
+ * stick input poles. Lets you work the locker without driving the raft.
+ */
+const POLE_GUNWALE = 0.48
+/** Past this fraction of radius you're over the gunwale. */
+const DECK_LIP = 0.9
 /** Passive sail drift (m/s) once the mast is rigged. */
 const SAIL_SPEED = 0.95
 const SAIL_SPEED_BARREL = 1.35
@@ -1281,9 +1294,22 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     extra?: Partial<Build>,
   ) {
     object.position.set(x, y, z)
-    object.rotation.y = yaw
+    // Rafts rock on the swell (X/Z). YXZ keeps our stored heading as yaw.
+    if (kind === 'raft') object.rotation.order = 'YXZ'
+    object.rotation.y = extra?.yaw ?? yaw
     scene.add(object)
-    const build: Build = { kind, object, x, z, deckY: y, radius, shelter, items: [], ...extra }
+    const build: Build = {
+      kind,
+      object,
+      x,
+      z,
+      deckY: y,
+      radius,
+      shelter,
+      items: [],
+      yaw: extra?.yaw ?? yaw,
+      ...extra,
+    }
     builds.push(build)
     return build
   }
@@ -1952,12 +1978,13 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         buoyant: withBarrel,
         vx: 0,
         vz: 0,
+        yaw,
         hold: emptyHold(),
       })
       deps.hud.whisper(
         withBarrel
-          ? 'Barrels under planks. Climb aboard. Pole from the deck.'
-          : 'Three planks and a lashing. Climb aboard — pole from the deck.',
+          ? 'Barrels under planks. Climb aboard. Walk the deck — pole from the edge.'
+          : 'Three planks and a lashing. Climb aboard — walk the deck, pole from the edge.',
       )
     },
   })
@@ -2581,8 +2608,14 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     swimming = !view.walking
     onLand = view.walking && view.groundY > 0.3
     groundY = view.groundY
-    onRaftDeck =
-      view.walking && !!nearestOfKind(player.x, player.z, 'raft', 3.4) && view.groundY > -0.5
+    {
+      const raftNear = nearestOfKind(player.x, player.z, 'raft', 3.4)
+      onRaftDeck =
+        washGrace <= 0 &&
+        view.walking &&
+        !!raftNear &&
+        Math.hypot(player.x - raftNear.x, player.z - raftNear.z) <= raftNear.radius * DECK_LIP
+    }
 
     // After Climb, kill swim inertia and keep them seated for a beat
     if (boardGrace > 0) {
@@ -2745,14 +2778,23 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (b.kind === 'raft') {
         const prevX = b.x
         const prevZ = b.z
-        const onDeck =
-          view.walking && Math.hypot(player.x - b.x, player.z - b.z) <= b.radius * 0.95
+        const deckDist = Math.hypot(player.x - b.x, player.z - b.z)
+        // Aboard = feet on the real deck. Soft skirt still props the walker for
+        // slope probes, but past the lip you're swimming — Climb to get back.
+        const aboard =
+          washGrace <= 0 &&
+          (boardGrace > 0 || view.walking) &&
+          deckDist <= b.radius * DECK_LIP
+        // Pole from the gunwale — centre deck is for fittings and fire.
+        const atGunwale = aboard && deckDist >= b.radius * POLE_GUNWALE
+        const poling = atGunwale && view.speed > 0.35 && boardGrace <= 0
+
         let top = b.buoyant ? POLE_SPEED_BARREL : POLE_SPEED
         if (b.oar) top += POLE_OAR_BONUS
         if (b.floats) top += POLE_FLOAT_BONUS
         let vx = b.vx ?? 0
         let vz = b.vz ?? 0
-        if (onDeck && view.speed > 0.2) {
+        if (poling) {
           const aimX = player.dirX
           const aimZ = player.dirZ
           // Oar bites harder into a new heading
@@ -2767,7 +2809,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
             saidOar = true
             deps.hud.whisper('Blade and shaft. She turns when you ask.')
           }
-        } else if (b.mast && onDeck) {
+        } else if (b.mast && aboard) {
           // Sail draws while you're aboard — falls idle if you go overboard
           const sail = b.buoyant ? SAIL_SPEED_BARREL : SAIL_SPEED
           const draw = 1 - Math.exp(-0.55 * dt)
@@ -2778,7 +2820,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
             deps.hud.whisper('Canvas fills. The raft finds a heading.')
           }
         } else {
-          const drag = Math.exp(-1.15 * dt)
+          // Empty / unmanned: bleed speed faster so she doesn't keep circling
+          const drag = Math.exp(-(aboard ? 1.15 : 2.1) * dt)
           vx *= drag
           vz *= drag
         }
@@ -2793,9 +2836,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         const set = deps.current?.()
         const carry =
           set && set.strength > 1e-4
-            ? onDeck && view.speed > 0.2
+            ? poling
               ? 0.35
-              : onDeck && b.mast
+              : aboard && b.mast
                 ? 0.5
                 : 0.85
             : 0
@@ -2808,28 +2851,95 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         const sea = sampleOcean(b.x, b.z, t)
         b.deckY = sea.y + 0.22
         b.object.position.set(b.x, b.deckY, b.z)
-        b.object.rotation.x = sea.normal.z * 0.35
-        b.object.rotation.z = -sea.normal.x * 0.35
-        // Yaw into the push so the raft reads as steered
-        if (Math.hypot(vx, vz) > 0.12) {
+
+        // Steer only while poling — residual drift must not chase a heading
+        // (that, plus Euler rock, was the spin-in-circles bug).
+        let heading = b.yaw ?? b.object.rotation.y
+        if (poling && Math.hypot(vx, vz) > 0.12) {
           const want = Math.atan2(-vx, -vz)
-          let dyaw = want - b.object.rotation.y
+          let dyaw = want - heading
           while (dyaw > Math.PI) dyaw -= Math.PI * 2
           while (dyaw < -Math.PI) dyaw += Math.PI * 2
           const yawRate = b.oar ? 1.85 : 1.2
-          b.object.rotation.y += dyaw * (1 - Math.exp(-yawRate * dt))
+          heading += dyaw * (1 - Math.exp(-yawRate * dt))
         }
+        b.yaw = heading
+        b.object.rotation.order = 'YXZ'
+        b.object.rotation.y = heading
+        b.object.rotation.x = sea.normal.z * 0.35
+        b.object.rotation.z = -sea.normal.x * 0.35
         if (b.mast) animateSail(b.object, t)
 
-        if (onDeck) {
+        if (aboard) {
           player.x += b.x - prevX
           player.z += b.z - prevZ
+          // Keep feet on the deck while boarding; free walk after
+          if (boardGrace > 0) {
+            const d = Math.hypot(player.x - b.x, player.z - b.z)
+            if (d > b.radius * 0.7) {
+              player.x = b.x
+              player.z = b.z
+            }
+          } else {
+            // Soft clamp inside the lip so micro-overshoot doesn't drop you
+            const d = Math.hypot(player.x - b.x, player.z - b.z)
+            const lip = b.radius * DECK_LIP
+            if (d > lip) {
+              // Still pushing out hard → over the side; else stay aboard
+              const outX = (player.x - b.x) / (d || 1)
+              const outZ = (player.z - b.z) / (d || 1)
+              const outward = player.dirX * outX + player.dirZ * outZ
+              if (view.speed > 0.55 && outward > 0.35) {
+                washGrace = 0.85
+                live = player
+                player.mode = 'swim'
+                player.x = b.x + outX * (b.radius + 1.25)
+                player.z = b.z + outZ * (b.radius + 1.25)
+                player.y = sea.y - 0.15
+                player.vy = 0
+                player.submersion = 0.7
+                player.speed = Math.min(player.speed, 1.2)
+                onRaftDeck = false
+                swimming = true
+              } else {
+                const s = lip / d
+                player.x = b.x + (player.x - b.x) * s
+                player.z = b.z + (player.z - b.z) * s
+              }
+            }
+          }
+          px = player.x
+          pz = player.z
+        } else if (
+          live &&
+          view.walking &&
+          boardGrace <= 0 &&
+          washGrace <= 0 &&
+          deckDist > b.radius * DECK_LIP &&
+          deckDist < b.radius + 1.05
+        ) {
+          // Soft skirt was holding a walker past the gunwale — put them in the sea
+          washGrace = 0.85
+          const ang = Math.atan2(player.z - b.z, player.x - b.x)
+          player.mode = 'swim'
+          player.x = b.x + Math.cos(ang) * (b.radius + 1.25)
+          player.z = b.z + Math.sin(ang) * (b.radius + 1.25)
+          player.y = sea.y - 0.15
+          player.vy = 0
+          player.submersion = 0.7
+          player.speed = Math.min(player.speed, 1.2)
+          onRaftDeck = false
+          swimming = true
           px = player.x
           pz = player.z
         }
 
         // Wash-off — foul weather fills a meter; rail and mass buy you time.
         // Climb grace is invulnerable so boarding isn't instantly punished.
+        const onDeck =
+          washGrace <= 0 &&
+          (boardGrace > 0 || view.walking) &&
+          Math.hypot(player.x - b.x, player.z - b.z) <= b.radius * DECK_LIP
         if (onDeck && boardGrace <= 0 && live) {
           const storm = deps.storm?.() ?? 0
           const gate = b.rail ? WASH_RAIL_GATE : WASH_STORM_GATE
@@ -2852,9 +2962,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
               washGrace = 1.35
               // Knock clear of the deck skirt, into the swim
               const side = Math.random() > 0.5 ? 1 : -1
-              const yaw = b.object.rotation.y
-              live.x = b.x + Math.cos(yaw) * side * (b.radius + 2.4)
-              live.z = b.z + Math.sin(yaw) * side * (b.radius + 2.4)
+              const raftYaw = b.yaw ?? b.object.rotation.y
+              live.x = b.x + Math.cos(raftYaw) * side * (b.radius + 2.4)
+              live.z = b.z + Math.sin(raftYaw) * side * (b.radius + 2.4)
               live.y = sea.y - 0.25
               live.mode = 'swim'
               live.vy = 0
@@ -2944,17 +3054,17 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     for (const b of builds) {
       if (b.kind !== 'raft') continue
       const d = Math.hypot(b.x - x, b.z - z)
-      // Soft skirt past the deck so the walker's slope probe doesn't see a
-      // cliff into the analytic ocean floor — and so a swimmer can find the
-      // lip before they have to Climb.
-      const skirt = b.radius * (b.rail ? 2.8 : 2.55)
+      // Narrow shelf past the gunwale so the walker's slope probe (±0.9 m)
+      // doesn't see a cliff into the ocean floor — but steep enough that a
+      // swimmer past the lip can't auto-stand. Climb is the way back aboard.
+      const skirt = b.radius + 1.0
       if (d > skirt) continue
       if (d <= b.radius) {
         const lip = 1 - (d / b.radius) ** 2
         best = Math.max(best, b.deckY + lip * 0.04)
       } else {
         const t = Math.min(1, (d - b.radius) / (skirt - b.radius))
-        best = Math.max(best, THREE.MathUtils.lerp(b.deckY, b.deckY - 0.45, t))
+        best = Math.max(best, THREE.MathUtils.lerp(b.deckY, -1.25, Math.pow(t, 0.7)))
       }
     }
     return best
@@ -3016,7 +3126,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       kind: b.kind,
       x: b.x,
       z: b.z,
-      yaw: b.object.rotation.y,
+      yaw: b.yaw ?? b.object.rotation.y,
       water: b.water,
       buoyant: b.buoyant,
       mast: b.mast,
@@ -3136,6 +3246,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           buoyant: withBarrel,
           vx: 0,
           vz: 0,
+          yaw: s.yaw ?? 0,
           hold: fillHold(s.hold),
           mast: !!s.mast,
           rail: !!s.rail,
@@ -3161,7 +3272,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         }
       }
 
-      if (build && s.yaw !== undefined) build.object.rotation.y = s.yaw
+      if (build && s.yaw !== undefined) {
+        build.yaw = s.yaw
+        if (build.kind === 'raft') build.object.rotation.order = 'YXZ'
+        build.object.rotation.y = s.yaw
+      }
       if (build && build.water !== undefined) {
         const waterMesh = build.object.getObjectByName('water')
         if (waterMesh) waterMesh.visible = (build.water ?? 0) > 0.05

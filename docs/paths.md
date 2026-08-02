@@ -123,7 +123,7 @@ the materials on you. No craft menu, no markers, no "correct" build order.
 | **Plant cistern** | 1 barrel | Dry ground | Open barrel alone — rain store without a shelter |
 | **Fire** | 1 plank | Dry ground | Heat, cook/smoke fish, and a warm light at night. **Take** it as a brand to carry; **Plant** it to set camp again. Diving puts it out. |
 | **Rain-catch** | 1 canvas + 1 rope | Higher dry ground | Refilling fresh water |
-| **Raft** | 3 plank + 1 rope (+1 barrel) | Waterline | A real deck: gunwales, push pole, climb-aboard. Pole to steer. |
+| **Raft** | 3 plank + 1 rope (+1 barrel) | Waterline | A real deck: gunwales, push pole, climb-aboard. Walk the centre to work; pole from the edge to steer. |
 | **Rig sail** | 1 plank + 1 canvas + 1 rope | On the raft | Mast and canvas — slow trade-wind drift while you're aboard |
 | **Lash rail** | 1 plank + 1 rope | On the raft | Higher rails, wider deck, harder to wash off |
 | **Lash locker** | 1 crate | On the raft | Dry storage. **Stow** / **Fetch** your pack |
