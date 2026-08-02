@@ -329,10 +329,12 @@ const groundColorBody = /* glsl */ `
     // plastic at four. Two more octaves carry it down to tussock and then to
     // blade, and both have to be gone by the time a pixel covers more than one
     // of them or the hillside boils.
-    float tussockFade = 1.0 - smoothstep(14.0, 46.0, gDist);
-    float bladeFade = 1.0 - smoothstep(3.0, 13.0, gDist);
-    float tussock = tussockFade > 0.01 ? gNoise(gp * 1.35) : 0.5;
-    float blade = bladeFade > 0.01 ? gNoise(gp * 6.2) : 0.5;
+    #ifdef GROUND_MICRO
+      float tussockFade = 1.0 - smoothstep(14.0, 46.0, gDist);
+      float bladeFade = 1.0 - smoothstep(3.0, 13.0, gDist);
+      float tussock = tussockFade > 0.01 ? gNoise(gp * 1.35) : 0.5;
+      float blade = bladeFade > 0.01 ? gNoise(gp * 6.2) : 0.5;
+    #endif
 
     // Value alone barely survives the tone map at these brightnesses, so the
     // patches change hue too: sun-bleached on the exposed shoulders, deep and
@@ -356,13 +358,15 @@ const groundColorBody = /* glsl */ `
     // only ever add texture, never a brightness step at the distance they fade
     // in at.
     float shading = 0.66 + macro * 0.26 + mid * 0.3 + fine * 0.18;
-    shading += (tussock - 0.5) * 0.3 * tussockFade;
-    shading += (blade - 0.5) * 0.22 * bladeFade;
+    #ifdef GROUND_MICRO
+      shading += (tussock - 0.5) * 0.3 * tussockFade;
+      shading += (blade - 0.5) * 0.22 * bladeFade;
+    #endif
     diffuseColor.rgb = patched * shading;
   }
 `
 
-export function createFoliage(haze: THREE.Color): FoliageRig {
+export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = {}): FoliageRig {
   // Shared uniform holders. onBeforeCompile copies the reference, so one write
   // here reaches every material built off this rig.
   const uTime = { value: 0 }
@@ -386,6 +390,10 @@ export function createFoliage(haze: THREE.Color): FoliageRig {
     } = params
     const mat = new THREE.MeshStandardMaterial({ ...rest, fog: false })
     if (shadowedBleed) mat.defines = { ...mat.defines, SHADOWED_BLEED: '' }
+    // The two closest octaves of ground colour are the finest detail in the
+    // frame and the least visible on a five-inch screen. They come out on a
+    // phone, where the terrain is most of the fill in any shot facing inland.
+    if (ground && !opts.lowPower) mat.defines = { ...mat.defines, GROUND_MICRO: '' }
     const uWindScale = { value: wind }
     const uTranslucency = { value: translucency }
     const uThrough = { value: new THREE.Color(throughColor ?? '#cfe27a') }

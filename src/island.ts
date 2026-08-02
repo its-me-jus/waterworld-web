@@ -631,7 +631,7 @@ function gullMesh(seed: number) {
 export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const low = opts.lowPower ?? false
   const haze = opts.hazeColor.clone()
-  const foliage = createFoliage(haze)
+  const foliage = createFoliage(haze, { lowPower: opts.lowPower })
   const group = new THREE.Group()
   group.name = 'Island'
   group.position.set(opts.x, 0, opts.z)
@@ -1164,10 +1164,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // much higher density than the ring pass would ever give it.
     const carpet = i % 5 < 2
     const lx = carpet
-      ? COVE_X + (scatter(i, 7.7) - 0.5) * 190
+      ? COVE_X + (scatter(i, 7.7) - 0.5) * 125
       : Math.cos(angle) * radius + (scatter(i, 7.7) - 0.5) * 7
     const lz = carpet
-      ? COVE_Z + (scatter(i, 8.8) - 0.5) * 190
+      ? COVE_Z + (scatter(i, 8.8) - 0.5) * 125
       : Math.sin(angle) * radius + (scatter(i, 8.8) - 0.5) * 7
     const h = surface(lx, lz)
     if (h < 1.6 || h > 110) continue

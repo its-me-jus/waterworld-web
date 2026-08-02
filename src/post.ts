@@ -342,10 +342,6 @@ export function createPostChain(
       // not from a wider stride.
       blurInto(nearB.texture, nearA, nearB, 1.0)
       blurInto(nearB.texture, nearA, nearB, 1.0)
-      // A third round on anything with the headroom for it. A sun glint is a
-      // couple of texels at quarter res, and two Gaussians leave it a rounded
-      // square; the shape only stops reading as a sprite after a third.
-      if (!opts.lowPower) blurInto(nearB.texture, nearA, nearB, 1.0)
       compositeMat.uniforms.tBloomNear.value = nearB.texture
       if (useWideBloom) {
         // nearB holds the tight halo; farA takes the wide one off it
