@@ -1,4 +1,4 @@
-import { formatRun, type Cause, type Vitals } from './survival'
+import { formatRun, WOUND_CLOT, type Cause, type Vitals } from './survival'
 import type { Stash, StashKind } from './salvage'
 
 /**
@@ -87,6 +87,14 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     return { key, from, row, fill: row.querySelector('b') as HTMLElement }
   })
 
+  // Wound clot meter — only draws while you're bleeding
+  const woundRow = document.createElement('div')
+  woundRow.className = 'vital wound'
+  woundRow.innerHTML = `<span>Bleeding</span><i><b></b></i>`
+  vitalsBox.appendChild(woundRow)
+  const woundFill = woundRow.querySelector('b') as HTMLElement
+  woundRow.classList.remove('on')
+
   const death = document.createElement('div')
   death.id = 'death'
   death.innerHTML = `
@@ -166,7 +174,19 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
       fill.classList.toggle('low', value < 0.25)
     }
 
-    hurt.style.opacity = String(Math.max(0, 1 - vitals.health / 0.55) * 0.55)
+    // Clot progress: full bar at the bite, empties as it seals
+    if (vitals.wounded) {
+      const left = Math.max(0, 1 - vitals.woundClock / WOUND_CLOT)
+      woundRow.classList.add('on')
+      woundFill.style.transform = `scaleX(${left})`
+      woundFill.classList.toggle('low', left < 0.35)
+    } else {
+      woundRow.classList.remove('on')
+    }
+
+    hurt.style.opacity = String(
+      Math.max(0, 1 - vitals.health / 0.55) * 0.55 + (vitals.wounded ? 0.18 : 0),
+    )
 
     // —— whispers ————————————————————————————————————————————
     whisperT -= dt
@@ -195,7 +215,8 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     veilWeary = damp(veilWeary, weary, 2.5, dt)
     wearyVeil.style.opacity = veilWeary.toFixed(3)
 
-    veilWound = damp(veilWound, vitals.wounded ? 0.6 : 0, vitals.wounded ? 4 : 1.2, dt)
+    const woundAmt = vitals.wounded ? 0.72 + Math.sin(vitals.elapsed * 3.6) * 0.06 : 0
+    veilWound = damp(veilWound, woundAmt, vitals.wounded ? 5 : 1.2, dt)
     woundVeil.style.opacity = veilWound.toFixed(3)
     woundVeil.classList.toggle('bleeding', vitals.wounded)
   }

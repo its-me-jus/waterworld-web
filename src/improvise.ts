@@ -44,7 +44,7 @@ export type ImproviseDeps = {
   hasMark?: () => boolean
 }
 
-type BuildKind = 'lean-to' | 'fire' | 'raft' | 'catch'
+type BuildKind = 'lean-to' | 'fire' | 'raft' | 'catch' | 'seat' | 'rack' | 'signal'
 
 type SmokeRack = {
   readyAt: number
@@ -88,6 +88,9 @@ const RAFT_BARREL_COST: Cost = { plank: 3, rope: 1, barrel: 1 }
 const MAST_COST: Cost = { plank: 1, canvas: 1, rope: 1 }
 const RAIL_COST: Cost = { plank: 1, rope: 1 }
 const LOCKER_COST: Cost = { crate: 1 }
+const SEAT_COST: Cost = { plank: 1 }
+const RACK_COST: Cost = { plank: 1, rope: 1 }
+const SIGNAL_COST: Cost = { plank: 1, canvas: 1 }
 
 const REACH = 3.2
 const PLACE_AHEAD = 1.7
@@ -99,6 +102,9 @@ const REST_COOLDOWN = 18
 /** Real seconds for one fish to smoke through. */
 const SMOKE_TIME = 28
 const SMOKE_MAX = 2
+/** Real seconds for one fish to dry on a rack (no fire). */
+const DRY_TIME = 48
+const DRY_MAX = 3
 /** How hard you can pole a raft (m/s). */
 const POLE_SPEED = 1.85
 const POLE_SPEED_BARREL = 2.35
@@ -478,6 +484,71 @@ function catchMesh(m: ReturnType<typeof mats>) {
   return g
 }
 
+/** Driftwood seat — sit to get your legs back. */
+function seatMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  const bench = plankObject(1.4, 0.28, m.wood)
+  bench.position.y = 0.38
+  g.add(bench)
+  for (const x of [-0.5, 0.5]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.38, 0.1), m.wood)
+    leg.position.set(x, 0.19, 0)
+    g.add(leg)
+  }
+  const back = plankObject(1.3, 0.1, m.wood)
+  back.position.set(0, 0.62, -0.18)
+  back.rotation.x = -0.15
+  g.add(back)
+  return g
+}
+
+/** Drying rack — hang fish without a fire; patience does the smoke's job slower. */
+function rackMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  for (const x of [-0.55, 0.55]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.35, 0.08), m.wood)
+    post.position.set(x, 0.65, 0)
+    g.add(post)
+  }
+  const bar = plankObject(1.3, 0.08, m.wood)
+  bar.position.set(0, 1.2, 0)
+  g.add(bar)
+  for (const x of [-0.35, 0, 0.35]) {
+    const lash = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.015, 4, 6), m.rope)
+    lash.position.set(x, 1.18, 0)
+    lash.rotation.x = Math.PI / 2
+    g.add(lash)
+  }
+  return g
+}
+
+/** Signal post — a scrap of canvas and a thin column of smoke you can read from the water. */
+function signalMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 2.6, 6), m.brand)
+  post.position.y = 1.3
+  g.add(post)
+  const rag = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.55), m.sail)
+  rag.position.set(0.35, 2.35, 0)
+  rag.name = 'signalRag'
+  g.add(rag)
+  const stay = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1.1, 4), m.rope)
+  stay.position.set(0.2, 1.9, 0)
+  stay.rotation.z = 0.7
+  g.add(stay)
+  // Rising smoke puffs — animated in update
+  for (let i = 0; i < 8; i++) {
+    const puff = new THREE.Mesh(
+      new THREE.SphereGeometry(0.08 + (i % 3) * 0.03, 5, 4),
+      m.smokePuff.clone(),
+    )
+    puff.userData.seed = Math.random()
+    puff.name = 'signalSmoke'
+    g.add(puff)
+  }
+  return g
+}
+
 function raftMesh(m: ReturnType<typeof mats>, withBarrel: boolean) {
   const g = new THREE.Group()
   g.name = 'raft'
@@ -727,6 +798,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const raftFitPos = new THREE.Vector3()
   const stowPos = new THREE.Vector3()
   const markPos = new THREE.Vector3()
+  const seatPos = new THREE.Vector3()
+  const rackPos = new THREE.Vector3()
+  const signalPos = new THREE.Vector3()
+  const sitPos = new THREE.Vector3()
+  const dryPos = new THREE.Vector3()
+  const takeDryPos = new THREE.Vector3()
 
   let yaw = 0
   let onLand = false
@@ -736,6 +813,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let px = 0
   let pz = 0
   let restReadyAt = 0
+  let sitReadyAt = 0
   let saidPole = false
   let saidSail = false
   let swimming = false
@@ -958,6 +1036,136 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
+  // —— island workshop ————————————————————————————————————————
+  deps.interactions.add({
+    position: seatPos,
+    verb: 'Lash',
+    label: 'Seat',
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      onLand &&
+      groundY > 0.8 &&
+      deps.salvage.has(SEAT_COST) &&
+      clearOfBuilds(seatPos.x, seatPos.z, 1.6),
+    use: () => {
+      if (!deps.salvage.spend(SEAT_COST)) return
+      const x = seatPos.x
+      const z = seatPos.z
+      addBuild('seat', seatMesh(m), x, z, deps.groundAt(x, z), 1.8, 0.15)
+      deps.hud.whisper('A seat. The legs stop arguing.')
+    },
+  })
+
+  deps.interactions.add({
+    position: sitPos,
+    verb: 'Sit',
+    label: 'Seat',
+    radius: 2.4,
+    available: () =>
+      deps.vitals.alive && onLand && time >= sitReadyAt && !!nearestOfKind(px, pz, 'seat', 2.2),
+    use: () => {
+      const seat = nearestOfKind(px, pz, 'seat', 2.2)
+      if (!seat) return
+      const v = deps.vitals
+      v.stamina = Math.min(1, v.stamina + 0.42)
+      v.warmth = Math.min(1, v.warmth + 0.05)
+      sitReadyAt = time + 16
+      sitPos.set(seat.x, seat.deckY + 0.5, seat.z)
+      deps.hud.whisper(
+        v.stamina > 0.85 ? 'Rested. The ground holds you a moment.' : 'Breath comes back. Slowly.',
+      )
+    },
+  })
+
+  deps.interactions.add({
+    position: rackPos,
+    verb: 'Lash',
+    label: 'Drying rack',
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      onLand &&
+      groundY > 0.8 &&
+      deps.salvage.has(RACK_COST) &&
+      clearOfBuilds(rackPos.x, rackPos.z, 1.8),
+    use: () => {
+      if (!deps.salvage.spend(RACK_COST)) return
+      const x = rackPos.x
+      const z = rackPos.z
+      addBuild('rack', rackMesh(m), x, z, deps.groundAt(x, z), 2.0, 0, { smoking: [] })
+      deps.hud.whisper('A rack. Hang fish — the air will do what fire does, slower.')
+    },
+  })
+
+  deps.interactions.add({
+    position: dryPos,
+    verb: 'Hang',
+    label: 'Fish',
+    radius: 2.6,
+    available: () => {
+      if (!deps.vitals.alive || deps.rawFish() <= 0) return false
+      const rack = nearestOfKind(px, pz, 'rack', 2.6)
+      if (!rack) return false
+      return (rack.smoking?.length ?? 0) < DRY_MAX
+    },
+    use: () => {
+      const rack = nearestOfKind(px, pz, 'rack', 2.6)
+      if (!rack || !deps.takeRawForSmoke()) return
+      if (!rack.smoking) rack.smoking = []
+      const slot = rack.smoking.length
+      const mesh = smokedFishMesh(m)
+      mesh.position.set((slot - 1) * 0.32, 1.05, 0.05)
+      rack.object.add(mesh)
+      rack.smoking.push({ readyAt: time + DRY_TIME, mesh })
+      deps.hud.whisper(slot === 0 ? 'Hung to dry. The wind works.' : 'Another on the rack.')
+    },
+  })
+
+  deps.interactions.add({
+    position: takeDryPos,
+    verb: 'Take',
+    label: 'Dried fish',
+    radius: 2.6,
+    available: () => {
+      if (!deps.vitals.alive) return false
+      const rack = nearestOfKind(px, pz, 'rack', 2.6)
+      if (!rack?.smoking?.length) return false
+      return rack.smoking.some((s) => time >= s.readyAt)
+    },
+    use: () => {
+      const rack = nearestOfKind(px, pz, 'rack', 2.6)
+      if (!rack?.smoking) return
+      const idx = rack.smoking.findIndex((s) => time >= s.readyAt)
+      if (idx < 0) return
+      const [done] = rack.smoking.splice(idx, 1)
+      rack.object.remove(done.mesh)
+      deps.addSmoked(1)
+      deps.hud.whisper('Dried through. It will keep.')
+    },
+  })
+
+  deps.interactions.add({
+    position: signalPos,
+    verb: 'Rig',
+    label: 'Signal',
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      onLand &&
+      groundY > 1.5 &&
+      deps.salvage.has(SIGNAL_COST) &&
+      !nearestOfKind(signalPos.x, signalPos.z, 'signal', 40) &&
+      clearOfBuilds(signalPos.x, signalPos.z, 2.0),
+    use: () => {
+      if (!deps.salvage.spend(SIGNAL_COST)) return
+      const x = signalPos.x
+      const z = signalPos.z
+      addBuild('signal', signalMesh(m), x, z, deps.groundAt(x, z), 1.6, 0)
+      deps.hud.whisper('Smoke on the ridge. You can read it from the water.')
+    },
+  })
+
   deps.interactions.add({
     position: raftPos,
     verb: 'Lash',
@@ -1176,6 +1384,20 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       return nearWaterline && deps.salvage.has(RAFT_COST) && clearOfBuilds(raftPos.x, raftPos.z, 3.5)
     }
     if (groundY > 0.8 && deps.salvage.has(LEAN_COST) && clearOfBuilds(leanPos.x, leanPos.z, 2.2)) {
+      return true
+    }
+    if (groundY > 0.8 && deps.salvage.has(SEAT_COST) && clearOfBuilds(seatPos.x, seatPos.z, 1.6)) {
+      return true
+    }
+    if (groundY > 0.8 && deps.salvage.has(RACK_COST) && clearOfBuilds(rackPos.x, rackPos.z, 1.8)) {
+      return true
+    }
+    if (
+      groundY > 1.5 &&
+      deps.salvage.has(SIGNAL_COST) &&
+      !nearestOfKind(signalPos.x, signalPos.z, 'signal', 40) &&
+      clearOfBuilds(signalPos.x, signalPos.z, 2.0)
+    ) {
       return true
     }
     if (
@@ -1409,10 +1631,16 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     const fireAt = offset(player, facingYaw, 0.9, 0)
     const catchAt = offset(player, facingYaw, PLACE_AHEAD, 1.1)
     const raftAt = offset(player, facingYaw, 2.2, 0)
+    const seatAt = offset(player, facingYaw, 1.2, 0.6)
+    const rackAt = offset(player, facingYaw, 1.3, -0.7)
+    const signalAt = offset(player, facingYaw, PLACE_AHEAD, 0)
 
     const aheadY = deps.groundAt(ahead.x, ahead.z)
     const fireY = deps.groundAt(fireAt.x, fireAt.z)
     const catchY = deps.groundAt(catchAt.x, catchAt.z)
+    const seatY = deps.groundAt(seatAt.x, seatAt.z)
+    const rackY = deps.groundAt(rackAt.x, rackAt.z)
+    const signalY = deps.groundAt(signalAt.x, signalAt.z)
 
     if (onLand && aheadY > 0.3) setAnchor(leanPos, ahead.x, ahead.z, aheadY + 0.5)
     else setAnchor(leanPos, player.x, player.z, player.y)
@@ -1430,6 +1658,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
     if (onLand && catchY > 0.3) setAnchor(catchPos, catchAt.x, catchAt.z, catchY + 0.5)
     else setAnchor(catchPos, player.x, player.z, player.y)
+
+    if (onLand && seatY > 0.5) setAnchor(seatPos, seatAt.x, seatAt.z, seatY + 0.4)
+    else setAnchor(seatPos, player.x, player.z, player.y)
+
+    if (onLand && rackY > 0.5) setAnchor(rackPos, rackAt.x, rackAt.z, rackY + 0.45)
+    else setAnchor(rackPos, player.x, player.z, player.y)
+
+    if (onLand && signalY > 1.2) setAnchor(signalPos, signalAt.x, signalAt.z, signalY + 0.6)
+    else setAnchor(signalPos, player.x, player.z, player.y)
 
     const foot = deps.groundAt(player.x, player.z)
     const seaHere = sampleOcean(player.x, player.z, t).y
@@ -1475,6 +1712,19 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     const lean = nearestOfKind(player.x, player.z, 'lean-to', 2.4)
     if (lean) restPos.set(lean.x, lean.deckY + 0.6, lean.z)
     else restPos.copy(eatPos)
+
+    const seat = nearestOfKind(player.x, player.z, 'seat', 2.2)
+    if (seat) sitPos.set(seat.x, seat.deckY + 0.5, seat.z)
+    else sitPos.copy(eatPos)
+
+    const rack = nearestOfKind(player.x, player.z, 'rack', 2.6)
+    if (rack) {
+      dryPos.set(rack.x + 0.4, rack.deckY + 0.7, rack.z)
+      takeDryPos.set(rack.x - 0.35, rack.deckY + 0.7, rack.z)
+    } else {
+      dryPos.copy(eatPos)
+      takeDryPos.copy(eatPos)
+    }
 
     // Dive with a brand and the sea takes it — diegetic, no inventory slot
     if (carried && view.submersion > 0.72) {
@@ -1578,6 +1828,22 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (b.kind === 'fire') {
         animateFire(b.object, t, b.x * 0.7 + b.z * 0.3, deps.daylight())
       }
+      if (b.kind === 'signal') {
+        const rag = b.object.getObjectByName('signalRag')
+        if (rag) {
+          rag.rotation.y = Math.sin(t * 1.1 + b.x) * 0.35
+          rag.rotation.z = Math.sin(t * 0.7) * 0.08
+        }
+        for (const child of b.object.children) {
+          if (child.name !== 'signalSmoke' || !(child instanceof THREE.Mesh)) continue
+          const s = child.userData.seed as number
+          const life = ((t * (0.22 + s * 0.15) + s * 5) % 3.2) / 3.2
+          const spin = s * Math.PI * 2 + t * 0.25
+          child.position.set(Math.cos(spin) * life * 0.25, 2.4 + life * 4.5, Math.sin(spin) * life * 0.25)
+          child.scale.setScalar(0.6 + life * 2.2)
+          ;(child.material as THREE.MeshBasicMaterial).opacity = 0.22 * (1 - life)
+        }
+      }
       if (b.kind === 'catch') {
         b.water = Math.min(1, (b.water ?? 0) + dt / CATCH_REFILL)
         const waterMesh = b.object.getObjectByName('water')
@@ -1637,6 +1903,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     }
     torch.visible = false
     restReadyAt = 0
+    sitReadyAt = 0
     saidPole = false
     saidSail = false
     boardGrace = 0
@@ -1652,7 +1919,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       return !!carried
     },
     get counts() {
-      const out: Record<BuildKind, number> = { 'lean-to': 0, fire: 0, raft: 0, catch: 0 }
+      const out: Record<BuildKind, number> = {
+        'lean-to': 0,
+        fire: 0,
+        raft: 0,
+        catch: 0,
+        seat: 0,
+        rack: 0,
+        signal: 0,
+      }
       for (const b of builds) out[b.kind]++
       if (carried) out.fire++
       return out
@@ -1666,6 +1941,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       mast: MAST_COST,
       rail: RAIL_COST,
       locker: LOCKER_COST,
+      seat: SEAT_COST,
+      rack: RACK_COST,
+      signal: SIGNAL_COST,
       label: costLabel,
     },
   }

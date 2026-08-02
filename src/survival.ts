@@ -30,6 +30,8 @@ export type Vitals = {
   saidSalt: boolean
   saidLead: boolean
   saidCold: boolean
+  /** Mid-clot reminder — re-arms when the wound closes. */
+  saidBleeding: boolean
 }
 
 /** Seconds, from full to empty, under the stated conditions. */
@@ -51,7 +53,7 @@ const STARVATION = 260
 const MENDING = 190
 
 /** Seconds for a bite to clot. Until then it taxes strength and appetite. */
-const WOUND_CLOT = 150
+export const WOUND_CLOT = 150
 
 /**
  * The immersion suit. Sealed neoprene turns fifteen minutes of survivable
@@ -100,6 +102,7 @@ export function createVitals(): Vitals {
     saidSalt: false,
     saidLead: false,
     saidCold: false,
+    saidBleeding: false,
   }
 }
 
@@ -150,8 +153,13 @@ export function updateVitals(v: Vitals, dt: number, ctx: VitalsContext) {
   // —— the wound ————————————————————————————————————————————
   if (v.wounded) {
     v.woundClock += dt
+    if (!v.saidBleeding && v.woundClock > WOUND_CLOT * 0.4) {
+      v.saidBleeding = true
+      ctx.whisper?.('Still bleeding. The water knows.')
+    }
     if (v.woundClock > WOUND_CLOT) {
       v.wounded = false
+      v.saidBleeding = false
       ctx.whisper?.('The bleeding slows.')
     }
   }
@@ -235,7 +243,9 @@ export function bite(v: Vitals, whisper?: (text: string) => void) {
   }
   v.wounded = true
   v.woundClock = 0
+  v.saidBleeding = false
   v.stamina = Math.min(v.stamina, 0.5)
+  v.health = Math.min(v.health, 0.55)
   whisper?.('Its teeth rake your side. The water tastes of iron.')
 }
 

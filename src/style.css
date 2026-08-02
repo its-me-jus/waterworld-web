@@ -513,22 +513,33 @@ body.underwater #bubbles {
   opacity: 0;
   transition: opacity 0.45s ease;
   background:
-    radial-gradient(ellipse at center, transparent 44%, rgba(96, 16, 14, 0.42) 82%, rgba(60, 8, 8, 0.66) 100%),
-    radial-gradient(ellipse at 62% 78%, rgba(120, 22, 18, 0.22), transparent 55%);
+    radial-gradient(ellipse at center, transparent 38%, rgba(110, 14, 12, 0.5) 78%, rgba(70, 6, 6, 0.78) 100%),
+    radial-gradient(ellipse at 62% 78%, rgba(140, 24, 18, 0.32), transparent 55%),
+    radial-gradient(ellipse at 28% 30%, rgba(90, 10, 8, 0.18), transparent 50%);
 }
 
 #wound-veil.bleeding {
-  animation: wound-pulse 1.7s ease-in-out infinite;
+  animation: wound-pulse 1.45s ease-in-out infinite;
 }
 
 @keyframes wound-pulse {
   0%,
   100% {
     transform: scale(1);
+    filter: saturate(1);
   }
   50% {
-    transform: scale(1.035);
+    transform: scale(1.04);
+    filter: saturate(1.25);
   }
+}
+
+#vitals .vital.wound span {
+  color: #e8a090;
+}
+
+#vitals .vital.wound i b {
+  background: linear-gradient(90deg, #8a2018, #c45a3a);
 }
 
 /* The memory — not a panel, a warmth closing over your eyes while a piece of
