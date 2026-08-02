@@ -137,7 +137,7 @@ the materials on you. No craft menu, no markers, no "correct" build order.
 | **Dig hollow** | hands (look down) | Soft sand | A rain-holding pit. Slow refill; brackish but drinkable |
 | **Tin drip** | 1 can + 1 rope | Dry ground | A can on a stake that catches rain by the mouthful |
 
-Fall off and **Climb** the raft from the water (F when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft.
+Fall off and **Climb** the raft from the water (F when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft. An empty raft keeps her heading — she won't spin to chase leftover pole speed.
 
 Island harvest sits on top of the scenery: **Pull** palm fronds for thatch,
 **Break** driftwood into a plank, **Fell** a stripped palm once you have the
