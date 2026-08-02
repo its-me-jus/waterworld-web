@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { bakePlant, createFoliage, plantTint, type PlantBake } from './foliage'
 import { fbm, noise2 } from './waves'
 
 /**
@@ -54,7 +55,21 @@ export type Island = {
   update: (camera: THREE.Camera, underwater: boolean, time?: number) => void
   /** Keep aerial perspective matched to the live horizon. */
   setHaze: (color: THREE.Color) => void
+  /**
+   * Drive the wind and the key light the leaf backlight reads from. Both come
+   * from the weather, which the island itself knows nothing about.
+   */
+  setWeather: (
+    time: number,
+    wind: number,
+    cloudShadow: number,
+    sunDir: THREE.Vector3,
+    sunColor: THREE.Color,
+  ) => void
 }
+
+/** Which way the trade wind runs across the island. Everything leans this way. */
+const WIND_HEADING = 0.62
 
 /** Half-width of the terrain patch — well past the shelf, into deep water. */
 const SPAN = 640
@@ -104,10 +119,12 @@ function ground(lx: number, lz: number) {
   // isn't a smooth plane once the grass and trees are in
   const greenBand = THREE.MathUtils.smoothstep(h, 3, 14) * (1 - THREE.MathUtils.smoothstep(h, 40, 90))
   h += (noise2(lx * 0.09 + 5.5, lz * 0.09 - 3.3) - 0.5) * 1.1 * greenBand
-  // A second octave of hummocks higher up — breaks the painted-cone silhouette
-  // from the water before you're close enough to see individual trees
-  const midBand = THREE.MathUtils.smoothstep(h, 12, 28) * (1 - THREE.MathUtils.smoothstep(h, 70, 110))
-  h += (noise2(lx * 0.018 + 9.1, lz * 0.018 - 6.4) - 0.5) * 4.2 * midBand
+  // Two more octaves of hummocks higher up. Without them the slopes above the
+  // beach are smooth cones, and a smooth cone reads as a painted backdrop from
+  // the water and as a golf course once you're standing on it.
+  const midBand = THREE.MathUtils.smoothstep(h, 12, 28) * (1 - THREE.MathUtils.smoothstep(h, 78, 120))
+  h += (noise2(lx * 0.018 + 9.1, lz * 0.018 - 6.4) - 0.5) * 8.5 * midBand
+  h += (noise2(lx * 0.041 - 3.7, lz * 0.041 + 12.8) - 0.5) * 3.4 * midBand
   h -= SEA_CUT
   // The last few metres either side of the waterline flatten into beach and
   // shallows, instead of the cone driving straight into the sea
@@ -131,52 +148,40 @@ function ground(lx: number, lz: number) {
 }
 
 /**
- * Standard shading plus two things three's fog can't do here:
+ * A leaf: a tapered sheet that arcs over and droops as it goes.
  *
- * - Aerial perspective that *saturates* below 1. Scene fog would erase the
- *   island completely at this range; real distance leaves a silhouette.
- * - Dropping the underwater flanks when they're far away. The ocean mesh only
- *   reaches ~350 m, so without this the island's shelf hangs below the horizon
- *   with nothing but sky behind it.
+ * Everything green on this island used to be a three-sided cone, which from
+ * the ground reads as a field of spikes — the silhouette of a blade of grass
+ * is a curve, and a cone can't make one. A plane bent along its length costs
+ * about the same and is the single biggest difference between scenery and
+ * undergrowth.
  *
- * `hazeColor` stays in the working (linear) space. The mix is spliced in after
- * the fog chunk, which used to sit downstream of the sRGB encode — but the
- * scene now renders into a linear buffer and `post.ts` does the encode once at
- * the end, so `colorspace_fragment` is a no-op here and full haze lands
- * exactly on the linear background colour.
+ * The normals are the other half of it. A flat sheet lit by a directional
+ * light goes black the moment it turns edge-on, so a lawn of them flickers
+ * between bright and dark as you walk. Leaning every normal toward the sky
+ * gives the whole clump one soft shared response instead.
  */
-function hazeMaterial(hazeColor: THREE.Color, params: THREE.MeshStandardMaterialParameters) {
-  const material = new THREE.MeshStandardMaterial({ ...params, fog: false })
-
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.uHaze = { value: hazeColor }
-    shader.uniforms.uHazeDensity = { value: 0.0016 }
-    shader.uniforms.uHazeMax = { value: 0.88 }
-
-    shader.vertexShader = `varying vec3 vGroundPos;\n${shader.vertexShader}`.replace(
-      '#include <begin_vertex>',
-      `#include <begin_vertex>
-      vGroundPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
-    )
-
-    shader.fragmentShader = `
-      uniform vec3 uHaze;
-      uniform float uHazeDensity;
-      uniform float uHazeMax;
-      varying vec3 vGroundPos;
-      ${shader.fragmentShader}
-    `.replace(
-      // Sits after the colour-space conversion, so it mixes toward the horizon
-      // in the same encoding the background is drawn in.
-      '#include <fog_fragment>',
-      `float hazeDist = length(vGroundPos - cameraPosition);
-      if (smoothstep(0.0, -6.0, vGroundPos.y) * smoothstep(300.0, 470.0, hazeDist) > 0.45) discard;
-      float haze = min(1.0 - exp(-pow(hazeDist * uHazeDensity, 2.0)), uHazeMax);
-      gl_FragColor.rgb = mix(gl_FragColor.rgb, uHaze, haze);`,
-    )
+function leafBlade(width: number, height: number, bend: number, segments = 3, skyward = 0.62) {
+  const geo = new THREE.PlaneGeometry(width, height, 1, segments)
+  const pos = geo.attributes.position
+  for (let i = 0; i < pos.count; i++) {
+    const t = (pos.getY(i) + height / 2) / height
+    pos.setX(i, pos.getX(i) * (1 - t * 0.88))
+    pos.setZ(i, pos.getZ(i) + t * t * bend)
+    pos.setY(i, pos.getY(i) - t * t * Math.abs(bend) * 0.3)
   }
+  geo.translate(0, height / 2, 0)
+  geo.computeVertexNormals()
 
-  return material
+  const nrm = geo.attributes.normal
+  for (let i = 0; i < nrm.count; i++) {
+    const x = nrm.getX(i) * (1 - skyward)
+    const y = nrm.getY(i) * (1 - skyward) + skyward
+    const z = nrm.getZ(i) * (1 - skyward)
+    const len = Math.hypot(x, y, z) || 1
+    nrm.setXYZ(i, x / len, y / len, z / len)
+  }
+  return geo
 }
 
 /** One palm: a leaning trunk, a crown of drooping blades, a few nuts. */
@@ -198,11 +203,13 @@ function palm(seed: number) {
 
   const crown = new THREE.Vector3(Math.cos(facing) * lean, height, -Math.sin(facing) * lean)
   const leaves: THREE.BufferGeometry[] = []
-  const blades = 8
+  const blades = 11
   for (let i = 0; i < blades; i++) {
-    const blade = new THREE.ConeGeometry(0.4, 2.8 + rand(i) * 1.1, 3)
-    blade.translate(0, 1.5, 0)
-    blade.scale(1, 1, 0.26)
+    // Fronds arc out and then fall away, so the crown reads as a shuttlecock
+    // rather than a starburst. The blade is built lying along +Y and the tilt
+    // below swings it out to its bearing.
+    const long = 2.9 + rand(i) * 1.3
+    const blade = leafBlade(0.68 + rand(i + 3) * 0.22, long, -0.9 - rand(i + 5) * 0.7, 4, 0.45)
     const tilt = new THREE.Quaternion().setFromAxisAngle(
       new THREE.Vector3(1, 0, 0),
       0.75 + rand(i + 9) * 0.75,
@@ -228,7 +235,7 @@ function palm(seed: number) {
     nuts.push(nut)
   }
 
-  return { trunk, leaves, nuts }
+  return { trunk, leaves, nuts, height: crown.y }
 }
 
 /**
@@ -263,7 +270,7 @@ function broadleaf(seed: number) {
     canopy.push(blob)
   }
 
-  return { trunk, canopy }
+  return { trunk, canopy, height }
 }
 
 /** A hanging vine — a drooping strip of quads down a rock face or trunk. */
@@ -301,18 +308,17 @@ function deadTree(seed: number) {
   return geo
 }
 
-/** A grass / fern tuft: a few bent blades as thin cones, merged. */
+/** A grass tuft: a handful of blades that arc away from a common root. */
 function grassTuft(seed: number) {
   const rand = (n: number) => fbm(seed * 5.9 + n * 2.7, seed * 3.3 - n * 1.9)
   const blades: THREE.BufferGeometry[] = []
   const count = 5 + Math.floor(rand(1) * 4)
   for (let i = 0; i < count; i++) {
-    const h = 0.65 + rand(i + 2) * 1.15
-    const blade = new THREE.ConeGeometry(0.07 + rand(i + 4) * 0.07, h, 3)
-    blade.translate(0, h / 2, 0)
-    blade.rotateZ((rand(i + 6) - 0.5) * 0.9)
+    const h = 0.55 + rand(i + 2) * 1.1
+    const blade = leafBlade(0.11 + rand(i + 4) * 0.07, h, 0.24 + rand(i + 5) * 0.45)
     blade.rotateY(rand(i + 8) * Math.PI * 2)
-    blade.translate((rand(i + 10) - 0.5) * 0.55, 0, (rand(i + 12) - 0.5) * 0.55)
+    blade.rotateZ((rand(i + 6) - 0.5) * 0.35)
+    blade.translate((rand(i + 10) - 0.5) * 0.4, 0, (rand(i + 12) - 0.5) * 0.4)
     blades.push(blade)
   }
   return mergeGeometries(blades, false) as THREE.BufferGeometry
@@ -349,22 +355,36 @@ function driftwood(seed: number) {
   return geo
 }
 
-/** Low dune scrub — a clump of bent cones that reads as bush from a few metres. */
+/**
+ * Low dune scrub. A few squashed blobs of mass with leaves fringing out of
+ * them — the mass is what reads at fifty metres, the fringe is what stops it
+ * looking like a boulder at five.
+ */
 function scrubBush(seed: number) {
   const rand = (n: number) => fbm(seed * 6.8 + n * 5.1, seed * 3.2 - n * 2.7)
   const parts: THREE.BufferGeometry[] = []
-  const clumps = 4 + Math.floor(rand(1) * 3)
+  const clumps = 3 + Math.floor(rand(1) * 3)
   for (let i = 0; i < clumps; i++) {
-    const h = 1.1 + rand(i + 2) * 1.4
-    const cone = new THREE.ConeGeometry(0.55 + rand(i + 4) * 0.65, h, 5)
-    cone.translate(
-      (rand(i + 6) - 0.5) * 1.2,
-      h * 0.45,
-      (rand(i + 7) - 0.5) * 1.2,
-    )
-    cone.rotateY(rand(i + 8) * Math.PI * 2)
-    cone.rotateZ((rand(i + 9) - 0.5) * 0.35)
-    parts.push(cone)
+    const r = 0.26 + rand(i + 2) * 0.34
+    const blob = new THREE.IcosahedronGeometry(r, 0)
+    const pos = blob.attributes.position
+    for (let v = 0; v < pos.count; v++) {
+      const s = 0.75 + rand(i * 23 + v) * 0.5
+      pos.setXYZ(v, pos.getX(v) * s, pos.getY(v) * s * 0.72, pos.getZ(v) * s)
+    }
+    blob.computeVertexNormals()
+    blob.translate((rand(i + 6) - 0.5) * 1.1, r * 0.7 + rand(i + 3) * 0.35, (rand(i + 7) - 0.5) * 1.1)
+    // Polyhedra come out non-indexed, so the blades have to match to merge
+    parts.push(blob)
+  }
+  const fringe = 8 + Math.floor(rand(2) * 5)
+  for (let i = 0; i < fringe; i++) {
+    const h = 0.85 + rand(i + 11) * 1.0
+    const leaf = leafBlade(0.19 + rand(i + 13) * 0.14, h, 0.45 + rand(i + 15) * 0.5)
+    leaf.rotateZ(0.25 + rand(i + 17) * 0.6)
+    leaf.rotateY(rand(i + 19) * Math.PI * 2)
+    leaf.translate((rand(i + 21) - 0.5) * 1.1, 0.1, (rand(i + 23) - 0.5) * 1.1)
+    parts.push(leaf.toNonIndexed())
   }
   return mergeGeometries(parts, false) as THREE.BufferGeometry
 }
@@ -375,14 +395,13 @@ function fernClump(seed: number) {
   const fronds: THREE.BufferGeometry[] = []
   const count = 5 + Math.floor(rand(1) * 4)
   for (let i = 0; i < count; i++) {
-    const h = 0.7 + rand(i + 2) * 1.1
-    const frond = new THREE.ConeGeometry(0.28 + rand(i + 4) * 0.22, h, 3)
-    frond.translate(0, h / 2, 0)
-    frond.scale(1, 1, 0.22)
-    frond.rotateZ(0.55 + rand(i + 6) * 0.7)
+    const h = 0.7 + rand(i + 2) * 1.15
+    // Wide and heavily arched — a fern's whole read is the droop
+    const frond = leafBlade(0.42 + rand(i + 4) * 0.28, h, 0.55 + rand(i + 5) * 0.5, 4)
+    frond.rotateZ(0.5 + rand(i + 6) * 0.65)
     frond.rotateY(rand(i + 8) * Math.PI * 2)
     frond.translate((rand(i + 10) - 0.5) * 0.35, 0, (rand(i + 12) - 0.5) * 0.35)
-    fronds.push(frond.toNonIndexed())
+    fronds.push(frond)
   }
   return mergeGeometries(fronds, false) as THREE.BufferGeometry
 }
@@ -441,12 +460,11 @@ function reedClump(seed: number) {
   const count = 6 + Math.floor(rand(1) * 5)
   for (let i = 0; i < count; i++) {
     const h = 0.9 + rand(i + 2) * 1.4
-    const blade = new THREE.ConeGeometry(0.035 + rand(i + 4) * 0.03, h, 3)
-    blade.translate(0, h / 2, 0)
-    blade.rotateZ((rand(i + 6) - 0.5) * 0.35)
+    const blade = leafBlade(0.07 + rand(i + 4) * 0.05, h, 0.12 + rand(i + 5) * 0.2, 2)
+    blade.rotateZ((rand(i + 6) - 0.5) * 0.28)
     blade.rotateY(rand(i + 8) * Math.PI * 2)
     blade.translate((rand(i + 10) - 0.5) * 0.7, 0, (rand(i + 12) - 0.5) * 0.7)
-    blades.push(blade.toNonIndexed())
+    blades.push(blade)
   }
   return mergeGeometries(blades, false) as THREE.BufferGeometry
 }
@@ -478,7 +496,7 @@ function sapling(seed: number) {
     )
     canopy.push(blob)
   }
-  return { trunk, canopy }
+  return { trunk, canopy, height }
 }
 
 /** A shore crab — flat body, sidling legs, two claws. Small enough to miss. */
@@ -584,6 +602,7 @@ function gullMesh(seed: number) {
 export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const low = opts.lowPower ?? false
   const haze = opts.hazeColor.clone()
+  const foliage = createFoliage(haze)
   const group = new THREE.Group()
   group.name = 'Island'
   group.position.set(opts.x, 0, opts.z)
@@ -631,17 +650,17 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
 
   // Sand, scrub and basalt painted per vertex — one material, one draw call
   const normal = geometry.attributes.normal
-  const seabed = new THREE.Color('#4e5f4a')
-  const tide = new THREE.Color('#6e5f44')
-  const wetSand = new THREE.Color('#a8946e')
-  const drySand = new THREE.Color('#e2d2ac')
-  const moss = new THREE.Color('#3f6132')
-  const fern = new THREE.Color('#2e4f24')
-  const scrub = new THREE.Color('#55793d')
-  const bush = new THREE.Color('#2f4f24')
-  const litter = new THREE.Color('#5c4a30')
-  const rock = new THREE.Color('#6e6656')
-  const basalt = new THREE.Color('#453d34')
+  const seabed = new THREE.Color('#5b6d52')
+  const tide = new THREE.Color('#8a7550')
+  const wetSand = new THREE.Color('#c2a878')
+  const drySand = new THREE.Color('#efdcb2')
+  const moss = new THREE.Color('#5a8a3e')
+  const fern = new THREE.Color('#3f6b2b')
+  const scrub = new THREE.Color('#77a04c')
+  const bush = new THREE.Color('#456b2c')
+  const litter = new THREE.Color('#7a6238')
+  const rock = new THREE.Color('#8d8471')
+  const basalt = new THREE.Color('#5b5145')
   const shade = new THREE.Color()
   const growth = new THREE.Color()
   const stone = new THREE.Color()
@@ -693,18 +712,31 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
 
-  // Standard shading has no skylight, and the air hemisphere's ground colour is
-  // near-black for the water. Without a small lift, whichever face of the
-  // island you approach from crushes to a silhouette the moment it's not sunlit.
-  const skylight = { emissive: new THREE.Color('#20313a'), emissiveIntensity: 0.5 }
+  // The air hemisphere's ground colour is near-black, because for the ocean it
+  // should be. The sky cube map now does most of the skylight work, so this is
+  // only the last bit of lift that keeps an unlit face from crushing to a
+  // silhouette — much smaller than it used to be, and warmer, or the whole
+  // island reads as a cold day.
+  const skylight = { emissive: new THREE.Color('#1b2a2b'), emissiveIntensity: 0.26 }
 
   const terrain = new THREE.Mesh(
     geometry,
-    hazeMaterial(haze, { vertexColors: true, roughness: 0.98, metalness: 0, ...skylight }),
+    foliage.material({
+      vertexColors: true,
+      roughness: 0.98,
+      metalness: 0,
+      ground: true,
+      ...skylight,
+    }),
   )
   group.add(terrain)
 
   // —— shoreline planting ————————————————————————————————————
+  // A trunk and the crown it carries have to be quoted the same wind budget,
+  // or a gust pulls the crown off the top of the tree.
+  const PALM_WIND = 0.3
+  const BROAD_WIND = 0.2
+
   const shore: THREE.Vector3[] = []
   const trunks: THREE.BufferGeometry[] = []
   const leaves: THREE.BufferGeometry[] = []
@@ -728,18 +760,18 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const palmWanted = low ? 32 : 72
   const rockWanted = low ? 90 : 200
   const woodWanted = low ? 28 : 60
-  const scrubWanted = low ? 160 : 380
-  const broadWanted = low ? 100 : 240
-  const grassWanted = low ? 2800 : 7500
+  const scrubWanted = low ? 260 : 620
+  const broadWanted = low ? 150 : 380
+  const grassWanted = low ? 3200 : 8600
   const deadWanted = low ? 18 : 40
   const vineWanted = low ? 120 : 280
   const pathWanted = low ? 32 : 60
-  const fernWanted = low ? 140 : 340
+  const fernWanted = low ? 200 : 520
   const fallenWanted = low ? 16 : 36
   const boulderWanted = low ? 32 : 70
   const wrackWanted = low ? 45 : 100
   const reedWanted = low ? 60 : 130
-  const saplingWanted = low ? 60 : 140
+  const saplingWanted = low ? 110 : 260
   // broadWanted is the mid-story tree target; saplings add on top of that
 
   const placeAt = (geo: THREE.BufferGeometry, lx: number, h: number, lz: number, sink = 0.15) => {
@@ -747,10 +779,99 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     return geo.applyMatrix4(m)
   }
 
-  /** Skip a plant if its local merge failed — better a gap than a hard crash. */
-  const pushPlant = (list: THREE.BufferGeometry[], geo: THREE.BufferGeometry | null, lx: number, h: number, lz: number, sink = 0.15) => {
+  /**
+   * How each kind of plant varies and how hard the wind takes it. `sway` is a
+   * share of its material's wind budget, so a trunk and the crown it carries
+   * have to be quoted against the same budget or the crown floats off the top
+   * of the tree on a gust.
+   */
+  type Species = Omit<PlantBake, 'tint' | 'phase' | 'height'> & {
+    /** How far the per-plant colour jitter spreads. */
+    spread: number
+  }
+
+  const SPECIES: Record<string, Species> = {
+    palmTrunk: { spread: 0.42, sway: 1, rootShade: 0.2 },
+    palmFrond: { spread: 0.8, sway: 1, flutter: 0.8 },
+    nut: { spread: 0.35, sway: 1 },
+    broadTrunk: { spread: 0.5, sway: 1, rootShade: 0.28 },
+    canopy: { spread: 1, sway: 1, flutter: 0.55, underShade: 0.45 },
+    grass: { spread: 1.15, sway: 1, flutter: 0.4, rootShade: 0.38 },
+    fern: { spread: 1, sway: 1, flutter: 0.45, rootShade: 0.34 },
+    scrub: { spread: 0.95, sway: 1, flutter: 0.3, rootShade: 0.3, underShade: 0.22 },
+    reed: { spread: 0.85, sway: 1, flutter: 0.5, rootShade: 0.28 },
+    vine: { spread: 0.75, sway: 0, flutter: 1, hang: true },
+    wrack: { spread: 0.7, sway: 0 },
+    dead: { spread: 0.55, sway: 1, rootShade: 0.18 },
+    rock: { spread: 0.4, sway: 0 },
+    wood: { spread: 0.5, sway: 0 },
+    path: { spread: 0.3, sway: 0 },
+  }
+
+  const tint = new THREE.Color()
+
+  /**
+   * Write a plant's variation into its vertices. Everything that ends up in a
+   * merged batch goes through here: `mergeGeometries` refuses a batch whose
+   * attributes don't line up, and would take the whole island down with it.
+   */
+  const bakeFor = (
+    geo: THREE.BufferGeometry,
+    seed: number,
+    species: Species,
+    height?: number,
+  ) => {
+    geo.computeBoundingBox()
+    const own = geo.boundingBox ? geo.boundingBox.max.y : 1
+    return bakePlant(geo, {
+      tint: plantTint(seed, species.spread, tint),
+      height: height ?? Math.max(own, 0.1),
+      sway: species.sway,
+      flutter: species.flutter,
+      hang: species.hang,
+      rootShade: species.rootShade,
+      underShade: species.underShade,
+      phase: fbm(seed * 1.7, seed * 0.31),
+    })
+  }
+
+  /** Bake a plant and drop it on the hillside. Null geometry is skipped —
+   *  better a gap where a local merge failed than a hard crash. */
+  const plant = (
+    list: THREE.BufferGeometry[],
+    geo: THREE.BufferGeometry | null,
+    seed: number,
+    species: Species,
+    lx: number,
+    h: number,
+    lz: number,
+    sink = 0.15,
+  ) => {
     if (!geo) return
-    list.push(placeAt(geo, lx, h, lz, sink))
+    list.push(placeAt(bakeFor(geo, seed, species), lx, h, lz, sink))
+  }
+
+  /** Trunk, crown and nuts share one placement and one whole-plant height, so
+   *  the crown rides the trunk's lean instead of drifting off the top of it. */
+  const plantPalm = (tree: ReturnType<typeof palm>, seed: number, place: THREE.Matrix4) => {
+    trunks.push(bakeFor(tree.trunk, seed, SPECIES.palmTrunk).applyMatrix4(place))
+    for (const blade of tree.leaves) {
+      leaves.push(bakeFor(blade, seed, SPECIES.palmFrond, tree.height).applyMatrix4(place))
+    }
+    for (const nut of tree.nuts) {
+      nuts.push(bakeFor(nut, seed, SPECIES.nut, tree.height).applyMatrix4(place))
+    }
+  }
+
+  const plantBroadleaf = (
+    tree: { trunk: THREE.BufferGeometry; canopy: THREE.BufferGeometry[]; height: number },
+    seed: number,
+    place: THREE.Matrix4,
+  ) => {
+    broadTrunks.push(bakeFor(tree.trunk, seed, SPECIES.broadTrunk).applyMatrix4(place))
+    for (const blob of tree.canopy) {
+      broadCanopy.push(bakeFor(blob, seed, SPECIES.canopy, tree.height).applyMatrix4(place))
+    }
   }
 
   /** True when a local point sits on the spawn-facing landing cove. */
@@ -781,9 +902,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       const at = new THREE.Vector3(lx, h - 0.3, lz)
       const tree = palm(i + 2000)
       const place = new THREE.Matrix4().setPosition(at)
-      trunks.push(tree.trunk.applyMatrix4(place))
-      for (const blade of tree.leaves) leaves.push(blade.applyMatrix4(place))
-      for (const nut of tree.nuts) nuts.push(nut.applyMatrix4(place))
+      plantPalm(tree, i + 2000, place)
       shore.push(new THREE.Vector3(opts.x + lx, h, opts.z + lz))
     }
   }
@@ -817,19 +936,17 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const at = new THREE.Vector3(lx, h - 0.3, lz)
     const tree = palm(i + 1)
     const place = new THREE.Matrix4().setPosition(at)
-    trunks.push(tree.trunk.applyMatrix4(place))
-    for (const blade of tree.leaves) leaves.push(blade.applyMatrix4(place))
-    for (const nut of tree.nuts) nuts.push(nut.applyMatrix4(place))
+    plantPalm(tree, i + 1, place)
     shore.push(new THREE.Vector3(opts.x + lx, h, opts.z + lz))
   }
 
   // Broadleaf mid-story — the overgrown interior. Sits above the beach band,
   // thicker in the gullies where the relief dips — and piled onto the
   // approach face so the swim-in silhouette isn't a bare cone.
-  for (let i = 0; i < 3600 && broadTrunks.length < broadWanted; i++) {
+  for (let i = 0; i < 6000 && broadTrunks.length < broadWanted; i++) {
     const angle = i * 2.197
-    const radius = 45 + ((i * 17) % 290)
-    const approachBias = i % 2 === 0
+    const radius = 45 + ((i * 17) % 300)
+    const approachBias = i % 3 === 0
     const lx = approachBias
       ? COVE_X + (fbm(i, 3.3) - 0.5) * 210 + 50
       : Math.cos(angle) * radius
@@ -845,27 +962,24 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (dip < -2.5 && i % 3 === 0) continue
     const tree = broadleaf(i + 300)
     const place = new THREE.Matrix4().setPosition(lx, h - 0.25, lz)
-    broadTrunks.push(tree.trunk.applyMatrix4(place))
-    for (const blob of tree.canopy) broadCanopy.push(blob.applyMatrix4(place))
+    plantBroadleaf(tree, i + 300, place)
   }
 
   // Saplings — fill the gaps between palms and broadleaf so the mid-story
   // doesn't read as a few trees on a painted hill
   let saplings = 0
-  for (let i = 0; i < 1600 && saplings < saplingWanted; i++) {
+  for (let i = 0; i < 3200 && saplings < saplingWanted; i++) {
     const angle = i * 2.083
-    const radius = 70 + ((i * 21) % 250)
+    const radius = 60 + ((i * 21) % 270)
     const lx = Math.cos(angle) * radius + (fbm(i, 1.5) - 0.5) * 8
     const lz = Math.sin(angle) * radius + (fbm(i, 2.5) - 0.5) * 8
     const h = surface(lx, lz)
-    if (h < 3.5 || h > 45) continue
+    if (h < 3.5 || h > 72) continue
     const slope = Math.abs(surface(lx + 4, lz) - h) + Math.abs(surface(lx, lz + 4) - h)
     if (slope > 6) continue
     if (shore.some((s) => Math.hypot(s.x - opts.x - lx, s.z - opts.z - lz) < 4)) continue
-    const young = sapling(i + 1100)
     const place = new THREE.Matrix4().setPosition(lx, h - 0.08, lz)
-    broadTrunks.push(young.trunk.applyMatrix4(place))
-    for (const blob of young.canopy) broadCanopy.push(blob.applyMatrix4(place))
+    plantBroadleaf(sapling(i + 1100), i + 1100, place)
     saplings++
   }
 
@@ -887,7 +1001,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (slope > 4) continue
     // Skip if buried under a palm trunk
     if (shore.some((s) => Math.hypot(s.x - opts.x - lx, s.z - opts.z - lz) < 3.2)) continue
-    rocks.push(placeAt(rockChunk(i + 40), lx, h, lz, 0.2 + (i % 5) * 0.04))
+    plant(rocks, rockChunk(i + 40), i + 40, SPECIES.rock, lx, h, lz, 0.2 + (i % 5) * 0.04)
   }
 
   // Mid-slope boulders — the thing that stops a green cone reading as a cone
@@ -901,7 +1015,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
     // Prefer a bit of pitch — boulders collect where the ground tips
     if (slope < 1.2 || slope > 11) continue
-    boulderParts.push(placeAt(boulder(i + 1500), lx, h, lz, 0.35 + (i % 4) * 0.08))
+    plant(boulderParts, boulder(i + 1500), i + 1500, SPECIES.rock, lx, h, lz, 0.35 + (i % 4) * 0.08)
   }
 
   // Driftwood — mid-beach, sparse, sells the wash-up
@@ -915,7 +1029,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (h < 0.6 || h > 5) continue
     const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
     if (slope > 3.2) continue
-    wood.push(placeAt(driftwood(i + 90), lx, h, lz, 0.08))
+    plant(wood, driftwood(i + 90), i + 90, SPECIES.wood, lx, h, lz, 0.08)
   }
 
   // Tide wrack — wet-sand mats so the waterline isn't a painted edge
@@ -927,7 +1041,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const lz = coveBias ? COVE_Z + (fbm(i, 6.6) - 0.5) * 120 : Math.sin(angle) * radius
     const h = surface(lx, lz)
     if (h < 0.15 || h > 2.4) continue
-    pushPlant(wrackParts, tideWrack(i + 1700), lx, h, lz, 0.02)
+    plant(wrackParts, tideWrack(i + 1700), i + 1700, SPECIES.wrack, lx, h, lz, 0.02)
   }
 
   // Reeds in the wet band — vertical rhythm along the wash
@@ -941,28 +1055,33 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (h < 0.3 || h > 3.2) continue
     const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
     if (slope > 2.8) continue
-    pushPlant(reedParts, reedClump(i + 1800), lx, h, lz, 0.02)
+    plant(reedParts, reedClump(i + 1800), i + 1800, SPECIES.reed, lx, h, lz, 0.02)
   }
 
-  // Dune scrub — sits where sand turns green, softens the colour cliff
-  for (let i = 0; i < 2800 && scrubParts.length < scrubWanted; i++) {
+  // Dune scrub — sits where sand turns green, softens the colour cliff, and
+  // carries on up the shoulders so the slopes above the beach aren't bare
+  for (let i = 0; i < 5200 && scrubParts.length < scrubWanted; i++) {
     const angle = i * 2.071
-    const radius = 120 + ((i * 19) % 260)
-    const coveBias = i % 3 !== 2
-    const lx = coveBias ? COVE_X + (fbm(i, 1.9) - 0.5) * 170 : Math.cos(angle) * radius
-    const lz = coveBias ? COVE_Z + (fbm(i, 2.8) - 0.5) * 170 : Math.sin(angle) * radius
+    const radius = 80 + ((i * 19) % 280)
+    const coveBias = i % 3 === 0
+    const lx = coveBias
+      ? COVE_X + (fbm(i, 1.9) - 0.5) * 170
+      : Math.cos(angle) * radius + (fbm(i, 1.9) - 0.5) * 12
+    const lz = coveBias
+      ? COVE_Z + (fbm(i, 2.8) - 0.5) * 170
+      : Math.sin(angle) * radius + (fbm(i, 2.8) - 0.5) * 12
     const h = surface(lx, lz)
-    if (h < 2.8 || h > 28) continue
+    if (h < 2.8 || h > 62) continue
     const slope = Math.abs(surface(lx + 6, lz) - h) + Math.abs(surface(lx, lz + 6) - h)
     if (slope > 7.5) continue
-    pushPlant(scrubParts, scrubBush(i + 120), lx, h, lz, 0.05)
+    plant(scrubParts, scrubBush(i + 120), i + 120, SPECIES.scrub, lx, h, lz, 0.05)
   }
 
   // Ferns — understory between the trees, denser in the green band
-  for (let i = 0; i < 3000 && fernParts.length < fernWanted; i++) {
+  for (let i = 0; i < 5000 && fernParts.length < fernWanted; i++) {
     const angle = i * 2.279
-    const radius = 50 + ((i * 27) % 270)
-    const approachBias = onApproach(Math.cos(angle) * radius, Math.sin(angle) * radius) || i % 2 === 0
+    const radius = 50 + ((i * 27) % 285)
+    const approachBias = onApproach(Math.cos(angle) * radius, Math.sin(angle) * radius) || i % 3 === 0
     const lx = approachBias
       ? COVE_X + (fbm(i, 9.1) - 0.5) * 180
       : Math.cos(angle) * radius + (fbm(i, 9.1) - 0.5) * 10
@@ -970,34 +1089,36 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       ? COVE_Z + (fbm(i, 10.2) - 0.5) * 180
       : Math.sin(angle) * radius + (fbm(i, 10.2) - 0.5) * 10
     const h = surface(lx, lz)
-    if (h < 3.5 || h > 60) continue
+    if (h < 3.5 || h > 82) continue
     const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
     if (slope > 7.5) continue
-    pushPlant(fernParts, fernClump(i + 1900), lx, h, lz, 0.03)
+    plant(fernParts, fernClump(i + 1900), i + 1900, SPECIES.fern, lx, h, lz, 0.03)
   }
 
   // Grass — dense ground cover across the green band. Heavy cove bias so
   // looking down on landfall isn't a blank olive plane.
-  for (let i = 0; i < 20000 && grassParts.length < grassWanted; i++) {
+  for (let i = 0; i < 26000 && grassParts.length < grassWanted; i++) {
     const angle = i * 2.39996
-    const radius = 30 + ((i * 29) % 290)
-    // First ~40% of the budget is a tight carpet on the landing shelf
-    const carpet = grassParts.length < grassWanted * 0.4
+    const radius = 30 + ((i * 29) % 300)
+    // First third of the budget is a tight carpet on the landing shelf, where
+    // you'll be standing; the rest spreads out over the green band so the
+    // slopes above don't read as mown
+    const carpet = grassParts.length < grassWanted * 0.32
     const lx = carpet
       ? COVE_X + (fbm(i, 7.7) - 0.5) * 85
-      : i % 2 === 0
+      : i % 3 === 0
         ? COVE_X + (fbm(i, 7.7) - 0.5) * 160
         : Math.cos(angle) * radius + (fbm(i, 7.7) - 0.5) * 9
     const lz = carpet
       ? COVE_Z + (fbm(i, 8.8) - 0.5) * 85
-      : i % 2 === 0
+      : i % 3 === 0
         ? COVE_Z + (fbm(i, 8.8) - 0.5) * 160
         : Math.sin(angle) * radius + (fbm(i, 8.8) - 0.5) * 9
     const h = surface(lx, lz)
-    if (h < 1.6 || h > 70) continue
+    if (h < 1.6 || h > 95) continue
     const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
     if (slope > 6) continue
-    pushPlant(grassParts, grassTuft(i + 500), lx, h, lz, 0.02)
+    plant(grassParts, grassTuft(i + 500), i + 500, SPECIES.grass, lx, h, lz, 0.02)
   }
 
   // Fallen logs — the interior's weather, lying where trees once stood
@@ -1010,7 +1131,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (h < 5 || h > 50) continue
     const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
     if (slope > 4.5) continue
-    fallenParts.push(placeAt(fallenLog(i + 2100), lx, h, lz, 0.12))
+    plant(fallenParts, fallenLog(i + 2100), i + 2100, SPECIES.wood, lx, h, lz, 0.12)
   }
 
   // Dead snags — scattered through the green, the island's weather showing
@@ -1023,7 +1144,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (h < 4 || h > 55) continue
     const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
     if (slope > 6) continue
-    deadParts.push(placeAt(deadTree(i + 700), lx, h, lz, 0.1))
+    plant(deadParts, deadTree(i + 700), i + 700, SPECIES.dead, lx, h, lz, 0.1)
   }
 
   // Vines — hang off steeper faces in the green band, and off the broadleaf
@@ -1039,7 +1160,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // Want a face with some pitch — not flat ground, not a cliff
     if (slope < 1.8 || slope > 10) continue
     const anchor = h + 1.2 + fbm(i, 3.3) * 2.4
-    vineParts.push(placeAt(vine(i + 900), lx, anchor, lz, 0))
+    plant(vineParts, vine(i + 900), i + 900, SPECIES.vine, lx, anchor, lz, 0)
   }
 
   // A worn path from the landing beach up toward the interior — flat stones
@@ -1062,7 +1183,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
         if (h < 1.2 || h > 35) continue
         const stone = new THREE.CylinderGeometry(0.5 + fbm(i, 5.5) * 0.5, 0.6 + fbm(i, 6.6) * 0.5, 0.16, 6)
         stone.rotateY(fbm(i, 7.7) * Math.PI)
-        pathParts.push(placeAt(stone, lx, h, lz, 0.05))
+        plant(pathParts, stone, i + 2400, SPECIES.path, lx, h, lz, 0.05)
       }
     }
   }
@@ -1075,182 +1196,109 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     return da - db
   })
 
-  if (trunks.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(trunks, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, { color: 0x6b563c, roughness: 0.95, ...skylight }),
-      ),
-    )
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(leaves, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, {
-          color: 0x5f8a3e,
-          roughness: 0.85,
-          side: THREE.DoubleSide,
-          ...skylight,
-        }),
-      ),
-    )
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(nuts, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, { color: 0x6d5334, roughness: 1 }),
-      ),
-    )
-  }
+  /**
+   * Every plant layer, batched. Each entry is one draw call and one material:
+   * `wind` is metres of sway at full vertex weight and has to match between a
+   * trunk and the crown it carries, `translucency` is how much sun comes
+   * through the leaf, and `throughColor` is what colour it is by the time it
+   * gets out — always yellower than the leaf itself.
+   */
+  const layers: {
+    parts: THREE.BufferGeometry[]
+    color: number
+    roughness: number
+    wind?: number
+    translucency?: number
+    throughColor?: string
+    doubleSided?: boolean
+  }[] = [
+    { parts: trunks, color: 0x8a6f4c, roughness: 0.95, wind: PALM_WIND },
+    {
+      parts: leaves,
+      color: 0x74a83f,
+      roughness: 0.82,
+      wind: PALM_WIND,
+      translucency: 0.95,
+      throughColor: '#dcec7c',
+      doubleSided: true,
+    },
+    { parts: nuts, color: 0x7c6038, roughness: 1, wind: PALM_WIND },
+    { parts: broadTrunks, color: 0x6d573a, roughness: 0.96, wind: BROAD_WIND },
+    {
+      parts: broadCanopy,
+      color: 0x4d8130,
+      roughness: 0.88,
+      wind: BROAD_WIND,
+      translucency: 0.6,
+      throughColor: '#b6d962',
+    },
+    {
+      parts: grassParts,
+      color: 0x6f9c40,
+      roughness: 0.93,
+      wind: 0.15,
+      translucency: 0.8,
+      throughColor: '#e0ec86',
+      doubleSided: true,
+    },
+    {
+      parts: fernParts,
+      color: 0x4c7a2f,
+      roughness: 0.9,
+      wind: 0.13,
+      translucency: 0.85,
+      throughColor: '#cbe374',
+      doubleSided: true,
+    },
+    {
+      parts: scrubParts,
+      color: 0x547a38,
+      roughness: 0.92,
+      wind: 0.11,
+      translucency: 0.5,
+      throughColor: '#c2d96c',
+      doubleSided: true,
+    },
+    {
+      parts: reedParts,
+      color: 0x7a8d4a,
+      roughness: 0.9,
+      wind: 0.17,
+      translucency: 0.75,
+      throughColor: '#e2e88a',
+      doubleSided: true,
+    },
+    {
+      parts: vineParts,
+      color: 0x4d7530,
+      roughness: 0.9,
+      wind: 0.22,
+      translucency: 0.7,
+      throughColor: '#c6de70',
+      doubleSided: true,
+    },
+    { parts: wrackParts, color: 0x4f5c3a, roughness: 0.95 },
+    { parts: rocks, color: 0x8b8371, roughness: 0.97 },
+    { parts: boulderParts, color: 0x79715f, roughness: 0.97 },
+    { parts: wood, color: 0xa08a6a, roughness: 1 },
+    { parts: fallenParts, color: 0x63513a, roughness: 1 },
+    { parts: deadParts, color: 0xa89b86, roughness: 1, wind: 0.05 },
+    { parts: pathParts, color: 0x8f8674, roughness: 0.98 },
+  ]
 
-  if (rocks.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(rocks, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, { color: 0x6e6758, roughness: 0.97, ...skylight }),
-      ),
-    )
-  }
-
-  if (wood.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(wood, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, { color: 0x8a7355, roughness: 1, ...skylight }),
-      ),
-    )
-  }
-
-  if (scrubParts.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(scrubParts, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, {
-          color: 0x3d5c2e,
-          roughness: 0.92,
-          side: THREE.DoubleSide,
-          ...skylight,
-        }),
-      ),
-    )
-  }
-
-  if (broadTrunks.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(broadTrunks, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, { color: 0x54432e, roughness: 0.96, ...skylight }),
-      ),
-    )
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(broadCanopy, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, {
-          color: 0x35662b,
-          roughness: 0.9,
-          ...skylight,
-        }),
-      ),
-    )
-  }
-
-  if (grassParts.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(grassParts, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, {
-          color: 0x5a8438,
-          roughness: 0.95,
-          side: THREE.DoubleSide,
-          ...skylight,
-        }),
-      ),
-    )
-  }
-
-  if (deadParts.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(deadParts, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, { color: 0x8d8272, roughness: 1, ...skylight }),
-      ),
-    )
-  }
-
-  if (vineParts.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(vineParts, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, {
-          color: 0x3a5c28,
-          roughness: 0.92,
-          side: THREE.DoubleSide,
-          ...skylight,
-        }),
-      ),
-    )
-  }
-
-  if (pathParts.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(pathParts, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, { color: 0x7d7462, roughness: 0.98, ...skylight }),
-      ),
-    )
-  }
-
-  if (fernParts.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(fernParts, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, {
-          color: 0x3a5e2a,
-          roughness: 0.92,
-          side: THREE.DoubleSide,
-          ...skylight,
-        }),
-      ),
-    )
-  }
-
-  if (fallenParts.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(fallenParts, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, { color: 0x4a3c2c, roughness: 1, ...skylight }),
-      ),
-    )
-  }
-
-  if (boulderParts.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(boulderParts, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, { color: 0x5e574c, roughness: 0.97, ...skylight }),
-      ),
-    )
-  }
-
-  if (wrackParts.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(wrackParts, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, { color: 0x3d4a32, roughness: 0.95, ...skylight }),
-      ),
-    )
-  }
-
-  if (reedParts.length) {
-    group.add(
-      new THREE.Mesh(
-        mergeGeometries(reedParts, false) as THREE.BufferGeometry,
-        hazeMaterial(haze, {
-          color: 0x5a6e3c,
-          roughness: 0.9,
-          side: THREE.DoubleSide,
-          ...skylight,
-        }),
-      ),
-    )
+  for (const layer of layers) {
+    if (layer.parts.length === 0) continue
+    const material = foliage.material({
+      color: layer.color,
+      roughness: layer.roughness,
+      vertexColors: true,
+      side: layer.doubleSided ? THREE.DoubleSide : THREE.FrontSide,
+      wind: layer.wind,
+      translucency: layer.translucency,
+      throughColor: layer.throughColor,
+      ...skylight,
+    })
+    group.add(foliage.mesh(mergeGeometries(layer.parts, false) as THREE.BufferGeometry, material))
   }
 
   // —— rain catchment ————————————————————————————————————————
@@ -1271,7 +1319,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       transparent: true,
       opacity: 0.92,
     })
-    const rimMaterial = hazeMaterial(haze, { color: 0x6e6656, roughness: 0.95, ...skylight })
+    const rimMaterial = foliage.material({ color: 0x6e6656, roughness: 0.95, ...skylight })
 
     // Still water is level water: on any real slope a disc of it saws straight
     // through the hillside. So every candidate is scored for flatness and only
@@ -1325,7 +1373,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   // position; this mesh is the thing you notice first.
   let cairn: THREE.Vector3 | null = null
   {
-    const stoneMat = hazeMaterial(haze, { color: 0x6a6358, roughness: 0.97, ...skylight })
+    const stoneMat = foliage.material({ color: 0x6a6358, roughness: 0.97, ...skylight })
     const candidates: { lx: number; lz: number; h: number; slope: number }[] = []
     for (let i = 0; i < 700; i++) {
       const angle = i * 2.618 + 1.1
@@ -1369,7 +1417,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       // A short upright stick — reads as a marker, not a build
       const stick = new THREE.Mesh(
         new THREE.CylinderGeometry(0.025, 0.03, 0.9, 5),
-        hazeMaterial(haze, { color: 0x5a4634, roughness: 1, ...skylight }),
+        foliage.material({ color: 0x5a4634, roughness: 1, ...skylight }),
       )
       stick.position.set(0.12, y * 0.35 + 0.45, -0.08)
       stick.rotation.z = 0.12
@@ -1781,5 +1829,28 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     haze.copy(color)
   }
 
-  return { group, centre, heightAt, resolve, shore, pools, cairn, crabs: crabsApi, update, setHaze }
+  function setWeather(
+    time: number,
+    wind: number,
+    cloudShadow: number,
+    sunDir: THREE.Vector3,
+    sunColor: THREE.Color,
+  ) {
+    foliage.update(time, wind, WIND_HEADING, cloudShadow)
+    foliage.setSun(sunDir, sunColor)
+  }
+
+  return {
+    group,
+    centre,
+    heightAt,
+    resolve,
+    shore,
+    pools,
+    cairn,
+    crabs: crabsApi,
+    update,
+    setHaze,
+    setWeather,
+  }
 }

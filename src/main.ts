@@ -718,6 +718,17 @@ function frame() {
   )
   follow(camera.position.x, camera.position.z)
   island.setHaze(skyRig.horizonColor)
+  // A dead calm looks like a screenshot, so the trade wind never quite stops;
+  // a squall roughly triples it.
+  island.setWeather(
+    t,
+    0.45 + sea.weight * 0.35 + weather.storm * 1.5,
+    // Cloud shade needs a sun to block. Under a squall the deck is unbroken,
+    // so there are no bands left to cast — everything is in shade already.
+    weather.daylight * (0.55 - weather.storm * 0.45),
+    skyRig.sunDir,
+    skyRig.sunLight.color,
+  )
 
   oceanMat.uniforms.uTime.value = t
   oceanMat.uniforms.uAmp.value = oceanState.amp
