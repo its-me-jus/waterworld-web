@@ -234,7 +234,16 @@ export function createClimate(opts?: ClimateOptions) {
     return delta * DAY_LENGTH
   }
 
-  return { state, update, skip, secondsUntilDawn }
+  function setElapsed(seconds: number) {
+    elapsed = Math.max(0, seconds)
+    update(0)
+  }
+
+  function getElapsed() {
+    return elapsed
+  }
+
+  return { state, update, skip, setElapsed, getElapsed, secondsUntilDawn }
 }
 
 export type ClimateClock = ReturnType<typeof createClimate>

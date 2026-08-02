@@ -177,10 +177,16 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     rawFish += Math.max(0, n)
   }
 
+  function setFish(raw: number, smoked: number) {
+    rawFish = Math.max(0, Math.floor(raw))
+    smokedFish = Math.max(0, Math.floor(smoked))
+  }
+
   return {
     update,
     reset,
     grant,
+    setFish,
     get rawFish() {
       return rawFish
     },

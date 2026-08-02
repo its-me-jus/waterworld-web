@@ -15,7 +15,7 @@ import { barrelObject, crateObject, plankObject } from './wreck'
  * the beach — exist once per run and stay taken.
  */
 
-export type StashKind = 'plank' | 'barrel' | 'crate' | 'rope' | 'canvas'
+export type StashKind = 'plank' | 'barrel' | 'crate' | 'rope' | 'canvas' | 'plastic' | 'can' | 'leaf'
 export type Stash = Record<StashKind, number>
 
 const STASH_LABEL: Record<StashKind, { one: string; many: string }> = {
@@ -24,6 +24,9 @@ const STASH_LABEL: Record<StashKind, { one: string; many: string }> = {
   crate: { one: 'Crate', many: 'Crates' },
   rope: { one: 'Rope', many: 'Rope' },
   canvas: { one: 'Canvas', many: 'Canvas' },
+  plastic: { one: 'Bottle', many: 'Bottles' },
+  can: { one: 'Can', many: 'Cans' },
+  leaf: { one: 'Frond', many: 'Fronds' },
 }
 
 /** How far a drifter gets before it counts as left behind. */
@@ -54,6 +57,19 @@ function materials() {
       emissive: 0x3c444b,
       emissiveIntensity: 0.4,
     }),
+    plastic: new THREE.MeshStandardMaterial({
+      color: 0xc8d6e0,
+      roughness: 0.35,
+      metalness: 0.05,
+      transparent: true,
+      opacity: 0.82,
+    }),
+    tin: new THREE.MeshStandardMaterial({
+      color: 0x8a9188,
+      roughness: 0.45,
+      metalness: 0.7,
+    }),
+    label: new THREE.MeshStandardMaterial({ color: 0x6b4a32, roughness: 0.95 }),
   }
 }
 
@@ -129,6 +145,36 @@ function canvasObject(mat: Mats) {
   return group
 }
 
+/** A washed-up plastic bottle — ugly, sealed, and it floats. */
+function plasticBottleObject(mat: Mats) {
+  const group = new THREE.Group()
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.32, 8), mat.plastic)
+  body.position.y = 0.06
+  group.add(body)
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.045, 0.1, 6), mat.plastic)
+  neck.position.y = 0.26
+  group.add(neck)
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.035, 6), mat.tin)
+  cap.position.y = 0.32
+  group.add(cap)
+  return group
+}
+
+/** A rusted tin — whatever was in it is gone; the metal is still useful. */
+function tinCanObject(mat: Mats) {
+  const group = new THREE.Group()
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.16, 10), mat.tin)
+  group.add(body)
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.078, 0.078, 0.04, 10), mat.label)
+  band.position.y = 0.01
+  group.add(band)
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.008, 4, 12), mat.tin)
+  rim.rotation.x = Math.PI / 2
+  rim.position.y = 0.08
+  group.add(rim)
+  return group
+}
+
 type Drift = {
   x: number
   z: number
@@ -176,7 +222,16 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
   const mat = materials()
   const { interactions, vitals } = opts
 
-  const stash: Stash = { plank: 0, barrel: 0, crate: 0, rope: 0, canvas: 0 }
+  const stash: Stash = {
+    plank: 0,
+    barrel: 0,
+    crate: 0,
+    rope: 0,
+    canvas: 0,
+    plastic: 0,
+    can: 0,
+    leaf: 0,
+  }
   const finds: Find[] = []
   const up = new THREE.Vector3(0, 1, 0)
   const waveUp = new THREE.Vector3()
@@ -324,6 +379,34 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     })
   }
 
+  /**
+   * Draw fresh water from the nearest rain pool into a barrel/cistern.
+   * Returns how much was taken (0 if none in reach / too empty).
+   */
+  function drawFromPool(x: number, z: number, want: number, maxDist = 4.2): number {
+    let best: (typeof pools)[number] | null = null
+    let bestD = maxDist
+    for (const pool of pools) {
+      const d = Math.hypot(pool.at.x - x, pool.at.z - z)
+      if (d >= bestD || pool.full < 0.12) continue
+      bestD = d
+      best = pool
+    }
+    if (!best) return 0
+    const take = Math.min(want, best.full)
+    best.full -= take
+    return take
+  }
+
+  /** True when a drinkable rock hollow is close enough to scoop from. */
+  function poolNear(x: number, z: number, maxDist = 4.2): boolean {
+    for (const pool of pools) {
+      if (pool.full < 0.12) continue
+      if (Math.hypot(pool.at.x - x, pool.at.z - z) <= maxDist) return true
+    }
+    return false
+  }
+
   for (let i = 0; i < opts.shore.length; i += 3) {
     const at = opts.shore[i].clone()
     at.y += 0.22
@@ -355,8 +438,10 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     { build: () => plankObject(2.6, 0.34, mat.wood), verb: 'Take', label: 'Plank', lift: 0.04, use: (f: Find) => take(f, 'plank') },
     { build: () => barrelObject(mat.wood, mat.iron), verb: 'Take', label: 'Barrel', lift: 0.12, use: (f: Find) => take(f, 'barrel') },
     { build: () => kelpObject(mat), verb: 'Eat', label: 'Kelp', lift: 0.02, use: (f: Find) => consume(f, 0.14, 0.02) },
+    { build: () => plasticBottleObject(mat), verb: 'Take', label: 'Bottle', lift: 0.09, use: (f: Find) => take(f, 'plastic') },
     { build: () => plankObject(1.7, 0.26, mat.wood), verb: 'Take', label: 'Plank', lift: 0.03, use: (f: Find) => take(f, 'plank') },
     { build: () => coconutObject(mat), verb: 'Drink', label: 'Coconut', lift: 0.08, use: (f: Find) => consume(f, 0.12, 0.45) },
+    { build: () => tinCanObject(mat), verb: 'Take', label: 'Can', lift: 0.05, use: (f: Find) => take(f, 'can') },
     { build: () => crateObject(mat.wood), verb: 'Take', label: 'Crate', lift: 0.16, use: (f: Find) => take(f, 'crate') },
   ]
 
@@ -394,6 +479,18 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     if (kind === 'crate') return crateObject(mat.wood)
     if (kind === 'rope') return ropeObject(mat)
     if (kind === 'canvas') return canvasObject(mat)
+    if (kind === 'plastic') return plasticBottleObject(mat)
+    if (kind === 'can') return tinCanObject(mat)
+    if (kind === 'leaf') {
+      const g = new THREE.Group()
+      for (let i = 0; i < 3; i++) {
+        const blade = new THREE.Mesh(new THREE.PlaneGeometry(0.35, 1.4, 1, 3), mat.weed)
+        blade.position.set((i - 1) * 0.12, 0.2, i * 0.05)
+        blade.rotation.z = (i - 1) * 0.2
+        g.add(blade)
+      }
+      return g
+    }
     return plankObject(2.2, 0.3, mat.wood)
   }
 
@@ -474,7 +571,16 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     find.drift = {
       x: at.x,
       z: at.z,
-      lift: kind === 'barrel' || kind === 'crate' ? 0.14 : kind === 'plank' ? 0.04 : 0.08,
+      lift:
+        kind === 'barrel' || kind === 'crate'
+          ? 0.14
+          : kind === 'plastic'
+            ? 0.09
+            : kind === 'plank'
+              ? 0.04
+              : kind === 'can'
+                ? 0.05
+                : 0.08,
       spin: (Math.random() - 0.5) * 0.06,
       phase: Math.random() * 6,
       returnAt: 0,
@@ -498,11 +604,28 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     }
   }
 
+  function setStash(next: Stash) {
+    for (const key of Object.keys(stash) as StashKind[]) {
+      stash[key] = Math.max(0, Math.floor(next[key] ?? 0))
+    }
+  }
+
   // Seed the first spread close in, so the opening minute has something in it
   const origin = new THREE.Vector3()
   drifters.forEach((find, i) => scatter(find, origin, 18 + i * 14, 40 + i * 20))
 
-  return { stash, labels: STASH_LABEL, has, spend, update, reset, jettison }
+  return {
+    stash,
+    labels: STASH_LABEL,
+    has,
+    spend,
+    update,
+    reset,
+    setStash,
+    jettison,
+    drawFromPool,
+    poolNear,
+  }
 }
 
 export type Salvage = ReturnType<typeof createSalvage>

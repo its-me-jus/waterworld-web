@@ -4,6 +4,7 @@ import type { Hud } from './hud'
 import type { Interactable, Interactions } from './interact'
 import type { PlayerFrame } from './player'
 import type { Salvage, StashKind } from './salvage'
+import type { SavedBuild, SavedHold, SavedRoof } from './persist'
 import { eat, type Vitals } from './survival'
 import { sampleOcean } from './waves'
 import { barrelObject, crateObject, plankObject } from './wreck'
@@ -13,9 +14,10 @@ import { barrelObject, crateObject, plankObject } from './wreck'
  *
  * No craft menu, no markers. Recipes announce themselves the same way
  * everything else does: when you're standing where they'd work, with the
- * materials on you. A lean-to on the beach, a fire on the spire, a raft
- * lashed at the wreck's waterline — same F-to-use verbs, different ground.
- * The stash finally has a sink, and none of the recipes is the "right" path.
+ * materials on you. A shelter frame on the beach (walls and roof fashioned
+ * later), a fire on the spire, a raft lashed at the wreck's waterline — same
+ * F-to-use verbs, different ground. The stash finally has a sink, and none of
+ * the recipes is the "right" path.
  */
 
 export type Cost = Partial<Record<StashKind, number>>
@@ -48,7 +50,18 @@ export type ImproviseDeps = {
   current?: () => { x: number; z: number; strength: number }
 }
 
-type BuildKind = 'lean-to' | 'fire' | 'raft' | 'catch' | 'seat' | 'rack' | 'signal'
+type BuildKind =
+  | 'lean-to'
+  | 'fire'
+  | 'raft'
+  | 'catch'
+  | 'seat'
+  | 'rack'
+  | 'signal'
+  | 'pit'
+  | 'drip'
+  | 'cistern'
+  | 'camp-locker'
 
 type SmokeRack = {
   readyAt: number
@@ -56,6 +69,8 @@ type SmokeRack = {
 }
 
 type Hold = Record<StashKind, number>
+
+type RoofKind = 'none' | 'leaf' | 'canvas' | 'scrap'
 
 type Build = {
   kind: BuildKind
@@ -76,6 +91,20 @@ type Build = {
   mast?: boolean
   rail?: boolean
   locker?: boolean
+  /** Push oar lashed — poles harder and turns cleaner. */
+  oar?: boolean
+  /** Plastic bottles tied under the deck. */
+  floats?: boolean
+  /** How many times the deck has been widened (cap 3). */
+  expands?: number
+  /** Progressive shelter: walls lashed (0–2). */
+  sides?: number
+  /** Progressive shelter: roof covering. */
+  roof?: RoofKind
+  /** Barrel set under the lean-to as a cistern / windbreak. */
+  hasBarrel?: boolean
+  /** Frond mat under the shelter — warmer Rest. */
+  hasMat?: boolean
   /** Materials stowed in the deck locker. */
   hold?: Hold
   /** Stern scratched with the mate's mark. */
@@ -85,6 +114,14 @@ type Build = {
 }
 
 const LEAN_COST: Cost = { plank: 2, rope: 1 }
+const SIDE_COST: Cost = { plank: 1 }
+const ROOF_LEAF_COST: Cost = { leaf: 2 }
+const ROOF_CANVAS_COST: Cost = { canvas: 1 }
+const ROOF_SCRAP_COST: Cost = { plastic: 3, rope: 1 }
+const SHELTER_BARREL_COST: Cost = { barrel: 1 }
+const CISTERN_COST: Cost = { barrel: 1 }
+const MAT_COST: Cost = { leaf: 2, rope: 1 }
+const CAMP_LOCKER_COST: Cost = { crate: 1 }
 const FIRE_COST: Cost = { plank: 1 }
 const CATCH_COST: Cost = { canvas: 1, rope: 1 }
 const RAFT_COST: Cost = { plank: 3, rope: 1 }
@@ -95,6 +132,13 @@ const LOCKER_COST: Cost = { crate: 1 }
 const SEAT_COST: Cost = { plank: 1 }
 const RACK_COST: Cost = { plank: 1, rope: 1 }
 const SIGNAL_COST: Cost = { plank: 1, canvas: 1 }
+const EXPAND_COST: Cost = { plank: 2 }
+const OAR_COST: Cost = { plank: 1, rope: 1 }
+const FLOAT_COST: Cost = { plastic: 2 }
+const DRIP_COST: Cost = { can: 1, rope: 1 }
+/** Max times you can widen one raft. */
+const EXPAND_MAX = 3
+const SIDE_MAX = 2
 
 const REACH = 3.2
 const PLACE_AHEAD = 1.7
@@ -114,9 +158,16 @@ const DRY_MAX = 3
 /** How hard you can pole a raft (m/s). */
 const POLE_SPEED = 1.85
 const POLE_SPEED_BARREL = 2.35
+const POLE_OAR_BONUS = 0.55
+const POLE_FLOAT_BONUS = 0.28
 /** Passive sail drift (m/s) once the mast is rigged. */
 const SAIL_SPEED = 0.95
 const SAIL_SPEED_BARREL = 1.35
+/** Dug hollow / tin drip / cistern refill (seconds to full). */
+const PIT_REFILL = 200
+const DRIP_REFILL = 160
+const CISTERN_REFILL = 280
+const SHELTER_BARREL_REFILL = 240
 /** Standing eye height — match player.ts so Climb seats you on the deck. */
 const WALK_EYE = 1.62
 /** How far out you can still Climb aboard from the water. */
@@ -131,7 +182,16 @@ const WASH_LOCKER = 0.08
 const WASH_STORM_GATE = 0.42
 const WASH_RAIL_GATE = 0.72
 
-const emptyHold = (): Hold => ({ plank: 0, barrel: 0, crate: 0, rope: 0, canvas: 0 })
+const emptyHold = (): Hold => ({
+  plank: 0,
+  barrel: 0,
+  crate: 0,
+  rope: 0,
+  canvas: 0,
+  plastic: 0,
+  can: 0,
+  leaf: 0,
+})
 
 function holdCount(h: Hold) {
   let n = 0
@@ -239,28 +299,228 @@ function mats() {
       emissive: 0x3a2010,
       emissiveIntensity: 0.35,
     }),
+    plastic: new THREE.MeshStandardMaterial({
+      color: 0xc8d6e0,
+      roughness: 0.35,
+      metalness: 0.05,
+      transparent: true,
+      opacity: 0.82,
+    }),
+    tin: new THREE.MeshStandardMaterial({
+      color: 0x8a9188,
+      roughness: 0.45,
+      metalness: 0.7,
+    }),
+    sand: new THREE.MeshStandardMaterial({ color: 0x9a8460, roughness: 1 }),
+    leaf: new THREE.MeshStandardMaterial({
+      color: 0x4a6e32,
+      roughness: 0.92,
+      side: THREE.DoubleSide,
+    }),
   }
 }
 
-function leanToMesh(m: ReturnType<typeof mats>) {
+/**
+ * Progressive shelter — start with a frame, then fashion walls and a roof.
+ * Rest only once something is over your head.
+ */
+function shelterFrameMesh(m: ReturnType<typeof mats>) {
   const g = new THREE.Group()
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.08, 1.6), m.wood)
-  roof.position.set(0, 1.15, 0.15)
-  roof.rotation.x = -0.55
-  g.add(roof)
+  g.name = 'lean-to'
+  for (const [x, z, h] of [
+    [-1.0, 0.55, 1.35],
+    [1.0, 0.55, 1.35],
+    [-0.95, -0.55, 1.05],
+    [0.95, -0.55, 1.05],
+  ] as const) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, h, 0.1), m.wood)
+    post.position.set(x, h / 2, z)
+    g.add(post)
+  }
+  const ridge = plankObject(2.2, 0.1, m.wood)
+  ridge.position.set(0, 1.35, 0.35)
+  ridge.rotation.x = -0.35
+  g.add(ridge)
+  const cross = plankObject(1.5, 0.08, m.wood)
+  cross.rotation.y = Math.PI / 2
+  cross.position.set(0, 0.95, 0)
+  g.add(cross)
   for (const [x, z] of [
     [-1.0, 0.55],
     [1.0, 0.55],
-    [-0.95, -0.55],
   ] as const) {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.35, 0.1), m.wood)
-    post.position.set(x, 0.55, z)
-    g.add(post)
+    const lash = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.025, 4, 8), m.rope)
+    lash.position.set(x, 1.2, z)
+    g.add(lash)
   }
-  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.03, 4, 8), m.rope)
-  lash.position.set(-1.0, 1.05, 0.55)
+  const sideSlot = new THREE.Group()
+  sideSlot.name = 'sideSlot'
+  g.add(sideSlot)
+  const roofSlot = new THREE.Group()
+  roofSlot.name = 'roofSlot'
+  g.add(roofSlot)
+  const barrelSlot = new THREE.Group()
+  barrelSlot.name = 'barrelSlot'
+  barrelSlot.visible = false
+  g.add(barrelSlot)
+  const matSlot = new THREE.Group()
+  matSlot.name = 'matSlot'
+  matSlot.visible = false
+  g.add(matSlot)
+  return g
+}
+
+function fitShelterSide(shelter: THREE.Group, m: ReturnType<typeof mats>, n: number) {
+  const slot = shelter.getObjectByName('sideSlot') as THREE.Group
+  if (!slot) return
+  const z = n === 1 ? 0.55 : -0.55
+  for (let i = 0; i < 4; i++) {
+    const slat = plankObject(1.9, 0.07, m.wood)
+    slat.position.set(0, 0.25 + i * 0.28, z)
+    slat.rotation.x = n === 1 ? -0.08 : 0.08
+    slot.add(slat)
+  }
+  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.022, 4, 8), m.rope)
+  lash.position.set(-0.9, 0.7, z)
+  slot.add(lash)
+}
+
+function fitShelterRoof(
+  shelter: THREE.Group,
+  m: ReturnType<typeof mats>,
+  kind: 'leaf' | 'canvas' | 'scrap',
+) {
+  const slot = shelter.getObjectByName('roofSlot') as THREE.Group
+  if (!slot) return
+  while (slot.children.length) slot.remove(slot.children[0])
+  if (kind === 'leaf') {
+    for (let i = 0; i < 10; i++) {
+      const frond = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 1.8, 1, 3), m.leaf)
+      const pos = frond.geometry.attributes.position
+      for (let v = 0; v < pos.count; v++) {
+        const t = (pos.getY(v) + 0.9) / 1.8
+        pos.setZ(v, (1 - t) * 0.25)
+      }
+      frond.geometry.computeVertexNormals()
+      frond.position.set((i - 4.5) * 0.24, 1.2, 0.1)
+      frond.rotation.x = -0.55
+      frond.rotation.z = ((i % 3) - 1) * 0.08
+      slot.add(frond)
+    }
+  } else if (kind === 'canvas') {
+    const sheet = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 2.0, 3, 3), m.cloth)
+    const pos = sheet.geometry.attributes.position
+    for (let i = 0; i < pos.count; i++) {
+      pos.setZ(i, Math.sin(pos.getX(i) * 1.2) * 0.04)
+    }
+    sheet.geometry.computeVertexNormals()
+    sheet.position.set(0, 1.25, 0.12)
+    sheet.rotation.x = -0.55
+    slot.add(sheet)
+    const edge = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 2.4, 4), m.rope)
+    edge.rotation.z = Math.PI / 2
+    edge.position.set(0, 1.05, 0.85)
+    slot.add(edge)
+  } else {
+    // Scrap tarp — bottles flattened under rope courses
+    for (let i = 0; i < 6; i++) {
+      const scrap = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 1.1), m.plastic)
+      scrap.position.set((i - 2.5) * 0.4, 1.22, 0.05 + (i % 2) * 0.08)
+      scrap.rotation.x = -0.55
+      slot.add(scrap)
+    }
+    const course = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 2.5, 4), m.rope)
+    course.rotation.z = Math.PI / 2
+    course.position.set(0, 1.15, 0.4)
+    slot.add(course)
+  }
+}
+
+function fitShelterBarrel(shelter: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = shelter.getObjectByName('barrelSlot') as THREE.Group
+  if (!slot || slot.children.length) {
+    if (slot) slot.visible = true
+    return
+  }
+  const barrel = barrelObject(m.wood, m.iron)
+  barrel.position.set(0.75, 0.35, -0.15)
+  slot.add(barrel)
+  const water = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.08, 10), m.water)
+  water.position.set(0.75, 0.72, -0.15)
+  water.name = 'water'
+  water.visible = false
+  slot.add(water)
+  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.03, 4, 8), m.rope)
+  lash.position.set(0.75, 0.55, -0.15)
+  lash.rotation.x = Math.PI / 2
+  slot.add(lash)
+  slot.visible = true
+}
+
+function fitShelterMat(shelter: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = shelter.getObjectByName('matSlot') as THREE.Group
+  if (!slot || slot.children.length) {
+    if (slot) slot.visible = true
+    return
+  }
+  for (let i = 0; i < 7; i++) {
+    const frond = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 1.6, 1, 2), m.leaf)
+    frond.rotation.x = -Math.PI / 2
+    frond.position.set((i - 3) * 0.22, 0.04, 0.05)
+    frond.rotation.z = ((i % 3) - 1) * 0.05
+    slot.add(frond)
+  }
+  const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1.5, 4), m.rope)
+  cord.rotation.z = Math.PI / 2
+  cord.position.set(0, 0.05, 0.55)
+  slot.add(cord)
+  slot.visible = true
+}
+
+function campLockerMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  g.name = 'camp-locker'
+  const box = crateObject(m.wood)
+  box.position.y = 0.28
+  box.scale.setScalar(0.95)
+  g.add(box)
+  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.03, 4, 8), m.rope)
+  lash.position.set(0, 0.45, 0.2)
+  lash.rotation.x = Math.PI / 2
   g.add(lash)
   return g
+}
+
+function cisternMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  g.name = 'cistern'
+  const barrel = barrelObject(m.wood, m.iron)
+  barrel.position.y = 0.35
+  g.add(barrel)
+  const water = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.1, 10), m.water)
+  water.position.y = 0.72
+  water.name = 'water'
+  water.visible = false
+  g.add(water)
+  // Open bung — reads as a rain mouth
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.025, 4, 10), m.iron)
+  rim.rotation.x = Math.PI / 2
+  rim.position.y = 0.78
+  g.add(rim)
+  return g
+}
+
+function recomputeShelter(b: Build) {
+  let s = 0.28
+  s += (b.sides ?? 0) * 0.2
+  if (b.roof === 'leaf') s += 0.38
+  else if (b.roof === 'canvas') s += 0.52
+  else if (b.roof === 'scrap') s += 0.32
+  if (b.hasBarrel) s += 0.1
+  if (b.hasMat) s += 0.06
+  // Height band: inland frames hold heat a touch better
+  if (b.deckY > 2) s += 0.08
+  b.shelter = s
 }
 
 /** Rising spark bits / smoke puffs — positions rewritten each frame in animateFire. */
@@ -659,6 +919,17 @@ function raftMesh(m: ReturnType<typeof mats>, withBarrel: boolean) {
   markSlot.name = 'markSlot'
   markSlot.visible = false
   g.add(markSlot)
+  const expandSlot = new THREE.Group()
+  expandSlot.name = 'expandSlot'
+  g.add(expandSlot)
+  const oarSlot = new THREE.Group()
+  oarSlot.name = 'oarSlot'
+  oarSlot.visible = false
+  g.add(oarSlot)
+  const floatSlot = new THREE.Group()
+  floatSlot.name = 'floatSlot'
+  floatSlot.visible = false
+  g.add(floatSlot)
 
   return g
 }
@@ -758,6 +1029,111 @@ function fitMark(raft: THREE.Group, m: ReturnType<typeof mats>) {
   slot.visible = true
 }
 
+/** Lash another course of planks — the deck grows under your feet. */
+function fitExpand(raft: THREE.Group, m: ReturnType<typeof mats>, n: number) {
+  const slot = raft.getObjectByName('expandSlot') as THREE.Group
+  if (!slot) return
+  const side = n % 2 === 1 ? 1 : -1
+  const row = Math.floor((n - 1) / 2)
+  for (let i = 0; i < 3; i++) {
+    const plank = plankObject(2.4 + row * 0.2, 0.28, m.wood)
+    plank.position.set(row * 0.15, 0.06, side * (1.05 + row * 0.32) + (i - 1) * 0.08)
+    plank.rotation.y = side * 0.04
+    slot.add(plank)
+  }
+  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.025, 4, 8), m.rope)
+  lash.rotation.x = Math.PI / 2
+  lash.position.set(0.4, 0.14, side * (1.05 + row * 0.32))
+  slot.add(lash)
+}
+
+function fitOar(raft: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = raft.getObjectByName('oarSlot') as THREE.Group
+  if (!slot || slot.children.length) {
+    if (slot) slot.visible = true
+    return
+  }
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.032, 2.4, 6), m.brand)
+  shaft.rotation.z = Math.PI / 2
+  shaft.rotation.y = -0.35
+  shaft.position.set(0.2, 0.45, -0.95)
+  slot.add(shaft)
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 0.22), m.wood)
+  blade.position.set(-0.95, 0.45, -1.15)
+  blade.rotation.y = -0.35
+  blade.rotation.z = 0.15
+  slot.add(blade)
+  const grip = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.012, 4, 8), m.rope)
+  grip.position.set(1.15, 0.45, -0.75)
+  grip.rotation.y = Math.PI / 2
+  slot.add(grip)
+  slot.visible = true
+}
+
+function fitFloat(raft: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = raft.getObjectByName('floatSlot') as THREE.Group
+  if (!slot || slot.children.length) {
+    if (slot) slot.visible = true
+    return
+  }
+  for (const [x, z] of [
+    [0.9, 0.85],
+    [0.9, -0.85],
+    [-0.6, 0.9],
+    [-0.6, -0.9],
+  ] as const) {
+    const bottle = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.32, 8), m.plastic)
+    bottle.rotation.z = Math.PI / 2
+    bottle.position.set(x, -0.08, z)
+    slot.add(bottle)
+    const lash = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.02, 4, 8), m.rope)
+    lash.rotation.y = Math.PI / 2
+    lash.position.set(x, -0.02, z)
+    slot.add(lash)
+  }
+  slot.visible = true
+}
+
+function digPitMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  g.name = 'pit'
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.08, 6, 16), m.sand)
+  rim.rotation.x = Math.PI / 2
+  rim.position.y = 0.04
+  g.add(rim)
+  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.28, 0.22, 12), m.sand)
+  bowl.position.y = -0.02
+  g.add(bowl)
+  const water = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.28, 0.05, 12), m.water)
+  water.position.y = 0.02
+  water.name = 'water'
+  water.visible = false
+  g.add(water)
+  return g
+}
+
+function dripMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  g.name = 'drip'
+  const stake = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.1, 0.06), m.wood)
+  stake.position.set(0, 0.5, 0)
+  g.add(stake)
+  const can = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.18, 10), m.tin)
+  can.position.set(0.05, 0.85, 0)
+  can.rotation.z = 0.55
+  g.add(can)
+  const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.35, 4), m.rope)
+  cord.position.set(0.02, 0.95, 0)
+  cord.rotation.z = 0.4
+  g.add(cord)
+  const drip = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), m.water)
+  drip.position.set(0.12, 0.72, 0)
+  drip.name = 'water'
+  drip.visible = false
+  g.add(drip)
+  return g
+}
+
 function animateSail(raft: THREE.Object3D, t: number) {
   const sail = raft.getObjectByName('sail')
   if (!sail) return
@@ -819,8 +1195,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const sitPos = new THREE.Vector3()
   const dryPos = new THREE.Vector3()
   const takeDryPos = new THREE.Vector3()
+  const digPos = new THREE.Vector3()
+  const dripPos = new THREE.Vector3()
 
   let yaw = 0
+  let lookPitch = 0
   let onLand = false
   let groundY = -1000
   let nearWaterline = false
@@ -832,6 +1211,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let saidPole = false
   let saidSail = false
   let saidWash = false
+  let saidOar = false
   let swimming = false
   let onRaftDeck = false
   /** Seconds of stickiness after Climb — kills leftover swim speed that throws you off. */
@@ -910,8 +1290,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
   deps.interactions.add({
     position: leanPos,
-    verb: 'Lash',
-    label: 'Lean-to',
+    verb: 'Raise',
+    label: 'Frame',
     radius: REACH,
     available: () =>
       deps.vitals.alive &&
@@ -924,8 +1304,371 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const x = leanPos.x
       const z = leanPos.z
       const y = deps.groundAt(x, z)
-      addBuild('lean-to', leanToMesh(m), x, z, y, 2.8, groundY > 2 ? 1.05 : 0.88)
-      deps.hud.whisper('Lashed. The wind finds less of you.')
+      const build = addBuild('lean-to', shelterFrameMesh(m), x, z, y, 2.8, 0.28, {
+        sides: 0,
+        roof: 'none',
+        hasBarrel: false,
+        water: 0,
+      })
+      recomputeShelter(build)
+      deps.hud.whisper('Posts in the sand. Walls and a roof still to fashion.')
+    },
+  })
+
+  function nearestShelter(maxDist = 2.8) {
+    return nearestOfKind(px, pz, 'lean-to', maxDist)
+  }
+
+  function shelterComplete(b: Build) {
+    return (b.roof ?? 'none') !== 'none'
+  }
+
+  function attachBarrelDrink(build: Build, label: string) {
+    const drink = deps.interactions.add({
+      position: build.object.position,
+      verb: 'Drink',
+      label,
+      radius: 2.5,
+      available: () => deps.vitals.alive && (build.water ?? 0) > 0.1,
+      use: () => {
+        const left = build.water ?? 0
+        if (left <= 0.1) return
+        const sip = Math.min(0.4, left)
+        build.water = left - sip
+        eat(deps.vitals, 0, sip * 0.88)
+        const waterMesh = build.object.getObjectByName('water')
+        if (waterMesh) waterMesh.visible = (build.water ?? 0) > 0.08
+        deps.hud.whisper(
+          (build.water ?? 0) > 0.15 ? 'From the barrel. Cool and still.' : 'The cask runs low.',
+        )
+      },
+    })
+    build.items.push(drink)
+  }
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Lash',
+    label: 'Wall',
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      return (
+        !!s &&
+        deps.vitals.alive &&
+        onLand &&
+        (s.sides ?? 0) < SIDE_MAX &&
+        deps.salvage.has(SIDE_COST)
+      )
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(SIDE_COST)) return
+      s.sides = (s.sides ?? 0) + 1
+      fitShelterSide(s.object, m, s.sides)
+      recomputeShelter(s)
+      deps.hud.whisper(
+        s.sides === 1
+          ? 'One wall. The wind finds less of you.'
+          : 'Both sides closed. Only the roof left open.',
+      )
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Roof',
+    label: 'Fronds',
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      return (
+        !!s &&
+        deps.vitals.alive &&
+        onLand &&
+        (s.roof ?? 'none') === 'none' &&
+        deps.salvage.has(ROOF_LEAF_COST)
+      )
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(ROOF_LEAF_COST)) return
+      s.roof = 'leaf'
+      fitShelterRoof(s.object, m, 'leaf')
+      recomputeShelter(s)
+      deps.hud.whisper('Fronds layered thick. Shade enough to Rest.')
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Roof',
+    label: 'Tarp',
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      if (!s || !deps.vitals.alive || !onLand) return false
+      if (!deps.salvage.has(ROOF_CANVAS_COST)) return false
+      const roof = s.roof ?? 'none'
+      // Fresh roof, or upgrade leaf/scrap later when you find canvas
+      return roof === 'none' || roof === 'leaf' || roof === 'scrap'
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(ROOF_CANVAS_COST)) return
+      const was = s.roof ?? 'none'
+      s.roof = 'canvas'
+      fitShelterRoof(s.object, m, 'canvas')
+      recomputeShelter(s)
+      deps.hud.whisper(
+        was === 'none'
+          ? 'Canvas stretched taut. A real roof. Rest under it.'
+          : 'Better tarp over the old cover. The rain sheds clean.',
+      )
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Roof',
+    label: 'Scrap',
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      // Prefer canvas/leaf when you have them — scrap is the improviser's last roof
+      if (!s || (s.roof ?? 'none') !== 'none') return false
+      if (deps.salvage.has(ROOF_CANVAS_COST) || deps.salvage.has(ROOF_LEAF_COST)) return false
+      return deps.vitals.alive && onLand && deps.salvage.has(ROOF_SCRAP_COST)
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(ROOF_SCRAP_COST)) return
+      s.roof = 'scrap'
+      fitShelterRoof(s.object, m, 'scrap')
+      recomputeShelter(s)
+      deps.hud.whisper('Bottles and rope. Ugly — but it keeps the rain off.')
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Set',
+    label: 'Barrel',
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      return (
+        !!s &&
+        deps.vitals.alive &&
+        onLand &&
+        !s.hasBarrel &&
+        deps.salvage.has(SHELTER_BARREL_COST)
+      )
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(SHELTER_BARREL_COST)) return
+      s.hasBarrel = true
+      s.water = 0.25
+      fitShelterBarrel(s.object, m)
+      recomputeShelter(s)
+      attachBarrelDrink(s, 'Barrel')
+      deps.hud.whisper('Barrel under the eaves. Rain will fill it. Drink when it does.')
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Lay',
+    label: 'Mat',
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      return (
+        !!s &&
+        shelterComplete(s) &&
+        deps.vitals.alive &&
+        onLand &&
+        !s.hasMat &&
+        deps.salvage.has(MAT_COST)
+      )
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(MAT_COST)) return
+      s.hasMat = true
+      fitShelterMat(s.object, m)
+      recomputeShelter(s)
+      deps.hud.whisper('Fronds under you. Sleep will find the ground softer.')
+    },
+  })
+
+  // Scoop rain-pool / catch water into a barrel — can in hand is the ladle
+  // (not spent). Without a can you can still tip a catch into a nearby cask.
+  function nearestFillableBarrel() {
+    const shelter = nearestShelter(3.2)
+    if (shelter?.hasBarrel && (shelter.water ?? 0) < 0.92) return shelter
+    const cistern = nearestOfKind(px, pz, 'cistern', 3.2)
+    if (cistern && (cistern.water ?? 0) < 0.92) return cistern
+    return null
+  }
+
+  function tryFillBarrel(target: Build): boolean {
+    const room = 1 - (target.water ?? 0)
+    if (room < 0.08) return false
+    // Prefer a rain-catch in arm's reach, then a rock pool
+    const catchBuild = nearestOfKind(px, pz, 'catch', 3.4)
+    if (catchBuild && (catchBuild.water ?? 0) > 0.1) {
+      const take = Math.min(room, catchBuild.water ?? 0, 0.45)
+      catchBuild.water = (catchBuild.water ?? 0) - take
+      target.water = (target.water ?? 0) + take
+      const catchWater = catchBuild.object.getObjectByName('water')
+      if (catchWater) catchWater.visible = (catchBuild.water ?? 0) > 0.05
+      const barrelWater = target.object.getObjectByName('water')
+      if (barrelWater) barrelWater.visible = (target.water ?? 0) > 0.08
+      deps.hud.whisper('Tipped into the barrel. Kept.')
+      return true
+    }
+    if (!deps.salvage.poolNear(px, pz)) return false
+    // A tin can scoops from a rock hollow; bare hands spill most of it
+    const want = deps.salvage.stash.can > 0 ? Math.min(room, 0.4) : Math.min(room, 0.18)
+    const got = deps.salvage.drawFromPool(px, pz, want)
+    if (got < 0.05) return false
+    target.water = (target.water ?? 0) + got
+    const barrelWater = target.object.getObjectByName('water')
+    if (barrelWater) barrelWater.visible = true
+    deps.hud.whisper(
+      deps.salvage.stash.can > 0
+        ? 'Scooped with the tin. The barrel takes it.'
+        : 'Cupped hands. Most spills — some stays.',
+    )
+    return true
+  }
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Fill',
+    label: 'Barrel',
+    radius: 3.2,
+    available: () => {
+      if (!deps.vitals.alive || !onLand) return false
+      const target = nearestFillableBarrel()
+      if (!target) return false
+      if (nearestOfKind(px, pz, 'catch', 3.4) && (nearestOfKind(px, pz, 'catch', 3.4)?.water ?? 0) > 0.1) {
+        return true
+      }
+      return deps.salvage.poolNear(px, pz)
+    },
+    use: () => {
+      const target = nearestFillableBarrel()
+      if (!target) return
+      tryFillBarrel(target)
+    },
+  })
+
+  // Standalone cistern — a barrel planted open to the sky, no shelter needed
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Plant',
+    label: 'Cistern',
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      onLand &&
+      groundY > 0.6 &&
+      deps.salvage.has(CISTERN_COST) &&
+      // Don't steal the Set Barrel prompt when you're at a frame
+      !(nearestShelter(2.8) && !nearestShelter(2.8)?.hasBarrel) &&
+      clearOfBuilds(leanPos.x, leanPos.z, 1.8) &&
+      !nearestOfKind(leanPos.x, leanPos.z, 'cistern', 3.5),
+    use: () => {
+      if (!deps.salvage.spend(CISTERN_COST)) return
+      const x = leanPos.x
+      const z = leanPos.z
+      const y = deps.groundAt(x, z)
+      const build = addBuild('cistern', cisternMesh(m), x, z, y, 1.5, 0.05, { water: 0.2 })
+      attachBarrelDrink(build, 'Cistern')
+      deps.hud.whisper('Barrel open to the sky. Patience fills it.')
+    },
+  })
+
+  // Dry-ground crate locker — the island answer to the raft hold
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Lash',
+    label: 'Crate',
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      onLand &&
+      groundY > 0.7 &&
+      deps.salvage.has(CAMP_LOCKER_COST) &&
+      clearOfBuilds(leanPos.x, leanPos.z, 1.7) &&
+      !nearestOfKind(leanPos.x, leanPos.z, 'camp-locker', 4) &&
+      // Prefer Set Barrel when you're standing at a frame that needs one
+      !(nearestShelter(2.8) && !nearestShelter(2.8)?.hasBarrel && deps.salvage.has(SHELTER_BARREL_COST)),
+    use: () => {
+      if (!deps.salvage.spend(CAMP_LOCKER_COST)) return
+      const x = leanPos.x
+      const z = leanPos.z
+      const y = deps.groundAt(x, z)
+      addBuild('camp-locker', campLockerMesh(m), x, z, y, 1.6, 0.08, { hold: emptyHold() })
+      deps.hud.whisper('Crate on dry sand. Stow what the swim cannot carry.')
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Stow',
+    label: 'in crate',
+    radius: 2.5,
+    available: () => {
+      const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
+      if (!locker?.hold || !deps.vitals.alive) return false
+      const s = deps.salvage.stash
+      return s.plank + s.barrel + s.crate + s.rope + s.canvas + s.plastic + s.can + s.leaf > 0
+    },
+    use: () => {
+      const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
+      if (!locker?.hold) return
+      const s = deps.salvage.stash
+      let moved = 0
+      for (const k of Object.keys(s) as StashKind[]) {
+        if (s[k] <= 0) continue
+        locker.hold[k] += s[k]
+        moved += s[k]
+        s[k] = 0
+      }
+      if (moved <= 0) return
+      deps.hud.whisper(
+        moved === 1 ? 'One piece in the crate.' : `${moved} pieces stowed ashore.`,
+      )
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Fetch',
+    label: 'from crate',
+    radius: 2.5,
+    available: () => {
+      const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
+      if (!locker?.hold || !deps.vitals.alive) return false
+      return holdCount(locker.hold) > 0
+    },
+    use: () => {
+      const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
+      if (!locker?.hold) return
+      const s = deps.salvage.stash
+      let moved = 0
+      for (const k of Object.keys(locker.hold) as StashKind[]) {
+        if (locker.hold[k] <= 0) continue
+        s[k] += locker.hold[k]
+        moved += locker.hold[k]
+        locker.hold[k] = 0
+      }
+      if (moved <= 0) return
+      deps.hud.whisper(moved === 1 ? 'Back in the hands.' : 'The crate empties into your arms.')
     },
   })
 
@@ -1319,7 +2062,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const raft = nearestRaftOnDeck()
       if (!raft?.locker || !deps.vitals.alive) return false
       const s = deps.salvage.stash
-      return s.plank + s.barrel + s.crate + s.rope + s.canvas > 0
+      return (
+        s.plank + s.barrel + s.crate + s.rope + s.canvas + s.plastic + s.can + s.leaf > 0
+      )
     },
     use: () => {
       const raft = nearestRaftOnDeck()
@@ -1383,6 +2128,160 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
+  deps.interactions.add({
+    position: raftFitPos,
+    verb: 'Lash',
+    label: 'Deck',
+    radius: 2.8,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      return (
+        !!raft &&
+        (raft.expands ?? 0) < EXPAND_MAX &&
+        deps.vitals.alive &&
+        deps.salvage.has(EXPAND_COST)
+      )
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !deps.salvage.spend(EXPAND_COST)) return
+      raft.expands = (raft.expands ?? 0) + 1
+      raft.radius += 0.38
+      fitExpand(raft.object, m, raft.expands)
+      deps.hud.whisper(
+        raft.expands === 1
+          ? 'Two more planks. The deck grows.'
+          : raft.expands >= EXPAND_MAX
+            ? 'As wide as the lashing will hold.'
+            : 'Wider still. Room to work.',
+      )
+    },
+  })
+
+  deps.interactions.add({
+    position: raftFitPos,
+    verb: 'Lash',
+    label: 'Oar',
+    radius: 2.8,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      return !!raft && !raft.oar && deps.vitals.alive && deps.salvage.has(OAR_COST)
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !deps.salvage.spend(OAR_COST)) return
+      raft.oar = true
+      fitOar(raft.object, m)
+      deps.hud.whisper('An oar on the thwart. The pole has a partner.')
+    },
+  })
+
+  deps.interactions.add({
+    position: raftFitPos,
+    verb: 'Lash',
+    label: 'Floats',
+    radius: 2.8,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      return !!raft && !raft.floats && deps.vitals.alive && deps.salvage.has(FLOAT_COST)
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !deps.salvage.spend(FLOAT_COST)) return
+      raft.floats = true
+      raft.buoyant = true
+      raft.shelter = Math.max(raft.shelter, raft.shelter + 0.08)
+      fitFloat(raft.object, m)
+      deps.hud.whisper('Bottles under the deck. She rides higher.')
+    },
+  })
+
+  // Dig a hollow in soft sand — rain fills it the way rock pools do, slower.
+  // Only when you're looking at the ground, so it doesn't steal every beach prompt.
+  deps.interactions.add({
+    position: digPos,
+    verb: 'Dig',
+    label: 'Hollow',
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      onLand &&
+      !carried &&
+      lookPitch > 0.28 &&
+      groundY > 0.45 &&
+      groundY < 3.2 &&
+      clearOfBuilds(digPos.x, digPos.z, 1.8) &&
+      !nearestOfKind(digPos.x, digPos.z, 'pit', 4),
+    use: () => {
+      const x = digPos.x
+      const z = digPos.z
+      const y = deps.groundAt(x, z)
+      const build = addBuild('pit', digPitMesh(m), x, z, y, 1.6, 0, { water: 0.15 })
+      const drink = deps.interactions.add({
+        position: build.object.position,
+        verb: 'Drink',
+        label: 'Hollow',
+        radius: 2.4,
+        available: () => deps.vitals.alive && (build.water ?? 0) > 0.1,
+        use: () => {
+          const left = build.water ?? 0
+          if (left <= 0.1) return
+          const sip = Math.min(0.28, left)
+          build.water = left - sip
+          eat(deps.vitals, 0, sip * 0.75)
+          const waterMesh = build.object.getObjectByName('water')
+          if (waterMesh) waterMesh.visible = (build.water ?? 0) > 0.08
+          deps.hud.whisper(
+            (build.water ?? 0) > 0.12 ? 'Brackish. Better than salt.' : 'Muddy dregs.',
+          )
+        },
+      })
+      build.items.push(drink)
+      deps.hud.whisper('Sand under the nails. A hollow that will hold rain.')
+    },
+  })
+
+  deps.interactions.add({
+    position: dripPos,
+    verb: 'Hang',
+    label: 'Tin drip',
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      onLand &&
+      groundY > 0.8 &&
+      deps.salvage.has(DRIP_COST) &&
+      clearOfBuilds(dripPos.x, dripPos.z, 1.5),
+    use: () => {
+      if (!deps.salvage.spend(DRIP_COST)) return
+      const x = dripPos.x
+      const z = dripPos.z
+      const y = deps.groundAt(x, z)
+      const build = addBuild('drip', dripMesh(m), x, z, y, 1.4, 0, { water: 0.2 })
+      const drink = deps.interactions.add({
+        position: build.object.position,
+        verb: 'Drink',
+        label: 'Tin drip',
+        radius: 2.3,
+        available: () => deps.vitals.alive && (build.water ?? 0) > 0.08,
+        use: () => {
+          const left = build.water ?? 0
+          if (left <= 0.08) return
+          const sip = Math.min(0.22, left)
+          build.water = left - sip
+          eat(deps.vitals, 0, sip * 0.9)
+          const waterMesh = build.object.getObjectByName('water')
+          if (waterMesh) waterMesh.visible = (build.water ?? 0) > 0.06
+          deps.hud.whisper(
+            (build.water ?? 0) > 0.1 ? 'A mouthful from the tin.' : 'The tin runs dry.',
+          )
+        },
+      })
+      build.items.push(drink)
+      deps.hud.whisper('A can on a stake. Rain will find it.')
+    },
+  })
+
   // Held fish — eat when nothing more urgent is in reach; cook at a fire.
   // The eat hotspot sits on the body, so without this gate it beats every
   // world prompt (lash, rest, …) on mobile.
@@ -1397,6 +2296,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (raft && !raft.mast && deps.salvage.has(MAST_COST)) return true
       if (raft && !raft.rail && deps.salvage.has(RAIL_COST)) return true
       if (raft && !raft.locker && deps.salvage.has(LOCKER_COST)) return true
+      if (raft && !raft.oar && deps.salvage.has(OAR_COST)) return true
+      if (raft && !raft.floats && deps.salvage.has(FLOAT_COST)) return true
+      if (raft && (raft.expands ?? 0) < EXPAND_MAX && deps.salvage.has(EXPAND_COST)) return true
       if (deps.salvage.has(FIRE_COST)) return true
       return false
     }
@@ -1407,10 +2309,45 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     if (groundY > 0.8 && deps.salvage.has(LEAN_COST) && clearOfBuilds(leanPos.x, leanPos.z, 2.2)) {
       return true
     }
+    {
+      const s = nearestShelter(2.8)
+      if (s) {
+        if ((s.sides ?? 0) < SIDE_MAX && deps.salvage.has(SIDE_COST)) return true
+        if ((s.roof ?? 'none') === 'none') {
+          if (deps.salvage.has(ROOF_LEAF_COST)) return true
+          if (deps.salvage.has(ROOF_CANVAS_COST)) return true
+          if (deps.salvage.has(ROOF_SCRAP_COST)) return true
+        }
+        if (!s.hasBarrel && deps.salvage.has(SHELTER_BARREL_COST)) return true
+        if (shelterComplete(s) && !s.hasMat && deps.salvage.has(MAT_COST)) return true
+        if (
+          ((s.roof ?? 'none') === 'leaf' || (s.roof ?? 'none') === 'scrap') &&
+          deps.salvage.has(ROOF_CANVAS_COST)
+        ) {
+          return true
+        }
+      } else if (
+        groundY > 0.6 &&
+        deps.salvage.has(CISTERN_COST) &&
+        clearOfBuilds(leanPos.x, leanPos.z, 1.8)
+      ) {
+        return true
+      }
+      if (
+        groundY > 0.7 &&
+        deps.salvage.has(CAMP_LOCKER_COST) &&
+        clearOfBuilds(leanPos.x, leanPos.z, 1.7)
+      ) {
+        return true
+      }
+    }
     if (groundY > 0.8 && deps.salvage.has(SEAT_COST) && clearOfBuilds(seatPos.x, seatPos.z, 1.6)) {
       return true
     }
     if (groundY > 0.8 && deps.salvage.has(RACK_COST) && clearOfBuilds(rackPos.x, rackPos.z, 1.8)) {
+      return true
+    }
+    if (groundY > 0.8 && deps.salvage.has(DRIP_COST) && clearOfBuilds(dripPos.x, dripPos.z, 1.5)) {
       return true
     }
     if (
@@ -1528,13 +2465,16 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   deps.interactions.add({
     position: restPos,
     verb: 'Rest',
-    label: 'Lean-to',
+    label: 'Shelter',
     radius: 2.6,
-    available: () =>
-      deps.vitals.alive && onLand && time >= restReadyAt && !!nearestOfKind(px, pz, 'lean-to', 2.4),
+    available: () => {
+      if (!deps.vitals.alive || !onLand || time < restReadyAt) return false
+      const s = nearestOfKind(px, pz, 'lean-to', 2.4)
+      return !!s && shelterComplete(s)
+    },
     use: () => {
       const shelter = nearestOfKind(px, pz, 'lean-to', 2.4)
-      if (!shelter) return
+      if (!shelter || !shelterComplete(shelter)) return
       const v = deps.vitals
       if (v.food < 0.1 || v.water < 0.1) {
         deps.hud.whisper('Too empty to sleep.')
@@ -1575,7 +2515,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       // Foul weather is when the lean-to earns its keep — more warmth back.
       const storm = deps.storm?.() ?? 0
       const foulBonus = storm > 0.35 ? 0.1 + storm * 0.18 : 0
-      const warmthGain = (night ? 0.42 : 0.22) + (nearFire ? 0.18 : 0) + foulBonus
+      const warmthGain =
+        (night ? 0.42 : 0.22) + (nearFire ? 0.18 : 0) + foulBonus + (shelter.hasMat ? 0.12 : 0)
       v.warmth = Math.min(1, v.warmth + warmthGain)
       v.stamina = Math.min(1, v.stamina + 0.75)
       v.food = Math.max(0, v.food - hours * 0.035)
@@ -1626,12 +2567,14 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       vy: number
       submersion: number
       speed: number
+      pitch?: number
     },
     view: PlayerFrame,
     facingYaw: number,
   ) {
     time = t
     yaw = facingYaw
+    lookPitch = player.pitch ?? 0
     px = player.x
     pz = player.z
     live = player
@@ -1705,6 +2648,16 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
     if (onLand && signalY > 1.2) setAnchor(signalPos, signalAt.x, signalAt.z, signalY + 0.6)
     else setAnchor(signalPos, player.x, player.z, player.y)
+
+    const digAt = offset(player, facingYaw, 1.1, 0)
+    const digY = deps.groundAt(digAt.x, digAt.z)
+    if (onLand && digY > 0.3) setAnchor(digPos, digAt.x, digAt.z, digY + 0.35)
+    else setAnchor(digPos, player.x, player.z, player.y)
+
+    const dripAt = offset(player, facingYaw, 1.15, 0.55)
+    const dripY = deps.groundAt(dripAt.x, dripAt.z)
+    if (onLand && dripY > 0.5) setAnchor(dripPos, dripAt.x, dripAt.z, dripY + 0.45)
+    else setAnchor(dripPos, player.x, player.z, player.y)
 
     const foot = deps.groundAt(player.x, player.z)
     const seaHere = sampleOcean(player.x, player.z, t).y
@@ -1794,18 +2747,25 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         const prevZ = b.z
         const onDeck =
           view.walking && Math.hypot(player.x - b.x, player.z - b.z) <= b.radius * 0.95
-        const top = b.buoyant ? POLE_SPEED_BARREL : POLE_SPEED
+        let top = b.buoyant ? POLE_SPEED_BARREL : POLE_SPEED
+        if (b.oar) top += POLE_OAR_BONUS
+        if (b.floats) top += POLE_FLOAT_BONUS
         let vx = b.vx ?? 0
         let vz = b.vz ?? 0
         if (onDeck && view.speed > 0.2) {
           const aimX = player.dirX
           const aimZ = player.dirZ
-          const blend = 1 - Math.exp(-2.4 * dt)
+          // Oar bites harder into a new heading
+          const blend = 1 - Math.exp(-(b.oar ? 3.4 : 2.4) * dt)
           vx += (aimX * top - vx) * blend
           vz += (aimZ * top - vz) * blend
           if (!saidPole && Math.hypot(vx, vz) > 0.4) {
             saidPole = true
-            deps.hud.whisper('The deck answers the pole.')
+            deps.hud.whisper(b.oar ? 'The oar finds water.' : 'The deck answers the pole.')
+          }
+          if (b.oar && !saidOar && Math.hypot(vx, vz) > 0.9) {
+            saidOar = true
+            deps.hud.whisper('Blade and shaft. She turns when you ask.')
           }
         } else if (b.mast && onDeck) {
           // Sail draws while you're aboard — falls idle if you go overboard
@@ -1856,7 +2816,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           let dyaw = want - b.object.rotation.y
           while (dyaw > Math.PI) dyaw -= Math.PI * 2
           while (dyaw < -Math.PI) dyaw += Math.PI * 2
-          b.object.rotation.y += dyaw * (1 - Math.exp(-1.2 * dt))
+          const yawRate = b.oar ? 1.85 : 1.2
+          b.object.rotation.y += dyaw * (1 - Math.exp(-yawRate * dt))
         }
         if (b.mast) animateSail(b.object, t)
 
@@ -1940,15 +2901,40 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           ;(child.material as THREE.MeshBasicMaterial).opacity = 0.22 * (1 - life)
         }
       }
-      if (b.kind === 'catch') {
+      if (b.kind === 'catch' || b.kind === 'pit' || b.kind === 'drip' || b.kind === 'cistern') {
         const storm = deps.storm?.() ?? 0
         const rainRate = 1 + storm * CATCH_STORM_BOOST
-        b.water = Math.min(1, (b.water ?? 0) + (dt / CATCH_REFILL) * rainRate)
+        const refill =
+          b.kind === 'catch'
+            ? CATCH_REFILL
+            : b.kind === 'pit'
+              ? PIT_REFILL
+              : b.kind === 'drip'
+                ? DRIP_REFILL
+                : CISTERN_REFILL
+        b.water = Math.min(1, (b.water ?? 0) + (dt / refill) * rainRate)
         const waterMesh = b.object.getObjectByName('water')
         if (waterMesh) {
           waterMesh.visible = (b.water ?? 0) > 0.05
-          waterMesh.scale.y = 0.4 + (b.water ?? 0) * 0.8
+          if (b.kind === 'catch') {
+            waterMesh.scale.y = 0.4 + (b.water ?? 0) * 0.8
+          } else if (b.kind === 'pit') {
+            waterMesh.scale.y = 0.5 + (b.water ?? 0) * 1.2
+          } else if (b.kind === 'drip') {
+            waterMesh.scale.setScalar(0.6 + (b.water ?? 0) * 0.9)
+          } else {
+            waterMesh.scale.y = 0.5 + (b.water ?? 0) * 1.4
+          }
         }
+      }
+      if (b.kind === 'lean-to' && b.hasBarrel) {
+        const storm = deps.storm?.() ?? 0
+        const rainRate = 1 + storm * CATCH_STORM_BOOST
+        // Roofed shelter barrels fill slower — eave drip, not open sky
+        const roofMul = (b.roof ?? 'none') !== 'none' ? 0.7 : 1.15
+        b.water = Math.min(1, (b.water ?? 0) + (dt / SHELTER_BARREL_REFILL) * rainRate * roofMul)
+        const waterMesh = b.object.getObjectByName('water')
+        if (waterMesh) waterMesh.visible = (b.water ?? 0) > 0.08
       }
     }
   }
@@ -2010,9 +2996,177 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     saidPole = false
     saidSail = false
     saidWash = false
+    saidOar = false
     washMeter = 0
     boardGrace = 0
     washGrace = 0
+  }
+
+  function fillHold(src?: SavedHold): Hold {
+    const h = emptyHold()
+    if (!src) return h
+    for (const k of Object.keys(h) as StashKind[]) {
+      h[k] = Math.max(0, Math.floor(src[k] ?? 0))
+    }
+    return h
+  }
+
+  function snapshot(): SavedBuild[] {
+    return builds.map((b) => ({
+      kind: b.kind,
+      x: b.x,
+      z: b.z,
+      yaw: b.object.rotation.y,
+      water: b.water,
+      buoyant: b.buoyant,
+      mast: b.mast,
+      rail: b.rail,
+      locker: b.locker,
+      oar: b.oar,
+      floats: b.floats,
+      expands: b.expands,
+      marked: b.marked,
+      sides: b.sides,
+      roof: (b.roof ?? 'none') as SavedRoof,
+      hasBarrel: b.hasBarrel,
+      hasMat: b.hasMat,
+      hold: b.hold ? { ...b.hold } : undefined,
+    }))
+  }
+
+  function attachWaterDrink(
+    build: Build,
+    label: string,
+    sipMax: number,
+    sipScale: number,
+    emptyLine: string,
+    fullLine: string,
+  ) {
+    const drink = deps.interactions.add({
+      position: build.object.position,
+      verb: 'Drink',
+      label,
+      radius: 2.5,
+      available: () => deps.vitals.alive && (build.water ?? 0) > 0.08,
+      use: () => {
+        const left = build.water ?? 0
+        if (left <= 0.08) return
+        const sip = Math.min(sipMax, left)
+        build.water = left - sip
+        eat(deps.vitals, 0, sip * sipScale)
+        const waterMesh = build.object.getObjectByName('water')
+        if (waterMesh) waterMesh.visible = (build.water ?? 0) > 0.05
+        deps.hud.whisper((build.water ?? 0) > 0.1 ? fullLine : emptyLine)
+      },
+    })
+    build.items.push(drink)
+  }
+
+  function restore(saved: SavedBuild[]) {
+    reset()
+    for (const s of saved) {
+      const x = s.x
+      const z = s.z
+      const kind = s.kind as BuildKind
+      let build: Build | null = null
+
+      if (kind === 'lean-to') {
+        const y = deps.groundAt(x, z)
+        build = addBuild('lean-to', shelterFrameMesh(m), x, z, y, 2.8, 0.28, {
+          sides: s.sides ?? 0,
+          roof: (s.roof ?? 'none') as RoofKind,
+          hasBarrel: !!s.hasBarrel,
+          hasMat: !!s.hasMat,
+          water: s.water ?? 0,
+        })
+        const sides = s.sides ?? 0
+        for (let i = 1; i <= sides; i++) fitShelterSide(build.object, m, i)
+        if (s.roof && s.roof !== 'none') fitShelterRoof(build.object, m, s.roof)
+        if (s.hasBarrel) {
+          fitShelterBarrel(build.object, m)
+          attachBarrelDrink(build, 'Barrel')
+        }
+        if (s.hasMat) fitShelterMat(build.object, m)
+        recomputeShelter(build)
+      } else if (kind === 'fire') {
+        const y = deps.groundAt(x, z)
+        // Deck fires: if near a raft snapshot, sit on ground for restore simplicity
+        build = addBuild('fire', fireMesh(m), x, z, y, 2.4, 1.35)
+      } else if (kind === 'catch') {
+        const y = deps.groundAt(x, z)
+        build = addBuild('catch', catchMesh(m), x, z, y, 2.2, 0, { water: s.water ?? 0.4 })
+        attachWaterDrink(
+          build,
+          'Rain-catch',
+          0.35,
+          0.85,
+          'The last of it.',
+          'Cool. Flat. Better than the sea.',
+        )
+      } else if (kind === 'seat') {
+        build = addBuild('seat', seatMesh(m), x, z, deps.groundAt(x, z), 1.8, 0.15)
+      } else if (kind === 'rack') {
+        build = addBuild('rack', rackMesh(m), x, z, deps.groundAt(x, z), 2.0, 0, { smoking: [] })
+      } else if (kind === 'signal') {
+        build = addBuild('signal', signalMesh(m), x, z, deps.groundAt(x, z), 1.6, 0)
+      } else if (kind === 'pit') {
+        build = addBuild('pit', digPitMesh(m), x, z, deps.groundAt(x, z), 1.6, 0, {
+          water: s.water ?? 0,
+        })
+        attachWaterDrink(build, 'Hollow', 0.28, 0.75, 'Muddy dregs.', 'Brackish. Better than salt.')
+      } else if (kind === 'drip') {
+        build = addBuild('drip', dripMesh(m), x, z, deps.groundAt(x, z), 1.4, 0, {
+          water: s.water ?? 0,
+        })
+        attachWaterDrink(build, 'Tin drip', 0.22, 0.9, 'The tin runs dry.', 'A mouthful from the tin.')
+      } else if (kind === 'cistern') {
+        build = addBuild('cistern', cisternMesh(m), x, z, deps.groundAt(x, z), 1.5, 0.05, {
+          water: s.water ?? 0,
+        })
+        attachBarrelDrink(build, 'Cistern')
+      } else if (kind === 'camp-locker') {
+        build = addBuild('camp-locker', campLockerMesh(m), x, z, deps.groundAt(x, z), 1.6, 0.08, {
+          hold: fillHold(s.hold),
+        })
+      } else if (kind === 'raft') {
+        const withBarrel = !!s.buoyant
+        const sea = sampleOcean(x, z, 0).y
+        const radius = (withBarrel ? 2.35 : 2.05) + (s.rail ? 0.35 : 0) + (s.expands ?? 0) * 0.38
+        build = addBuild('raft', raftMesh(m, withBarrel), x, z, sea + 0.22, radius, withBarrel ? 0.62 : 0.55, {
+          buoyant: withBarrel,
+          vx: 0,
+          vz: 0,
+          hold: fillHold(s.hold),
+          mast: !!s.mast,
+          rail: !!s.rail,
+          locker: !!s.locker,
+          oar: !!s.oar,
+          floats: !!s.floats,
+          expands: s.expands ?? 0,
+          marked: !!s.marked,
+        })
+        if (s.mast) fitMast(build.object, m)
+        if (s.rail) fitRail(build.object, m)
+        if (s.locker) fitLocker(build.object, m)
+        if (s.oar) fitOar(build.object, m)
+        if (s.floats) fitFloat(build.object, m)
+        if (s.marked) fitMark(build.object, m)
+        const expands = s.expands ?? 0
+        for (let i = 1; i <= expands; i++) fitExpand(build.object, m, i)
+        if (s.mast) build.shelter = Math.max(build.shelter, withBarrel ? 0.78 : 0.7)
+        if (s.rail) build.shelter = Math.max(build.shelter, build.shelter + 0.12)
+        if (s.floats) {
+          build.buoyant = true
+          build.shelter = Math.max(build.shelter, build.shelter + 0.08)
+        }
+      }
+
+      if (build && s.yaw !== undefined) build.object.rotation.y = s.yaw
+      if (build && build.water !== undefined) {
+        const waterMesh = build.object.getObjectByName('water')
+        if (waterMesh) waterMesh.visible = (build.water ?? 0) > 0.05
+      }
+    }
   }
 
   return {
@@ -2020,6 +3174,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     standAt,
     shelterAt,
     reset,
+    snapshot,
+    restore,
     /** True while the player is holding a living brand. */
     get carryingFire() {
       return !!carried
@@ -2033,6 +3189,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         seat: 0,
         rack: 0,
         signal: 0,
+        pit: 0,
+        drip: 0,
+        cistern: 0,
+        'camp-locker': 0,
       }
       for (const b of builds) out[b.kind]++
       if (carried) out.fire++
@@ -2040,6 +3200,14 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
     costs: {
       leanTo: LEAN_COST,
+      side: SIDE_COST,
+      roofLeaf: ROOF_LEAF_COST,
+      roofCanvas: ROOF_CANVAS_COST,
+      roofScrap: ROOF_SCRAP_COST,
+      shelterBarrel: SHELTER_BARREL_COST,
+      cistern: CISTERN_COST,
+      mat: MAT_COST,
+      campLocker: CAMP_LOCKER_COST,
       fire: FIRE_COST,
       catch: CATCH_COST,
       raft: RAFT_COST,
@@ -2050,6 +3218,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       seat: SEAT_COST,
       rack: RACK_COST,
       signal: SIGNAL_COST,
+      expand: EXPAND_COST,
+      oar: OAR_COST,
+      floats: FLOAT_COST,
+      drip: DRIP_COST,
       label: costLabel,
     },
   }

@@ -16,10 +16,22 @@ export const BURDEN_WEIGHT: Record<StashKind, number> = {
   crate: 2.2,
   rope: 0.35,
   canvas: 0.5,
+  plastic: 0.2,
+  can: 0.28,
+  leaf: 0.12,
 }
 
 /** Heaviest-first — Drop sheds the piece that hurts the swim most. */
-const JETTISON_ORDER: StashKind[] = ['crate', 'barrel', 'plank', 'canvas', 'rope']
+const JETTISON_ORDER: StashKind[] = [
+  'crate',
+  'barrel',
+  'plank',
+  'canvas',
+  'can',
+  'rope',
+  'plastic',
+  'leaf',
+]
 
 export function burdenOf(stash: Stash): number {
   let n = 0
@@ -39,15 +51,20 @@ export function burdenSpeedScale(burden: number): number {
 }
 
 /**
- * A plank or barrel under the arm is a swim aid — not a raft, just enough
- * buoyancy to keep the head clearer and the climb out of a wave cheaper.
- * Barrels float better; stacking both helps a touch more.
+ * A plank, barrel, or sealed bottle under the arm is a swim aid — not a raft,
+ * just enough buoyancy to keep the head clearer and the climb out of a wave
+ * cheaper. Barrels float best; plastic is light help; stacking helps a touch.
  */
 export function swimAidOf(stash: Stash): number {
   const plank = stash.plank > 0 ? 0.5 : 0
   const barrel = stash.barrel > 0 ? 0.72 : 0
-  if (plank <= 0 && barrel <= 0) return 0
-  return Math.min(0.88, Math.max(plank, barrel) + (plank > 0 && barrel > 0 ? 0.12 : 0))
+  const bottle = stash.plastic > 0 ? 0.38 : 0
+  const best = Math.max(plank, barrel, bottle)
+  if (best <= 0) return 0
+  const extras =
+    (plank > 0 && barrel > 0 ? 0.12 : 0) +
+    (bottle > 0 && (plank > 0 || barrel > 0) ? 0.06 : 0)
+  return Math.min(0.9, best + extras)
 }
 
 /** Which piece Drop would shed next, or null if the arms are empty. */

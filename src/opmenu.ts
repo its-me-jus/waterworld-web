@@ -9,9 +9,9 @@ import type { WreckLoot } from './wreckloot'
  * Three halves:
  *  - Stash: what you're actually carrying (salvage counts, held fish, knife /
  *    spear). A real readout, not the corner strip's sentence.
- *  - Field kit: island / wreck teleport and fill-stash — always on, so you can
- *    keep building on a live deploy without a swim.
- *  - Dev extras (DEV only): vitals, fish, arms, reset run.
+ *  - Field kit: island / wreck teleport, fill-stash, and Start again — always
+ *    on, so you can keep building (or wipe a run) on a live deploy.
+ *  - Dev extras (DEV only): vitals, fish, arms.
  */
 
 export type TeleportSpot = { x: number; z: number; y?: number; yaw?: number }
@@ -77,13 +77,13 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
           <button data-tp="island" type="button">Island</button>
           <button data-tp="wreck" type="button">Wreck</button>
           <button data-cheat="stash" type="button">Fill stash</button>
+          <button data-cheat="reset" type="button" class="warn">Start again</button>
           ${
             dev
               ? `<button data-cheat="fill" type="button">Fill vitals</button>
           <button data-cheat="fish" type="button">Fish</button>
           <button data-cheat="knife" type="button">Knife</button>
-          <button data-cheat="spear" type="button">Spear</button>
-          <button data-cheat="reset" type="button" class="warn">Reset run</button>`
+          <button data-cheat="spear" type="button">Spear</button>`
               : ''
           }
         </div>
@@ -197,6 +197,9 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
         deps.salvage.stash.canvas += 2
         deps.salvage.stash.barrel += 2
         deps.salvage.stash.crate += 1
+        deps.salvage.stash.plastic += 3
+        deps.salvage.stash.can += 2
+        deps.salvage.stash.leaf += 4
         break
       case 'fish':
         deps.grantFish?.(2)

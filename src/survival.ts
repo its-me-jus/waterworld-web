@@ -1,6 +1,7 @@
 /**
- * What the ocean takes from you. There is no save and no objective — the run
- * is however long you keep all of these off the floor.
+ * What the ocean takes from you. There is no objective — the run is however
+ * long you keep all of these off the floor. A living camp persists locally
+ * across reloads; death starts you over.
  *
  * Everything is a 0..1 tank with a drain measured in seconds-to-empty, so the
  * numbers below read as "how long have I got".

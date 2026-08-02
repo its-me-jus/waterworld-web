@@ -111,19 +111,47 @@ the materials on you. No craft menu, no markers, no "correct" build order.
 
 | Recipe | Cost | Where | What it does |
 |--------|------|-------|--------------|
-| **Lean-to** | 2 plank + 1 rope | Dry ground (beach or spire) | Local shelter / warmth; **Rest** under it to nap or sleep until dawn |
+| **Raise frame** | 2 plank + 1 rope | Dry ground | Posts and a ridge — the start of a shelter. Walls and roof still to fashion. |
+| **Lash wall** | 1 plank | At a frame | One side closed (twice for both). Wind finds less of you. |
+| **Roof fronds** | 2 frond | At a frame | Leaf thatch — enough shade to **Rest** |
+| **Roof tarp** | 1 canvas | At a frame | Canvas stretched taut — the proper roof |
+| **Roof scrap** | 3 bottle + 1 rope | At a frame | Ugly bottle-and-rope cover when you have nothing better |
+| **Set barrel** | 1 barrel | At a frame | Cistern under the eaves; rain fills it; **Drink** |
+| **Fill barrel** | hands / tin can | At barrel + pool or catch | Scoop rock-pool or rain-catch water into the cask (can scoops better) |
+| **Lay mat** | 2 frond + 1 rope | Roofed shelter | Softer ground; warmer **Rest** |
+| **Lash crate** | 1 crate | Dry ground | Shore locker — **Stow** / **Fetch** like the raft hold |
+| **Plant cistern** | 1 barrel | Dry ground | Open barrel alone — rain store without a shelter |
 | **Fire** | 1 plank | Dry ground | Heat, cook/smoke fish, and a warm light at night. **Take** it as a brand to carry; **Plant** it to set camp again. Diving puts it out. |
 | **Rain-catch** | 1 canvas + 1 rope | Higher dry ground | Refilling fresh water |
 | **Raft** | 3 plank + 1 rope (+1 barrel) | Waterline | A real deck: gunwales, push pole, climb-aboard. Pole to steer. |
 | **Rig sail** | 1 plank + 1 canvas + 1 rope | On the raft | Mast and canvas — slow trade-wind drift while you're aboard |
 | **Lash rail** | 1 plank + 1 rope | On the raft | Higher rails, wider deck, harder to wash off |
 | **Lash locker** | 1 crate | On the raft | Dry storage. **Stow** / **Fetch** your pack |
+| **Lash deck** | 2 plank | On the raft | Widen the deck (up to three times). Room to work. |
+| **Lash oar** | 1 plank + 1 rope | On the raft | Better pole bite and a cleaner turn |
+| **Lash floats** | 2 bottle | On the raft | Plastic under the deck — she rides higher |
 | **Scratch stern** | Mate's spear (memory) | On the raft | The Wanderer's mark — your watch, your deck |
 | **Seat** | 1 plank | Dry ground | Driftwood seat. **Sit** to get stamina (and a little warmth) back |
 | **Drying rack** | 1 plank + 1 rope | Dry ground | Hang fish without a fire — ~48s per fish, up to 3. **Hang** / **Take** |
 | **Signal** | 1 plank + 1 canvas | Higher dry ground | Smoke column on the ridge — readable from the water. One per ~40 m |
+| **Dig hollow** | hands (look down) | Soft sand | A rain-holding pit. Slow refill; brackish but drinkable |
+| **Tin drip** | 1 can + 1 rope | Dry ground | A can on a stake that catches rain by the mouthful |
 
 Fall off and **Climb** the raft from the water (F when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft.
+
+Island harvest sits on top of the scenery: **Pull** palm fronds for thatch,
+**Break** driftwood into a plank, **Fell** a stripped palm once you have the
+galley knife (two planks), **Pull** long grass and twist it into rope. Ocean junk
+adds **bottles** and **cans** to the drifter pool — bottles are a light swim aid
+and lash into raft floats or a scrap roof; cans hang as a tin drip ashore.
+**Barrels** plant as cisterns or sit under a shelter eave and fill with rain.
+
+A shelter is fashioned in pieces, not summoned whole: **Raise** a frame, **Lash**
+walls, **Roof** with fronds / canvas tarp / scrap bottles, then **Rest** once
+something is over your head. Swap in a better tarp later if you started with
+leaves. Set a barrel under the eaves, **Fill** it from a rock pool or rain-catch
+(a tin can scoops cleaner), and **Lay** a frond mat if you want the ground to
+give warmth back when you sleep. A crate on dry sand is the shore locker.
 
 Hand-caught fish stay in hand — shown in the Pack and the HUD stash strip —
 until you **Eat** them raw, **Cook** them at a fire for a meal now, or **Smoke**
@@ -139,11 +167,12 @@ Warmth and strength come back; food and water tick down. A fire nearby helps,
 and finishes any fish still hanging in the smoke. Too empty to sleep if the
 tanks are nearly dry.
 
-A raft at the wreck is one path — **Climb** aboard from the water, **pole it
-from the deck**, then **Rig** a sail, **Lash** a rail and locker, **Scratch**
-the stern once the mate's spear has given you a name to cut. Stow gear you
-cannot swim with. A camp on the island is another — seat, drying rack, signal
-smoke, rain pools, shore crabs on the wash, and one inland cairn with rope left
+A raft at the wreck is one path — **Climb** aboard from the water, **pole** (or
+**oar**) it from the deck, then **Rig** a sail, **Lash** rail, locker, deck and
+floats, **Scratch** the stern once the mate's spear has given you a name to cut.
+Stow gear you cannot swim with. A camp on the island is another — seat, drying
+rack, signal smoke, dug hollows, tin drips, rain pools, shore crabs on the wash,
+palms you can fell, grass you can twist, and one inland cairn with rope left
 under the stones. Working the spire with a lean-to and a fire is a third. The
 sandbox is the point.
 
@@ -162,7 +191,6 @@ taxes strength until it clots; a second bite while open ends the run.
 - **Second landmark** — a spar buoy or rock stack to break the 900 m binary.
 - **Night economy** — biolum, wreck lantern. (Glass-off dive windows shipped with the cascade.)
 - **Soft fails** — recoverable disasters beyond wash-off, only if runs feel cruel.
-- **Crate sink** — kindling or dry storage beyond the raft locker.
 
 ---
 
@@ -178,3 +206,4 @@ taxes strength until it clots; a second bite while open ends the run.
 - Re-run `npm run sim:starts` before shipping a loop that has to outrun exposure.
 - The stash is a choice, not inventory padding: carry, Drop, Stow, or build.
 - Weather should change plans mid-run — never only meters.
+- A living camp persists locally across reloads; death and Start again wipe it.
