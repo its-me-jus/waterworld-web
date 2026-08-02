@@ -60,6 +60,7 @@ type BuildKind =
   | 'pit'
   | 'drip'
   | 'cistern'
+  | 'camp-locker'
 
 type SmokeRack = {
   readyAt: number
@@ -101,6 +102,8 @@ type Build = {
   roof?: RoofKind
   /** Barrel set under the lean-to as a cistern / windbreak. */
   hasBarrel?: boolean
+  /** Frond mat under the shelter — warmer Rest. */
+  hasMat?: boolean
   /** Materials stowed in the deck locker. */
   hold?: Hold
   /** Stern scratched with the mate's mark. */
@@ -116,6 +119,8 @@ const ROOF_CANVAS_COST: Cost = { canvas: 1 }
 const ROOF_SCRAP_COST: Cost = { plastic: 3, rope: 1 }
 const SHELTER_BARREL_COST: Cost = { barrel: 1 }
 const CISTERN_COST: Cost = { barrel: 1 }
+const MAT_COST: Cost = { leaf: 2, rope: 1 }
+const CAMP_LOCKER_COST: Cost = { crate: 1 }
 const FIRE_COST: Cost = { plank: 1 }
 const CATCH_COST: Cost = { canvas: 1, rope: 1 }
 const RAFT_COST: Cost = { plank: 3, rope: 1 }
@@ -357,6 +362,10 @@ function shelterFrameMesh(m: ReturnType<typeof mats>) {
   barrelSlot.name = 'barrelSlot'
   barrelSlot.visible = false
   g.add(barrelSlot)
+  const matSlot = new THREE.Group()
+  matSlot.name = 'matSlot'
+  matSlot.visible = false
+  g.add(matSlot)
   return g
 }
 
@@ -447,6 +456,40 @@ function fitShelterBarrel(shelter: THREE.Group, m: ReturnType<typeof mats>) {
   slot.visible = true
 }
 
+function fitShelterMat(shelter: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = shelter.getObjectByName('matSlot') as THREE.Group
+  if (!slot || slot.children.length) {
+    if (slot) slot.visible = true
+    return
+  }
+  for (let i = 0; i < 7; i++) {
+    const frond = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 1.6, 1, 2), m.leaf)
+    frond.rotation.x = -Math.PI / 2
+    frond.position.set((i - 3) * 0.22, 0.04, 0.05)
+    frond.rotation.z = ((i % 3) - 1) * 0.05
+    slot.add(frond)
+  }
+  const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1.5, 4), m.rope)
+  cord.rotation.z = Math.PI / 2
+  cord.position.set(0, 0.05, 0.55)
+  slot.add(cord)
+  slot.visible = true
+}
+
+function campLockerMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  g.name = 'camp-locker'
+  const box = crateObject(m.wood)
+  box.position.y = 0.28
+  box.scale.setScalar(0.95)
+  g.add(box)
+  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.03, 4, 8), m.rope)
+  lash.position.set(0, 0.45, 0.2)
+  lash.rotation.x = Math.PI / 2
+  g.add(lash)
+  return g
+}
+
 function cisternMesh(m: ReturnType<typeof mats>) {
   const g = new THREE.Group()
   g.name = 'cistern'
@@ -473,6 +516,7 @@ function recomputeShelter(b: Build) {
   else if (b.roof === 'canvas') s += 0.52
   else if (b.roof === 'scrap') s += 0.32
   if (b.hasBarrel) s += 0.1
+  if (b.hasMat) s += 0.06
   // Height band: inland frames hold heat a touch better
   if (b.deckY > 2) s += 0.08
   b.shelter = s
@@ -1362,21 +1406,24 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     radius: REACH,
     available: () => {
       const s = nearestShelter()
-      return (
-        !!s &&
-        deps.vitals.alive &&
-        onLand &&
-        (s.roof ?? 'none') === 'none' &&
-        deps.salvage.has(ROOF_CANVAS_COST)
-      )
+      if (!s || !deps.vitals.alive || !onLand) return false
+      if (!deps.salvage.has(ROOF_CANVAS_COST)) return false
+      const roof = s.roof ?? 'none'
+      // Fresh roof, or upgrade leaf/scrap later when you find canvas
+      return roof === 'none' || roof === 'leaf' || roof === 'scrap'
     },
     use: () => {
       const s = nearestShelter()
       if (!s || !deps.salvage.spend(ROOF_CANVAS_COST)) return
+      const was = s.roof ?? 'none'
       s.roof = 'canvas'
       fitShelterRoof(s.object, m, 'canvas')
       recomputeShelter(s)
-      deps.hud.whisper('Canvas stretched taut. A real roof. Rest under it.')
+      deps.hud.whisper(
+        was === 'none'
+          ? 'Canvas stretched taut. A real roof. Rest under it.'
+          : 'Better tarp over the old cover. The rain sheds clean.',
+      )
     },
   })
 
@@ -1429,6 +1476,95 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Lay',
+    label: 'Mat',
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      return (
+        !!s &&
+        shelterComplete(s) &&
+        deps.vitals.alive &&
+        onLand &&
+        !s.hasMat &&
+        deps.salvage.has(MAT_COST)
+      )
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(MAT_COST)) return
+      s.hasMat = true
+      fitShelterMat(s.object, m)
+      recomputeShelter(s)
+      deps.hud.whisper('Fronds under you. Sleep will find the ground softer.')
+    },
+  })
+
+  // Scoop rain-pool / catch water into a barrel — can in hand is the ladle
+  // (not spent). Without a can you can still tip a catch into a nearby cask.
+  function nearestFillableBarrel() {
+    const shelter = nearestShelter(3.2)
+    if (shelter?.hasBarrel && (shelter.water ?? 0) < 0.92) return shelter
+    const cistern = nearestOfKind(px, pz, 'cistern', 3.2)
+    if (cistern && (cistern.water ?? 0) < 0.92) return cistern
+    return null
+  }
+
+  function tryFillBarrel(target: Build): boolean {
+    const room = 1 - (target.water ?? 0)
+    if (room < 0.08) return false
+    // Prefer a rain-catch in arm's reach, then a rock pool
+    const catchBuild = nearestOfKind(px, pz, 'catch', 3.4)
+    if (catchBuild && (catchBuild.water ?? 0) > 0.1) {
+      const take = Math.min(room, catchBuild.water ?? 0, 0.45)
+      catchBuild.water = (catchBuild.water ?? 0) - take
+      target.water = (target.water ?? 0) + take
+      const catchWater = catchBuild.object.getObjectByName('water')
+      if (catchWater) catchWater.visible = (catchBuild.water ?? 0) > 0.05
+      const barrelWater = target.object.getObjectByName('water')
+      if (barrelWater) barrelWater.visible = (target.water ?? 0) > 0.08
+      deps.hud.whisper('Tipped into the barrel. Kept.')
+      return true
+    }
+    if (!deps.salvage.poolNear(px, pz)) return false
+    // A tin can scoops from a rock hollow; bare hands spill most of it
+    const want = deps.salvage.stash.can > 0 ? Math.min(room, 0.4) : Math.min(room, 0.18)
+    const got = deps.salvage.drawFromPool(px, pz, want)
+    if (got < 0.05) return false
+    target.water = (target.water ?? 0) + got
+    const barrelWater = target.object.getObjectByName('water')
+    if (barrelWater) barrelWater.visible = true
+    deps.hud.whisper(
+      deps.salvage.stash.can > 0
+        ? 'Scooped with the tin. The barrel takes it.'
+        : 'Cupped hands. Most spills — some stays.',
+    )
+    return true
+  }
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Fill',
+    label: 'Barrel',
+    radius: 3.2,
+    available: () => {
+      if (!deps.vitals.alive || !onLand) return false
+      const target = nearestFillableBarrel()
+      if (!target) return false
+      if (nearestOfKind(px, pz, 'catch', 3.4) && (nearestOfKind(px, pz, 'catch', 3.4)?.water ?? 0) > 0.1) {
+        return true
+      }
+      return deps.salvage.poolNear(px, pz)
+    },
+    use: () => {
+      const target = nearestFillableBarrel()
+      if (!target) return
+      tryFillBarrel(target)
+    },
+  })
+
   // Standalone cistern — a barrel planted open to the sky, no shelter needed
   deps.interactions.add({
     position: leanPos,
@@ -1452,6 +1588,86 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const build = addBuild('cistern', cisternMesh(m), x, z, y, 1.5, 0.05, { water: 0.2 })
       attachBarrelDrink(build, 'Cistern')
       deps.hud.whisper('Barrel open to the sky. Patience fills it.')
+    },
+  })
+
+  // Dry-ground crate locker — the island answer to the raft hold
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Lash',
+    label: 'Crate',
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      onLand &&
+      groundY > 0.7 &&
+      deps.salvage.has(CAMP_LOCKER_COST) &&
+      clearOfBuilds(leanPos.x, leanPos.z, 1.7) &&
+      !nearestOfKind(leanPos.x, leanPos.z, 'camp-locker', 4) &&
+      // Prefer Set Barrel when you're standing at a frame that needs one
+      !(nearestShelter(2.8) && !nearestShelter(2.8)?.hasBarrel && deps.salvage.has(SHELTER_BARREL_COST)),
+    use: () => {
+      if (!deps.salvage.spend(CAMP_LOCKER_COST)) return
+      const x = leanPos.x
+      const z = leanPos.z
+      const y = deps.groundAt(x, z)
+      addBuild('camp-locker', campLockerMesh(m), x, z, y, 1.6, 0.08, { hold: emptyHold() })
+      deps.hud.whisper('Crate on dry sand. Stow what the swim cannot carry.')
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Stow',
+    label: 'in crate',
+    radius: 2.5,
+    available: () => {
+      const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
+      if (!locker?.hold || !deps.vitals.alive) return false
+      const s = deps.salvage.stash
+      return s.plank + s.barrel + s.crate + s.rope + s.canvas + s.plastic + s.can + s.leaf > 0
+    },
+    use: () => {
+      const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
+      if (!locker?.hold) return
+      const s = deps.salvage.stash
+      let moved = 0
+      for (const k of Object.keys(s) as StashKind[]) {
+        if (s[k] <= 0) continue
+        locker.hold[k] += s[k]
+        moved += s[k]
+        s[k] = 0
+      }
+      if (moved <= 0) return
+      deps.hud.whisper(
+        moved === 1 ? 'One piece in the crate.' : `${moved} pieces stowed ashore.`,
+      )
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Fetch',
+    label: 'from crate',
+    radius: 2.5,
+    available: () => {
+      const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
+      if (!locker?.hold || !deps.vitals.alive) return false
+      return holdCount(locker.hold) > 0
+    },
+    use: () => {
+      const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
+      if (!locker?.hold) return
+      const s = deps.salvage.stash
+      let moved = 0
+      for (const k of Object.keys(locker.hold) as StashKind[]) {
+        if (locker.hold[k] <= 0) continue
+        s[k] += locker.hold[k]
+        moved += locker.hold[k]
+        locker.hold[k] = 0
+      }
+      if (moved <= 0) return
+      deps.hud.whisper(moved === 1 ? 'Back in the hands.' : 'The crate empties into your arms.')
     },
   })
 
@@ -2102,10 +2318,24 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           if (deps.salvage.has(ROOF_SCRAP_COST)) return true
         }
         if (!s.hasBarrel && deps.salvage.has(SHELTER_BARREL_COST)) return true
+        if (shelterComplete(s) && !s.hasMat && deps.salvage.has(MAT_COST)) return true
+        if (
+          ((s.roof ?? 'none') === 'leaf' || (s.roof ?? 'none') === 'scrap') &&
+          deps.salvage.has(ROOF_CANVAS_COST)
+        ) {
+          return true
+        }
       } else if (
         groundY > 0.6 &&
         deps.salvage.has(CISTERN_COST) &&
         clearOfBuilds(leanPos.x, leanPos.z, 1.8)
+      ) {
+        return true
+      }
+      if (
+        groundY > 0.7 &&
+        deps.salvage.has(CAMP_LOCKER_COST) &&
+        clearOfBuilds(leanPos.x, leanPos.z, 1.7)
       ) {
         return true
       }
@@ -2284,7 +2514,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       // Foul weather is when the lean-to earns its keep — more warmth back.
       const storm = deps.storm?.() ?? 0
       const foulBonus = storm > 0.35 ? 0.1 + storm * 0.18 : 0
-      const warmthGain = (night ? 0.42 : 0.22) + (nearFire ? 0.18 : 0) + foulBonus
+      const warmthGain =
+        (night ? 0.42 : 0.22) + (nearFire ? 0.18 : 0) + foulBonus + (shelter.hasMat ? 0.12 : 0)
       v.warmth = Math.min(1, v.warmth + warmthGain)
       v.stamina = Math.min(1, v.stamina + 0.75)
       v.food = Math.max(0, v.food - hours * 0.035)
@@ -2791,6 +3022,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         pit: 0,
         drip: 0,
         cistern: 0,
+        'camp-locker': 0,
       }
       for (const b of builds) out[b.kind]++
       if (carried) out.fire++
@@ -2804,6 +3036,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       roofScrap: ROOF_SCRAP_COST,
       shelterBarrel: SHELTER_BARREL_COST,
       cistern: CISTERN_COST,
+      mat: MAT_COST,
+      campLocker: CAMP_LOCKER_COST,
       fire: FIRE_COST,
       catch: CATCH_COST,
       raft: RAFT_COST,

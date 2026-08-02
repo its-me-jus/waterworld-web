@@ -117,6 +117,9 @@ the materials on you. No craft menu, no markers, no "correct" build order.
 | **Roof tarp** | 1 canvas | At a frame | Canvas stretched taut — the proper roof |
 | **Roof scrap** | 3 bottle + 1 rope | At a frame | Ugly bottle-and-rope cover when you have nothing better |
 | **Set barrel** | 1 barrel | At a frame | Cistern under the eaves; rain fills it; **Drink** |
+| **Fill barrel** | hands / tin can | At barrel + pool or catch | Scoop rock-pool or rain-catch water into the cask (can scoops better) |
+| **Lay mat** | 2 frond + 1 rope | Roofed shelter | Softer ground; warmer **Rest** |
+| **Lash crate** | 1 crate | Dry ground | Shore locker — **Stow** / **Fetch** like the raft hold |
 | **Plant cistern** | 1 barrel | Dry ground | Open barrel alone — rain store without a shelter |
 | **Fire** | 1 plank | Dry ground | Heat, cook/smoke fish, and a warm light at night. **Take** it as a brand to carry; **Plant** it to set camp again. Diving puts it out. |
 | **Rain-catch** | 1 canvas + 1 rope | Higher dry ground | Refilling fresh water |
@@ -145,8 +148,10 @@ and lash into raft floats or a scrap roof; cans hang as a tin drip ashore.
 
 A shelter is fashioned in pieces, not summoned whole: **Raise** a frame, **Lash**
 walls, **Roof** with fronds / canvas tarp / scrap bottles, then **Rest** once
-something is over your head. Set a barrel under the eaves if you want water
-waiting when you wake.
+something is over your head. Swap in a better tarp later if you started with
+leaves. Set a barrel under the eaves, **Fill** it from a rock pool or rain-catch
+(a tin can scoops cleaner), and **Lay** a frond mat if you want the ground to
+give warmth back when you sleep. A crate on dry sand is the shore locker.
 
 Hand-caught fish stay in hand — shown in the Pack and the HUD stash strip —
 until you **Eat** them raw, **Cook** them at a fire for a meal now, or **Smoke**
@@ -186,7 +191,6 @@ taxes strength until it clots; a second bite while open ends the run.
 - **Second landmark** — a spar buoy or rock stack to break the 900 m binary.
 - **Night economy** — biolum, wreck lantern. (Glass-off dive windows shipped with the cascade.)
 - **Soft fails** — recoverable disasters beyond wash-off, only if runs feel cruel.
-- **Crate sink** — kindling or dry storage beyond the raft locker.
 
 ---
 

@@ -54,8 +54,10 @@ carry as a brand at night), a rain-catch, a raft you Climb aboard and fit with
 sail, rail, locker, oar, floats and a wider deck, and ashore a seat, drying rack,
 signal smoke, dug rain hollows and tin drips. Shelters are fashioned in stages —
 Raise a frame, Lash walls, Roof with fronds or a canvas tarp (or scrap bottles),
-then Rest once covered. Barrels plant as cisterns or sit under the eaves and
-catch rain. Island wood and grass are workable — Pull palm fronds, Break
+then Rest once covered. Barrels plant as cisterns or sit under the eaves;
+Fill them from rock pools or a rain-catch (a can scoops cleaner). A frond mat
+warms sleep; a crate ashore stows gear like the raft locker. Island wood and
+grass are workable — Pull palm fronds, Break
 driftwood, Fell a palm with the knife, Pull grass into rope. Caught
 fish show in the Pack until you eat, cook, smoke, or hang them to dry. A heavy
 stash slows the swim; a plank, barrel or bottle under the arm buys a little float; Drop

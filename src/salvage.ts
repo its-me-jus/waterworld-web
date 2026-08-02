@@ -379,6 +379,34 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     })
   }
 
+  /**
+   * Draw fresh water from the nearest rain pool into a barrel/cistern.
+   * Returns how much was taken (0 if none in reach / too empty).
+   */
+  function drawFromPool(x: number, z: number, want: number, maxDist = 4.2): number {
+    let best: (typeof pools)[number] | null = null
+    let bestD = maxDist
+    for (const pool of pools) {
+      const d = Math.hypot(pool.at.x - x, pool.at.z - z)
+      if (d >= bestD || pool.full < 0.12) continue
+      bestD = d
+      best = pool
+    }
+    if (!best) return 0
+    const take = Math.min(want, best.full)
+    best.full -= take
+    return take
+  }
+
+  /** True when a drinkable rock hollow is close enough to scoop from. */
+  function poolNear(x: number, z: number, maxDist = 4.2): boolean {
+    for (const pool of pools) {
+      if (pool.full < 0.12) continue
+      if (Math.hypot(pool.at.x - x, pool.at.z - z) <= maxDist) return true
+    }
+    return false
+  }
+
   for (let i = 0; i < opts.shore.length; i += 3) {
     const at = opts.shore[i].clone()
     at.y += 0.22
@@ -580,7 +608,7 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
   const origin = new THREE.Vector3()
   drifters.forEach((find, i) => scatter(find, origin, 18 + i * 14, 40 + i * 20))
 
-  return { stash, labels: STASH_LABEL, has, spend, update, reset, jettison }
+  return { stash, labels: STASH_LABEL, has, spend, update, reset, jettison, drawFromPool, poolNear }
 }
 
 export type Salvage = ReturnType<typeof createSalvage>
