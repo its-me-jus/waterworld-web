@@ -305,6 +305,7 @@ const improvise = createImprovise(scene, camera, {
   daylight: () => climate.state.daylight,
   skipTime: (seconds) => climate.skip(seconds),
   secondsUntilDawn: () => climate.secondsUntilDawn(),
+  hasMark: () => loot.hasSpear,
 })
 raftAt = improvise.standAt
 
