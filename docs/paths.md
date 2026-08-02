@@ -100,11 +100,21 @@ the materials on you. No craft menu, no markers, no "correct" build order.
 | **Lean-to** | 2 plank + 1 rope | Dry ground (beach or spire) | Local shelter / warmth; **Rest** under it to nap or sleep until dawn |
 | **Fire** | 1 plank | Dry ground | Heat, cook/smoke fish, and a warm light at night. **Take** it as a brand to carry; **Plant** it to set camp again. Diving puts it out. |
 | **Rain-catch** | 1 canvas + 1 rope | Higher dry ground | Refilling fresh water |
-| **Raft** | 3 plank + 1 rope (+1 barrel if you have it) | Waterline | A small deck you can stand on that rides the swell |
+| **Raft** | 3 plank + 1 rope (+1 barrel) | Waterline | A real deck: gunwales, push pole, climb-aboard. Pole to steer. |
+| **Rig sail** | 1 plank + 1 canvas + 1 rope | On the raft | Mast and canvas — slow trade-wind drift while you're aboard |
+| **Lash rail** | 1 plank + 1 rope | On the raft | Higher rails, wider deck, harder to wash off |
+| **Lash locker** | 1 crate | On the raft | Dry storage. **Stow** / **Fetch** your pack |
+| **Scratch stern** | Mate's spear (memory) | On the raft | The Wanderer's mark — your watch, your deck |
+| **Seat** | 1 plank | Dry ground | Driftwood seat. **Sit** to get stamina (and a little warmth) back |
+| **Drying rack** | 1 plank + 1 rope | Dry ground | Hang fish without a fire — ~48s per fish, up to 3. **Hang** / **Take** |
+| **Signal** | 1 plank + 1 canvas | Higher dry ground | Smoke column on the ridge — readable from the water. One per ~40 m |
+
+Fall off and **Climb** the raft from the water (F when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft.
 
 Hand-caught fish stay in hand — shown in the Pack and the HUD stash strip —
 until you **Eat** them raw, **Cook** them at a fire for a meal now, or **Smoke**
-them (~30s, or overnight under a lean-to) into portable smoked fish. Cooking is
+them (~30s, or overnight under a lean-to) into portable smoked fish. A drying
+rack ashore does the same job slower, without fire. Cooking is
 immediate; smoking is the road meal. A planted fire throws real light onto the
 sand at night; **Take** it and the brand travels with you (warmth and a pool of
 orange light), **Plant** it on dry ground to set it down. Submerge and it
@@ -115,18 +125,24 @@ Warmth and strength come back; food and water tick down. A fire nearby helps,
 and finishes any fish still hanging in the smoke. Too empty to sleep if the
 tanks are nearly dry.
 
-A raft at the wreck is one path — **pole it from the deck** (move while standing
-on it) toward the island or along the reef. A camp on the island is another.
-Working the spire with a lean-to and a fire is a third. The sandbox is the point.
+A raft at the wreck is one path — **Climb** aboard from the water, **pole it
+from the deck**, then **Rig** a sail, **Lash** a rail and locker, **Scratch**
+the stern once the mate's spear has given you a name to cut. Stow gear you
+cannot swim with. A camp on the island is another — seat, drying rack, signal
+smoke, rain pools, and one inland cairn with rope left under the stones. Working
+the spire with a lean-to and a fire is a third. The sandbox is the point.
+
+### Shark
+
+Armed with the mate's spear, an encounter can tighten into a run: the circle
+closes, it banks and aims (**It turns on you.**), then commits (**It comes.**).
+Jab answers the telegraph or the rush. A bite opens a **Bleeding** meter that
+taxes strength until it clots; a second bite while open ends the run.
 
 ---
 
 ## Backlog (nothing committed)
 
-- **Shark & spear mid-game** — better telegraph, wound readability, maybe a pass
-  that only comes after you've lingered. Half-built already.
-- **More workshop pieces** — driftwood furniture, signal smoke. Same F-to-use
-  pattern.
 - **Memory spine** — the log was one beat. More papers, a name, a reason.
 - **Second landmark** — a spar buoy or rock stack to break the 900 m binary.
 - **Night economy** — biolum, glass-off dive windows, a lantern in the wreck.
@@ -134,7 +150,7 @@ Working the spire with a lean-to and a fire is a third. The sandbox is the point
 - **Currents** — swell that carries you, so the sea moves between inputs.
 - **Soft fails** — only if runs start feeling cruel rather than sharp.
 - **Burden and jettison** — heavy stash slowing the swim.
-- **Crate sink** — kindling, a seat, or dry storage.
+- **Crate sink** — kindling or dry storage beyond the raft locker.
 
 ---
 

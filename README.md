@@ -39,19 +39,22 @@ a meal. The mate's chest sits roped shut on the sand by the torn
 stern at ~24 m, where the light gives up. Inside: an oilskin pouch that gives
 back the first memory of who you were, and the mate's spear. The master's log
 lies out on the sand beside her broken ribs, and it answers the pouch. Once armed, the
-shark's slow circle tightens, and about two passes in three it commits to a run
-at you — jab it with the spear inside ~4 m and it turns; let the run connect
-and it takes a piece of you. One wound clots. A second bite, while it hasn't,
-is the one the ocean keeps.
+shark's slow circle tightens, banks and aims (a short telegraph you can read),
+then commits to a run — jab it with the spear on the telegraph or the rush and
+it turns; let the run connect and it takes a piece of you. One wound shows as
+Bleeding until it clots. A second bite, while it hasn't, is the one the ocean
+keeps.
 
 The surface tells its own story: a provision crate still floating by the wreck
 is a first meal; after that, hang still underwater and grab fish by hand — keep
 them raw to eat, or cook them once you've kindled a fire. The debris that drifts
 by — planks, barrels, crates, rope, canvas — goes in the stash, and from there
-you improvise: a lean-to you can rest under, a fire to cook or smoke fish, a
-rain-catch, a raft you can pole from the deck. Caught fish show in the Pack
-until you eat, cook, or smoke them. Nothing is the "right" path; see
-[`docs/paths.md`](docs/paths.md). Opening-run math: `npm run sim:starts`.
+you improvise: a lean-to you can rest under, a fire to cook or smoke fish (and
+carry as a brand at night), a rain-catch, a raft you Climb aboard and fit with
+sail, rail, and locker, and ashore a seat, drying rack, and signal smoke. Caught
+fish show in the Pack until you eat, cook, smoke, or hang them to dry. Nothing
+is the "right" path; see [`docs/paths.md`](docs/paths.md).
+Opening-run math: `npm run sim:starts`.
 
 ## Dry ground
 
@@ -67,9 +70,10 @@ The far one is a volcanic island ~1.2 km off the spawn heading's right
 shoulder: beach, scrub, cliffs and palms. Wade far enough up and you climb out
 of the swim into a walk — slope-aware, with real gravity off the ledges. Cliffs
 past ~50° refuse you; a storm face that closes over your head knocks you back
-into the sea. Coconuts lie on the sand, and rain stands in hollows in the rock
-above the beach — the one water that keeps coming back. Bring salvage ashore
-and you can improvise a lean-to, a fire, a rain-catch — a camp you made, not
+into the sea. Coconuts lie on the sand, rain stands in hollows in the rock
+above the beach, and inland a small cairn holds rope someone left under the
+stones. Bring salvage ashore and you can improvise a lean-to, a fire, a
+rain-catch, a seat, a drying rack, a signal on the ridge — a camp you made, not
 one the world planted for you.
 
 ## Controls

@@ -160,6 +160,10 @@ export type SalvageOptions = {
   shore: THREE.Vector3[]
   /** Rain-filled rock hollows above the beach — the island's one renewable. */
   pools: THREE.Vector3[]
+  /** Inland rock stack — one takeable find, no marker. */
+  cairn: THREE.Vector3 | null
+  /** Soft line when a find is more than materials. */
+  whisper?: (text: string) => void
 }
 
 /** Seconds a drained rock hollow takes to catch enough rain to matter again. */
@@ -321,6 +325,26 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     const at = opts.shore[i].clone()
     at.y += 0.22
     register(dropAt(coconutObject(mat), at), 'Drink', 'Coconut', (f) => consume(f, 0.12, 0.45), 2.6)
+  }
+
+  // —— inland cairn ————————————————————————————————————————————————
+  // Someone stacked these stones and left rope under the top course. Finding
+  // it is walking inland — no marker, same as the pools.
+  if (opts.cairn) {
+    const at = opts.cairn.clone()
+    at.y += 0.55
+    const coil = dropAt(ropeObject(mat), at)
+    coil.scale.setScalar(0.85)
+    register(
+      coil,
+      'Take',
+      'Rope',
+      (find) => {
+        take(find, 'rope')
+        opts.whisper?.('Someone stacked these. The rope still holds.')
+      },
+      2.8,
+    )
   }
 
   // —— drifters ————————————————————————————————————————————————

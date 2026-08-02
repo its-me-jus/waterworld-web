@@ -216,6 +216,8 @@ const salvage = createSalvage(scene, {
   hatch: wreck.hatch,
   shore: island.shore,
   pools: island.pools,
+  cairn: island.cairn,
+  whisper: (text) => hud.whisper(text),
 })
 
 const input = createInputState()
@@ -255,7 +257,9 @@ const shark = createShark(scene, {
   summonIn: params.has('shark') ? Number(params.get('shark')) : undefined,
   // ?commit=1 makes every armed pass run at you — combat tuning
   alwaysCommit: params.has('commit'),
-  onCommit: () => {},
+  onCommit: () => {
+    hud.whisper('It comes.')
+  },
   onBite: () => loot.onBite(),
 })
 
@@ -305,6 +309,7 @@ const improvise = createImprovise(scene, camera, {
   daylight: () => climate.state.daylight,
   skipTime: (seconds) => climate.skip(seconds),
   secondsUntilDawn: () => climate.secondsUntilDawn(),
+  hasMark: () => loot.hasSpear,
 })
 raftAt = improvise.standAt
 
