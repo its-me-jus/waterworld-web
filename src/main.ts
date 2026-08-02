@@ -4,6 +4,7 @@ import { createOceanAudio } from './audio'
 import { createClimate } from './climate'
 import { createTouchControls } from './controls'
 import { createForage } from './forage'
+import { createHarvest } from './harvest'
 import { createHud } from './hud'
 import { createImprovise } from './improvise'
 import { createInputState, isLowPowerDevice, preferTouchUI } from './input'
@@ -338,6 +339,18 @@ const forage = createForage(hud, vitals, {
   crabs: island.crabs,
 })
 
+const harvest = createHarvest(scene, {
+  interactions,
+  salvage,
+  vitals,
+  hud,
+  heightAt: island.heightAt,
+  shore: island.shore,
+  islandCentre: island.centre,
+  hasKnife: () => loot.hasKnife,
+  lowPower,
+})
+
 const improvise = createImprovise(scene, camera, {
   interactions,
   salvage,
@@ -365,6 +378,7 @@ function restart() {
   wreck.reset()
   loot.reset()
   forage.reset()
+  harvest.reset()
   improvise.reset()
   swimmer.setSurvivalSuit(false)
   hud.clearDead()
@@ -615,7 +629,9 @@ function frame() {
       hud.whisper(
         salvage.stash.barrel > 0
           ? 'The barrel buoys you. Heavy, but it rides.'
-          : 'A plank under the arm. The surface comes easier.',
+          : salvage.stash.plastic > 0 && salvage.stash.plank <= 0
+            ? 'A bottle under the arm. It wants the surface.'
+            : 'A plank under the arm. The surface comes easier.',
       )
     }
     if (burdenScale < 0.82 && !saidBurden) {
@@ -853,6 +869,7 @@ function frame() {
   salvage.update(t, camera.position, weather.storm)
   loot.update(dt, view)
   forage.update(camera, view)
+  harvest.update(t)
   improvise.update(dt, t, player, view, player.yaw)
   shark.update(dt, t, camera, hasDived)
   oceanAudio.setDanger(shark.proximity)

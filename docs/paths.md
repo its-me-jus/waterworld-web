@@ -118,12 +118,19 @@ the materials on you. No craft menu, no markers, no "correct" build order.
 | **Rig sail** | 1 plank + 1 canvas + 1 rope | On the raft | Mast and canvas — slow trade-wind drift while you're aboard |
 | **Lash rail** | 1 plank + 1 rope | On the raft | Higher rails, wider deck, harder to wash off |
 | **Lash locker** | 1 crate | On the raft | Dry storage. **Stow** / **Fetch** your pack |
+| **Lash deck** | 2 plank | On the raft | Widen the deck (up to three times). Room to work. |
+| **Lash oar** | 1 plank + 1 rope | On the raft | Better pole bite and a cleaner turn |
+| **Lash floats** | 2 bottle | On the raft | Plastic under the deck — she rides higher |
 | **Scratch stern** | Mate's spear (memory) | On the raft | The Wanderer's mark — your watch, your deck |
 | **Seat** | 1 plank | Dry ground | Driftwood seat. **Sit** to get stamina (and a little warmth) back |
 | **Drying rack** | 1 plank + 1 rope | Dry ground | Hang fish without a fire — ~48s per fish, up to 3. **Hang** / **Take** |
 | **Signal** | 1 plank + 1 canvas | Higher dry ground | Smoke column on the ridge — readable from the water. One per ~40 m |
+| **Dig hollow** | hands (look down) | Soft sand | A rain-holding pit. Slow refill; brackish but drinkable |
+| **Tin drip** | 1 can + 1 rope | Dry ground | A can on a stake that catches rain by the mouthful |
 
 Fall off and **Climb** the raft from the water (F when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft.
+
+Island harvest sits on top of the scenery: **Break** driftwood into a plank, **Fell** a palm once you have the galley knife (two planks), **Pull** long grass and twist it into rope. Ocean junk adds **bottles** and **cans** to the drifter pool — bottles are a light swim aid and lash into raft floats; cans hang as a tin drip ashore.
 
 Hand-caught fish stay in hand — shown in the Pack and the HUD stash strip —
 until you **Eat** them raw, **Cook** them at a fire for a meal now, or **Smoke**
@@ -139,11 +146,12 @@ Warmth and strength come back; food and water tick down. A fire nearby helps,
 and finishes any fish still hanging in the smoke. Too empty to sleep if the
 tanks are nearly dry.
 
-A raft at the wreck is one path — **Climb** aboard from the water, **pole it
-from the deck**, then **Rig** a sail, **Lash** a rail and locker, **Scratch**
-the stern once the mate's spear has given you a name to cut. Stow gear you
-cannot swim with. A camp on the island is another — seat, drying rack, signal
-smoke, rain pools, shore crabs on the wash, and one inland cairn with rope left
+A raft at the wreck is one path — **Climb** aboard from the water, **pole** (or
+**oar**) it from the deck, then **Rig** a sail, **Lash** rail, locker, deck and
+floats, **Scratch** the stern once the mate's spear has given you a name to cut.
+Stow gear you cannot swim with. A camp on the island is another — seat, drying
+rack, signal smoke, dug hollows, tin drips, rain pools, shore crabs on the wash,
+palms you can fell, grass you can twist, and one inland cairn with rope left
 under the stones. Working the spire with a lean-to and a fire is a third. The
 sandbox is the point.
 

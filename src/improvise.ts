@@ -48,7 +48,7 @@ export type ImproviseDeps = {
   current?: () => { x: number; z: number; strength: number }
 }
 
-type BuildKind = 'lean-to' | 'fire' | 'raft' | 'catch' | 'seat' | 'rack' | 'signal'
+type BuildKind = 'lean-to' | 'fire' | 'raft' | 'catch' | 'seat' | 'rack' | 'signal' | 'pit' | 'drip'
 
 type SmokeRack = {
   readyAt: number
@@ -76,6 +76,12 @@ type Build = {
   mast?: boolean
   rail?: boolean
   locker?: boolean
+  /** Push oar lashed — poles harder and turns cleaner. */
+  oar?: boolean
+  /** Plastic bottles tied under the deck. */
+  floats?: boolean
+  /** How many times the deck has been widened (cap 3). */
+  expands?: number
   /** Materials stowed in the deck locker. */
   hold?: Hold
   /** Stern scratched with the mate's mark. */
@@ -95,6 +101,12 @@ const LOCKER_COST: Cost = { crate: 1 }
 const SEAT_COST: Cost = { plank: 1 }
 const RACK_COST: Cost = { plank: 1, rope: 1 }
 const SIGNAL_COST: Cost = { plank: 1, canvas: 1 }
+const EXPAND_COST: Cost = { plank: 2 }
+const OAR_COST: Cost = { plank: 1, rope: 1 }
+const FLOAT_COST: Cost = { plastic: 2 }
+const DRIP_COST: Cost = { can: 1, rope: 1 }
+/** Max times you can widen one raft. */
+const EXPAND_MAX = 3
 
 const REACH = 3.2
 const PLACE_AHEAD = 1.7
@@ -114,9 +126,14 @@ const DRY_MAX = 3
 /** How hard you can pole a raft (m/s). */
 const POLE_SPEED = 1.85
 const POLE_SPEED_BARREL = 2.35
+const POLE_OAR_BONUS = 0.55
+const POLE_FLOAT_BONUS = 0.28
 /** Passive sail drift (m/s) once the mast is rigged. */
 const SAIL_SPEED = 0.95
 const SAIL_SPEED_BARREL = 1.35
+/** Dug hollow / tin drip refill (seconds to full). */
+const PIT_REFILL = 200
+const DRIP_REFILL = 160
 /** Standing eye height — match player.ts so Climb seats you on the deck. */
 const WALK_EYE = 1.62
 /** How far out you can still Climb aboard from the water. */
@@ -131,7 +148,15 @@ const WASH_LOCKER = 0.08
 const WASH_STORM_GATE = 0.42
 const WASH_RAIL_GATE = 0.72
 
-const emptyHold = (): Hold => ({ plank: 0, barrel: 0, crate: 0, rope: 0, canvas: 0 })
+const emptyHold = (): Hold => ({
+  plank: 0,
+  barrel: 0,
+  crate: 0,
+  rope: 0,
+  canvas: 0,
+  plastic: 0,
+  can: 0,
+})
 
 function holdCount(h: Hold) {
   let n = 0
@@ -239,6 +264,19 @@ function mats() {
       emissive: 0x3a2010,
       emissiveIntensity: 0.35,
     }),
+    plastic: new THREE.MeshStandardMaterial({
+      color: 0xc8d6e0,
+      roughness: 0.35,
+      metalness: 0.05,
+      transparent: true,
+      opacity: 0.82,
+    }),
+    tin: new THREE.MeshStandardMaterial({
+      color: 0x8a9188,
+      roughness: 0.45,
+      metalness: 0.7,
+    }),
+    sand: new THREE.MeshStandardMaterial({ color: 0x9a8460, roughness: 1 }),
   }
 }
 
@@ -659,6 +697,17 @@ function raftMesh(m: ReturnType<typeof mats>, withBarrel: boolean) {
   markSlot.name = 'markSlot'
   markSlot.visible = false
   g.add(markSlot)
+  const expandSlot = new THREE.Group()
+  expandSlot.name = 'expandSlot'
+  g.add(expandSlot)
+  const oarSlot = new THREE.Group()
+  oarSlot.name = 'oarSlot'
+  oarSlot.visible = false
+  g.add(oarSlot)
+  const floatSlot = new THREE.Group()
+  floatSlot.name = 'floatSlot'
+  floatSlot.visible = false
+  g.add(floatSlot)
 
   return g
 }
@@ -758,6 +807,111 @@ function fitMark(raft: THREE.Group, m: ReturnType<typeof mats>) {
   slot.visible = true
 }
 
+/** Lash another course of planks — the deck grows under your feet. */
+function fitExpand(raft: THREE.Group, m: ReturnType<typeof mats>, n: number) {
+  const slot = raft.getObjectByName('expandSlot') as THREE.Group
+  if (!slot) return
+  const side = n % 2 === 1 ? 1 : -1
+  const row = Math.floor((n - 1) / 2)
+  for (let i = 0; i < 3; i++) {
+    const plank = plankObject(2.4 + row * 0.2, 0.28, m.wood)
+    plank.position.set(row * 0.15, 0.06, side * (1.05 + row * 0.32) + (i - 1) * 0.08)
+    plank.rotation.y = side * 0.04
+    slot.add(plank)
+  }
+  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.025, 4, 8), m.rope)
+  lash.rotation.x = Math.PI / 2
+  lash.position.set(0.4, 0.14, side * (1.05 + row * 0.32))
+  slot.add(lash)
+}
+
+function fitOar(raft: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = raft.getObjectByName('oarSlot') as THREE.Group
+  if (!slot || slot.children.length) {
+    if (slot) slot.visible = true
+    return
+  }
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.032, 2.4, 6), m.brand)
+  shaft.rotation.z = Math.PI / 2
+  shaft.rotation.y = -0.35
+  shaft.position.set(0.2, 0.45, -0.95)
+  slot.add(shaft)
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 0.22), m.wood)
+  blade.position.set(-0.95, 0.45, -1.15)
+  blade.rotation.y = -0.35
+  blade.rotation.z = 0.15
+  slot.add(blade)
+  const grip = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.012, 4, 8), m.rope)
+  grip.position.set(1.15, 0.45, -0.75)
+  grip.rotation.y = Math.PI / 2
+  slot.add(grip)
+  slot.visible = true
+}
+
+function fitFloat(raft: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = raft.getObjectByName('floatSlot') as THREE.Group
+  if (!slot || slot.children.length) {
+    if (slot) slot.visible = true
+    return
+  }
+  for (const [x, z] of [
+    [0.9, 0.85],
+    [0.9, -0.85],
+    [-0.6, 0.9],
+    [-0.6, -0.9],
+  ] as const) {
+    const bottle = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.32, 8), m.plastic)
+    bottle.rotation.z = Math.PI / 2
+    bottle.position.set(x, -0.08, z)
+    slot.add(bottle)
+    const lash = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.02, 4, 8), m.rope)
+    lash.rotation.y = Math.PI / 2
+    lash.position.set(x, -0.02, z)
+    slot.add(lash)
+  }
+  slot.visible = true
+}
+
+function digPitMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  g.name = 'pit'
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.08, 6, 16), m.sand)
+  rim.rotation.x = Math.PI / 2
+  rim.position.y = 0.04
+  g.add(rim)
+  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.28, 0.22, 12), m.sand)
+  bowl.position.y = -0.02
+  g.add(bowl)
+  const water = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.28, 0.05, 12), m.water)
+  water.position.y = 0.02
+  water.name = 'water'
+  water.visible = false
+  g.add(water)
+  return g
+}
+
+function dripMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  g.name = 'drip'
+  const stake = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.1, 0.06), m.wood)
+  stake.position.set(0, 0.5, 0)
+  g.add(stake)
+  const can = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.18, 10), m.tin)
+  can.position.set(0.05, 0.85, 0)
+  can.rotation.z = 0.55
+  g.add(can)
+  const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.35, 4), m.rope)
+  cord.position.set(0.02, 0.95, 0)
+  cord.rotation.z = 0.4
+  g.add(cord)
+  const drip = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), m.water)
+  drip.position.set(0.12, 0.72, 0)
+  drip.name = 'water'
+  drip.visible = false
+  g.add(drip)
+  return g
+}
+
 function animateSail(raft: THREE.Object3D, t: number) {
   const sail = raft.getObjectByName('sail')
   if (!sail) return
@@ -819,8 +973,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const sitPos = new THREE.Vector3()
   const dryPos = new THREE.Vector3()
   const takeDryPos = new THREE.Vector3()
+  const digPos = new THREE.Vector3()
+  const dripPos = new THREE.Vector3()
 
   let yaw = 0
+  let lookPitch = 0
   let onLand = false
   let groundY = -1000
   let nearWaterline = false
@@ -832,6 +989,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let saidPole = false
   let saidSail = false
   let saidWash = false
+  let saidOar = false
   let swimming = false
   let onRaftDeck = false
   /** Seconds of stickiness after Climb — kills leftover swim speed that throws you off. */
@@ -1319,7 +1477,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const raft = nearestRaftOnDeck()
       if (!raft?.locker || !deps.vitals.alive) return false
       const s = deps.salvage.stash
-      return s.plank + s.barrel + s.crate + s.rope + s.canvas > 0
+      return s.plank + s.barrel + s.crate + s.rope + s.canvas + s.plastic + s.can > 0
     },
     use: () => {
       const raft = nearestRaftOnDeck()
@@ -1383,6 +1541,160 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
+  deps.interactions.add({
+    position: raftFitPos,
+    verb: 'Lash',
+    label: 'Deck',
+    radius: 2.8,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      return (
+        !!raft &&
+        (raft.expands ?? 0) < EXPAND_MAX &&
+        deps.vitals.alive &&
+        deps.salvage.has(EXPAND_COST)
+      )
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !deps.salvage.spend(EXPAND_COST)) return
+      raft.expands = (raft.expands ?? 0) + 1
+      raft.radius += 0.38
+      fitExpand(raft.object, m, raft.expands)
+      deps.hud.whisper(
+        raft.expands === 1
+          ? 'Two more planks. The deck grows.'
+          : raft.expands >= EXPAND_MAX
+            ? 'As wide as the lashing will hold.'
+            : 'Wider still. Room to work.',
+      )
+    },
+  })
+
+  deps.interactions.add({
+    position: raftFitPos,
+    verb: 'Lash',
+    label: 'Oar',
+    radius: 2.8,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      return !!raft && !raft.oar && deps.vitals.alive && deps.salvage.has(OAR_COST)
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !deps.salvage.spend(OAR_COST)) return
+      raft.oar = true
+      fitOar(raft.object, m)
+      deps.hud.whisper('An oar on the thwart. The pole has a partner.')
+    },
+  })
+
+  deps.interactions.add({
+    position: raftFitPos,
+    verb: 'Lash',
+    label: 'Floats',
+    radius: 2.8,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      return !!raft && !raft.floats && deps.vitals.alive && deps.salvage.has(FLOAT_COST)
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !deps.salvage.spend(FLOAT_COST)) return
+      raft.floats = true
+      raft.buoyant = true
+      raft.shelter = Math.max(raft.shelter, raft.shelter + 0.08)
+      fitFloat(raft.object, m)
+      deps.hud.whisper('Bottles under the deck. She rides higher.')
+    },
+  })
+
+  // Dig a hollow in soft sand — rain fills it the way rock pools do, slower.
+  // Only when you're looking at the ground, so it doesn't steal every beach prompt.
+  deps.interactions.add({
+    position: digPos,
+    verb: 'Dig',
+    label: 'Hollow',
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      onLand &&
+      !carried &&
+      lookPitch > 0.28 &&
+      groundY > 0.45 &&
+      groundY < 3.2 &&
+      clearOfBuilds(digPos.x, digPos.z, 1.8) &&
+      !nearestOfKind(digPos.x, digPos.z, 'pit', 4),
+    use: () => {
+      const x = digPos.x
+      const z = digPos.z
+      const y = deps.groundAt(x, z)
+      const build = addBuild('pit', digPitMesh(m), x, z, y, 1.6, 0, { water: 0.15 })
+      const drink = deps.interactions.add({
+        position: build.object.position,
+        verb: 'Drink',
+        label: 'Hollow',
+        radius: 2.4,
+        available: () => deps.vitals.alive && (build.water ?? 0) > 0.1,
+        use: () => {
+          const left = build.water ?? 0
+          if (left <= 0.1) return
+          const sip = Math.min(0.28, left)
+          build.water = left - sip
+          eat(deps.vitals, 0, sip * 0.75)
+          const waterMesh = build.object.getObjectByName('water')
+          if (waterMesh) waterMesh.visible = (build.water ?? 0) > 0.08
+          deps.hud.whisper(
+            (build.water ?? 0) > 0.12 ? 'Brackish. Better than salt.' : 'Muddy dregs.',
+          )
+        },
+      })
+      build.items.push(drink)
+      deps.hud.whisper('Sand under the nails. A hollow that will hold rain.')
+    },
+  })
+
+  deps.interactions.add({
+    position: dripPos,
+    verb: 'Hang',
+    label: 'Tin drip',
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      onLand &&
+      groundY > 0.8 &&
+      deps.salvage.has(DRIP_COST) &&
+      clearOfBuilds(dripPos.x, dripPos.z, 1.5),
+    use: () => {
+      if (!deps.salvage.spend(DRIP_COST)) return
+      const x = dripPos.x
+      const z = dripPos.z
+      const y = deps.groundAt(x, z)
+      const build = addBuild('drip', dripMesh(m), x, z, y, 1.4, 0, { water: 0.2 })
+      const drink = deps.interactions.add({
+        position: build.object.position,
+        verb: 'Drink',
+        label: 'Tin drip',
+        radius: 2.3,
+        available: () => deps.vitals.alive && (build.water ?? 0) > 0.08,
+        use: () => {
+          const left = build.water ?? 0
+          if (left <= 0.08) return
+          const sip = Math.min(0.22, left)
+          build.water = left - sip
+          eat(deps.vitals, 0, sip * 0.9)
+          const waterMesh = build.object.getObjectByName('water')
+          if (waterMesh) waterMesh.visible = (build.water ?? 0) > 0.06
+          deps.hud.whisper(
+            (build.water ?? 0) > 0.1 ? 'A mouthful from the tin.' : 'The tin runs dry.',
+          )
+        },
+      })
+      build.items.push(drink)
+      deps.hud.whisper('A can on a stake. Rain will find it.')
+    },
+  })
+
   // Held fish — eat when nothing more urgent is in reach; cook at a fire.
   // The eat hotspot sits on the body, so without this gate it beats every
   // world prompt (lash, rest, …) on mobile.
@@ -1397,6 +1709,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (raft && !raft.mast && deps.salvage.has(MAST_COST)) return true
       if (raft && !raft.rail && deps.salvage.has(RAIL_COST)) return true
       if (raft && !raft.locker && deps.salvage.has(LOCKER_COST)) return true
+      if (raft && !raft.oar && deps.salvage.has(OAR_COST)) return true
+      if (raft && !raft.floats && deps.salvage.has(FLOAT_COST)) return true
+      if (raft && (raft.expands ?? 0) < EXPAND_MAX && deps.salvage.has(EXPAND_COST)) return true
       if (deps.salvage.has(FIRE_COST)) return true
       return false
     }
@@ -1411,6 +1726,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       return true
     }
     if (groundY > 0.8 && deps.salvage.has(RACK_COST) && clearOfBuilds(rackPos.x, rackPos.z, 1.8)) {
+      return true
+    }
+    if (groundY > 0.8 && deps.salvage.has(DRIP_COST) && clearOfBuilds(dripPos.x, dripPos.z, 1.5)) {
       return true
     }
     if (
@@ -1626,12 +1944,14 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       vy: number
       submersion: number
       speed: number
+      pitch?: number
     },
     view: PlayerFrame,
     facingYaw: number,
   ) {
     time = t
     yaw = facingYaw
+    lookPitch = player.pitch ?? 0
     px = player.x
     pz = player.z
     live = player
@@ -1705,6 +2025,16 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
     if (onLand && signalY > 1.2) setAnchor(signalPos, signalAt.x, signalAt.z, signalY + 0.6)
     else setAnchor(signalPos, player.x, player.z, player.y)
+
+    const digAt = offset(player, facingYaw, 1.1, 0)
+    const digY = deps.groundAt(digAt.x, digAt.z)
+    if (onLand && digY > 0.3) setAnchor(digPos, digAt.x, digAt.z, digY + 0.35)
+    else setAnchor(digPos, player.x, player.z, player.y)
+
+    const dripAt = offset(player, facingYaw, 1.15, 0.55)
+    const dripY = deps.groundAt(dripAt.x, dripAt.z)
+    if (onLand && dripY > 0.5) setAnchor(dripPos, dripAt.x, dripAt.z, dripY + 0.45)
+    else setAnchor(dripPos, player.x, player.z, player.y)
 
     const foot = deps.groundAt(player.x, player.z)
     const seaHere = sampleOcean(player.x, player.z, t).y
@@ -1794,18 +2124,25 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         const prevZ = b.z
         const onDeck =
           view.walking && Math.hypot(player.x - b.x, player.z - b.z) <= b.radius * 0.95
-        const top = b.buoyant ? POLE_SPEED_BARREL : POLE_SPEED
+        let top = b.buoyant ? POLE_SPEED_BARREL : POLE_SPEED
+        if (b.oar) top += POLE_OAR_BONUS
+        if (b.floats) top += POLE_FLOAT_BONUS
         let vx = b.vx ?? 0
         let vz = b.vz ?? 0
         if (onDeck && view.speed > 0.2) {
           const aimX = player.dirX
           const aimZ = player.dirZ
-          const blend = 1 - Math.exp(-2.4 * dt)
+          // Oar bites harder into a new heading
+          const blend = 1 - Math.exp(-(b.oar ? 3.4 : 2.4) * dt)
           vx += (aimX * top - vx) * blend
           vz += (aimZ * top - vz) * blend
           if (!saidPole && Math.hypot(vx, vz) > 0.4) {
             saidPole = true
-            deps.hud.whisper('The deck answers the pole.')
+            deps.hud.whisper(b.oar ? 'The oar finds water.' : 'The deck answers the pole.')
+          }
+          if (b.oar && !saidOar && Math.hypot(vx, vz) > 0.9) {
+            saidOar = true
+            deps.hud.whisper('Blade and shaft. She turns when you ask.')
           }
         } else if (b.mast && onDeck) {
           // Sail draws while you're aboard — falls idle if you go overboard
@@ -1856,7 +2193,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           let dyaw = want - b.object.rotation.y
           while (dyaw > Math.PI) dyaw -= Math.PI * 2
           while (dyaw < -Math.PI) dyaw += Math.PI * 2
-          b.object.rotation.y += dyaw * (1 - Math.exp(-1.2 * dt))
+          const yawRate = b.oar ? 1.85 : 1.2
+          b.object.rotation.y += dyaw * (1 - Math.exp(-yawRate * dt))
         }
         if (b.mast) animateSail(b.object, t)
 
@@ -1940,14 +2278,22 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           ;(child.material as THREE.MeshBasicMaterial).opacity = 0.22 * (1 - life)
         }
       }
-      if (b.kind === 'catch') {
+      if (b.kind === 'catch' || b.kind === 'pit' || b.kind === 'drip') {
         const storm = deps.storm?.() ?? 0
         const rainRate = 1 + storm * CATCH_STORM_BOOST
-        b.water = Math.min(1, (b.water ?? 0) + (dt / CATCH_REFILL) * rainRate)
+        const refill =
+          b.kind === 'catch' ? CATCH_REFILL : b.kind === 'pit' ? PIT_REFILL : DRIP_REFILL
+        b.water = Math.min(1, (b.water ?? 0) + (dt / refill) * rainRate)
         const waterMesh = b.object.getObjectByName('water')
         if (waterMesh) {
           waterMesh.visible = (b.water ?? 0) > 0.05
-          waterMesh.scale.y = 0.4 + (b.water ?? 0) * 0.8
+          if (b.kind === 'catch') {
+            waterMesh.scale.y = 0.4 + (b.water ?? 0) * 0.8
+          } else if (b.kind === 'pit') {
+            waterMesh.scale.y = 0.5 + (b.water ?? 0) * 1.2
+          } else {
+            waterMesh.scale.setScalar(0.6 + (b.water ?? 0) * 0.9)
+          }
         }
       }
     }
@@ -2010,6 +2356,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     saidPole = false
     saidSail = false
     saidWash = false
+    saidOar = false
     washMeter = 0
     boardGrace = 0
     washGrace = 0
@@ -2033,6 +2380,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         seat: 0,
         rack: 0,
         signal: 0,
+        pit: 0,
+        drip: 0,
       }
       for (const b of builds) out[b.kind]++
       if (carried) out.fire++
@@ -2050,6 +2399,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       seat: SEAT_COST,
       rack: RACK_COST,
       signal: SIGNAL_COST,
+      expand: EXPAND_COST,
+      oar: OAR_COST,
+      floats: FLOAT_COST,
+      drip: DRIP_COST,
       label: costLabel,
     },
   }

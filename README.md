@@ -48,12 +48,14 @@ keeps.
 The surface tells its own story: a provision crate still floating by the wreck
 is a first meal; after that, hang still underwater and grab fish by hand — keep
 them raw to eat, or cook them once you've kindled a fire. The debris that drifts
-by — planks, barrels, crates, rope, canvas — goes in the stash, and from there
+by — planks, barrels, crates, rope, canvas, bottles, cans — goes in the stash, and from there
 you improvise: a lean-to you can rest under, a fire to cook or smoke fish (and
 carry as a brand at night), a rain-catch, a raft you Climb aboard and fit with
-sail, rail, and locker, and ashore a seat, drying rack, and signal smoke. Caught
+sail, rail, locker, oar, floats and a wider deck, and ashore a seat, drying rack,
+signal smoke, dug rain hollows and tin drips. Island wood and grass are workable —
+Break driftwood, Fell a palm with the knife, Pull grass into rope. Caught
 fish show in the Pack until you eat, cook, smoke, or hang them to dry. A heavy
-stash slows the swim; a plank or barrel under the arm buys a little float; Drop
+stash slows the swim; a plank, barrel or bottle under the arm buys a little float; Drop
 sheds the heaviest piece when nothing else is in reach. The sea itself carries
 you on a swell-set current — glass-offs are dive windows, and a foul deck can
 wash you over the side. Nothing is the "right" path; see [`docs/paths.md`](docs/paths.md).
@@ -77,18 +79,20 @@ of the swim into a walk — slope-aware, with real gravity off the ledges. Cliff
 past ~50° refuse you; a storm face that closes over your head knocks you back
 into the sea. Coconuts lie on the sand, crabs scuttle the wash (grab one when
 you're quick enough), rain stands in hollows in the rock above the beach, and
-inland a small cairn holds rope someone left under the stones. Gulls, lizards
-and butterflies keep the place from reading empty. Bring salvage ashore and you
-can improvise a lean-to, a fire, a rain-catch, a seat, a drying rack, a signal
-on the ridge — a camp you made, not one the world planted for you.
+inland a small cairn holds rope someone left under the stones. Driftwood
+breaks into planks, palms fell once you have the knife, and long grass twists
+into rope. Gulls, lizards and butterflies keep the place from reading empty.
+Bring salvage ashore and you can improvise a lean-to, a fire, a rain-catch, a
+seat, a drying rack, a signal on the ridge, dig a hollow for rain, hang a tin
+drip — a camp you made, not one the world planted for you.
 
 ## Controls
 
 - **Touch / on-screen:** left stick move · drag anywhere to look · ▲▼ depth ·
   action button appears when something is in reach (take, eat, drink, lash,
-  kindle, cook, take/plant fire — same verbs as desktop **F**)
+  dig, chop, cook, take/plant fire — same verbs as desktop **F**)
 - **Desktop:** WASD · click for mouse-look · Space/E up · Shift/Q dive · **F**
-  to take, eat, drink, open, pry, cut, jab, lash, kindle or cook
+  to take, eat, drink, open, pry, cut, jab, lash, dig, kindle or cook
 
 ## Live
 

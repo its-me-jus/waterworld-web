@@ -197,6 +197,8 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
         deps.salvage.stash.canvas += 2
         deps.salvage.stash.barrel += 2
         deps.salvage.stash.crate += 1
+        deps.salvage.stash.plastic += 3
+        deps.salvage.stash.can += 2
         break
       case 'fish':
         deps.grantFish?.(2)
