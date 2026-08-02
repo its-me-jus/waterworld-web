@@ -41,6 +41,16 @@ export type Island = {
    * host one (shouldn't happen on the stock island).
    */
   cairn: THREE.Vector3 | null
+  /**
+   * Shore crabs that scuttle the wet sand. Grab one when you're close enough —
+   * same rule as fish and shellfish, nothing points at them.
+   */
+  crabs: {
+    nearest: (point: THREE.Vector3, maxDist: number) => { index: number; dist: number } | null
+    positionAt: (index: number, out: THREE.Vector3) => THREE.Vector3
+    /** Hide and eat; the shell comes back later. */
+    take: (index: number) => boolean
+  }
   update: (camera: THREE.Camera, underwater: boolean, time?: number) => void
   /** Keep aerial perspective matched to the live horizon. */
   setHaze: (color: THREE.Color) => void
@@ -466,6 +476,106 @@ function sapling(seed: number) {
     canopy.push(blob)
   }
   return { trunk, canopy }
+}
+
+/** A shore crab — flat body, sidling legs, two claws. Small enough to miss. */
+function crabMesh(seed: number) {
+  const rand = (n: number) => fbm(seed * 9.4 + n * 2.1, seed * 5.8 - n * 3.3)
+  const scale = 0.75 + rand(1) * 0.55
+  const group = new THREE.Group()
+  const shell = new THREE.Mesh(
+    new THREE.SphereGeometry(0.11, 6, 4),
+    new THREE.MeshStandardMaterial({ color: 0x8a4a32, roughness: 0.85 }),
+  )
+  shell.scale.set(1.35 * scale, 0.45 * scale, 1.1 * scale)
+  shell.position.y = 0.05 * scale
+  group.add(shell)
+
+  const legMat = new THREE.MeshStandardMaterial({ color: 0x6e3a28, roughness: 0.9 })
+  for (let side = -1; side <= 1; side += 2) {
+    for (let i = 0; i < 3; i++) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.01, 0.16 * scale, 3), legMat)
+      leg.position.set(side * (0.1 + i * 0.02) * scale, 0.04 * scale, (i - 1) * 0.06 * scale)
+      leg.rotation.z = side * (0.85 + i * 0.08)
+      leg.rotation.x = (i - 1) * 0.25
+      group.add(leg)
+    }
+    const claw = new THREE.Mesh(new THREE.BoxGeometry(0.05 * scale, 0.03 * scale, 0.07 * scale), legMat)
+    claw.position.set(side * 0.14 * scale, 0.05 * scale, 0.1 * scale)
+    claw.rotation.y = side * -0.4
+    group.add(claw)
+  }
+  return group
+}
+
+/** A sunning lizard — long body, tiny legs, the rock's little tenant. */
+function lizardMesh(seed: number) {
+  const rand = (n: number) => fbm(seed * 6.6 + n * 3.4, seed * 4.2 - n * 2.1)
+  const group = new THREE.Group()
+  const mat = new THREE.MeshStandardMaterial({ color: 0x5a6b3c, roughness: 0.88 })
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.035, 0.14, 3, 5), mat)
+  body.rotation.z = Math.PI / 2
+  body.position.y = 0.03
+  group.add(body)
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.028, 5, 4), mat)
+  head.position.set(0.1, 0.035, 0)
+  group.add(head)
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.12, 4), mat)
+  tail.rotation.z = Math.PI / 2
+  tail.position.set(-0.12, 0.03, 0)
+  group.add(tail)
+  for (let i = 0; i < 4; i++) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.005, 0.05, 3), mat)
+    leg.position.set((i < 2 ? 0.04 : -0.04), 0.015, (i % 2 === 0 ? 0.04 : -0.04))
+    leg.rotation.x = (i % 2 === 0 ? 1 : -1) * 0.9
+    group.add(leg)
+  }
+  group.scale.setScalar(0.85 + rand(1) * 0.4)
+  return group
+}
+
+/** A butterfly — two wing planes that flap in update. */
+function butterflyMesh(seed: number) {
+  const rand = (n: number) => fbm(seed * 8.1 + n * 1.9, seed * 3.5 - n * 4.4)
+  const group = new THREE.Group()
+  const tone = rand(1) > 0.5 ? 0xc4a35a : 0x6a8c4e
+  const wingMat = new THREE.MeshBasicMaterial({ color: tone, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+  const left = new THREE.Mesh(new THREE.CircleGeometry(0.09 + rand(2) * 0.05, 5), wingMat)
+  const right = left.clone()
+  left.position.x = -0.06
+  right.position.x = 0.06
+  left.rotation.y = 0.35
+  right.rotation.y = -0.35
+  group.add(left, right)
+  group.userData.left = left
+  group.userData.right = right
+  return group
+}
+
+/** A beach gull — body + wings, smaller and lower than the thermal birds. */
+function gullMesh(seed: number) {
+  const rand = (n: number) => fbm(seed * 5.2 + n * 2.7, seed * 7.9 - n * 1.3)
+  const group = new THREE.Group()
+  const bodyMat = new THREE.MeshBasicMaterial({ color: 0xd8d2c4 })
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 4), bodyMat)
+  body.scale.set(1, 0.7, 1.6)
+  group.add(body)
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.07, 5, 4), bodyMat)
+  head.position.set(0, 0.04, 0.16)
+  group.add(head)
+  const wingGeo = new THREE.PlaneGeometry(0.55, 0.16)
+  const wingMat = new THREE.MeshBasicMaterial({ color: 0xc9c2b4, side: THREE.DoubleSide })
+  const left = new THREE.Mesh(wingGeo, wingMat)
+  const right = new THREE.Mesh(wingGeo, wingMat)
+  left.position.set(-0.28, 0.02, 0)
+  right.position.set(0.28, 0.02, 0)
+  left.rotation.z = 0.15
+  right.rotation.z = -0.15
+  group.add(left, right)
+  group.userData.left = left
+  group.userData.right = right
+  group.scale.setScalar(0.85 + rand(1) * 0.35)
+  return group
 }
 
 export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
@@ -1280,11 +1390,160 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
 
   const centre = new THREE.Vector3(opts.x, 0, opts.z)
 
-  // —— birds —————————————————————————————————————————————————
-  // A few silhouettes riding the thermals over the peak. Cheap: one merged
-  // geometry per bird (two wings), orbited in update. They sell the island as
-  // alive from half a kilometre out.
+  // —— wildlife ————————————————————————————————————————————————
+  // The island has to feel occupied, not dressed. Crabs on the wash, lizards
+  // on warm rock, butterflies in the green, gulls on the sand, and a few
+  // silhouettes on the thermals. Cheap meshes, live in update, nothing marked.
+
+  type Crab = {
+    mesh: THREE.Group
+    homeX: number
+    homeZ: number
+    x: number
+    z: number
+    heading: number
+    spook: number
+    phase: number
+    goneUntil: number
+  }
+  type Lizard = {
+    mesh: THREE.Group
+    x: number
+    z: number
+    heading: number
+    phase: number
+    alert: number
+  }
+  type Flutter = {
+    mesh: THREE.Group
+    x: number
+    y: number
+    z: number
+    phase: number
+    speed: number
+  }
+  type Gull = {
+    mesh: THREE.Group
+    x: number
+    z: number
+    y: number
+    heading: number
+    phase: number
+    flying: number
+    flyHeight: number
+  }
+
+  const crabs: Crab[] = []
+  const lizards: Lizard[] = []
+  const flutters: Flutter[] = []
+  const gulls: Gull[] = []
   const birds: THREE.Mesh[] = []
+
+  // Shore crabs — wet sand, mostly on the landing cove
+  {
+    const want = low ? 12 : 24
+    for (let i = 0; i < 900 && crabs.length < want; i++) {
+      const coveBias = i % 4 !== 3
+      const angle = i * 2.399
+      const radius = 180 + ((i * 17) % 200)
+      const lx = coveBias ? COVE_X + (fbm(i, 1.1) - 0.5) * 130 : Math.cos(angle) * radius
+      const lz = coveBias ? COVE_Z + (fbm(i, 2.2) - 0.5) * 130 : Math.sin(angle) * radius
+      const h = surface(lx, lz)
+      if (h < 0.25 || h > 2.8) continue
+      const mesh = crabMesh(i + 50)
+      mesh.position.set(lx, h + 0.02, lz)
+      group.add(mesh)
+      crabs.push({
+        mesh,
+        homeX: lx,
+        homeZ: lz,
+        x: lx,
+        z: lz,
+        heading: fbm(i, 3.3) * Math.PI * 2,
+        spook: 0,
+        phase: fbm(i, 4.4) * Math.PI * 2,
+        goneUntil: 0,
+      })
+    }
+  }
+
+  // Lizards — sun on rock and scrub edges
+  {
+    const want = low ? 8 : 16
+    for (let i = 0; i < 700 && lizards.length < want; i++) {
+      const angle = i * 2.618
+      const radius = 90 + ((i * 23) % 240)
+      const approachBias = i % 2 === 0
+      const lx = approachBias ? COVE_X + (fbm(i, 5.5) - 0.5) * 160 : Math.cos(angle) * radius
+      const lz = approachBias ? COVE_Z + (fbm(i, 6.6) - 0.5) * 160 : Math.sin(angle) * radius
+      const h = surface(lx, lz)
+      if (h < 2.5 || h > 28) continue
+      const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
+      if (slope < 0.8) continue
+      const mesh = lizardMesh(i + 80)
+      mesh.position.set(lx, h + 0.02, lz)
+      mesh.rotation.y = fbm(i, 7.7) * Math.PI * 2
+      group.add(mesh)
+      lizards.push({
+        mesh,
+        x: lx,
+        z: lz,
+        heading: mesh.rotation.y,
+        phase: fbm(i, 8.8) * Math.PI * 2,
+        alert: 0,
+      })
+    }
+  }
+
+  // Butterflies — green band, especially near the cove shoulder
+  {
+    const want = low ? 10 : 20
+    for (let i = 0; i < want; i++) {
+      const lx = COVE_X + (fbm(i, 9.1) - 0.5) * 180 + (i % 3) * 20
+      const lz = COVE_Z + (fbm(i, 10.2) - 0.5) * 180
+      const h = Math.max(surface(lx, lz), 2)
+      const mesh = butterflyMesh(i + 120)
+      mesh.position.set(lx, h + 1.2 + fbm(i, 1.4) * 1.5, lz)
+      group.add(mesh)
+      flutters.push({
+        mesh,
+        x: lx,
+        y: mesh.position.y,
+        z: lz,
+        phase: fbm(i, 2.5) * Math.PI * 2,
+        speed: 0.35 + fbm(i, 3.6) * 0.4,
+      })
+    }
+  }
+
+  // Beach gulls — walk the wash, lift off when you get close
+  {
+    const want = low ? 5 : 9
+    for (let i = 0; i < 500 && gulls.length < want; i++) {
+      const coveBias = i % 3 !== 2
+      const angle = i * 2.713
+      const radius = 200 + ((i * 19) % 180)
+      const lx = coveBias ? COVE_X + (fbm(i, 4.1) - 0.5) * 140 : Math.cos(angle) * radius
+      const lz = coveBias ? COVE_Z + (fbm(i, 5.2) - 0.5) * 140 : Math.sin(angle) * radius
+      const h = surface(lx, lz)
+      if (h < 0.4 || h > 4.5) continue
+      const mesh = gullMesh(i + 140)
+      mesh.position.set(lx, h + 0.12, lz)
+      group.add(mesh)
+      gulls.push({
+        mesh,
+        x: lx,
+        z: lz,
+        y: h + 0.12,
+        heading: fbm(i, 6.3) * Math.PI * 2,
+        phase: fbm(i, 7.4) * Math.PI * 2,
+        flying: 0,
+        flyHeight: 4 + fbm(i, 8.5) * 5,
+      })
+    }
+  }
+
+  // Thermal birds — silhouettes over the peak, readable from half a kilometre
   {
     const birdMat = new THREE.MeshBasicMaterial({ color: 0x1c2226, side: THREE.DoubleSide })
     const birdCount = low ? 5 : 9
@@ -1310,10 +1569,199 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     }
   }
 
+  const crabsApi = {
+    nearest(point: THREE.Vector3, maxDist: number) {
+      let best = -1
+      let bestD = maxDist
+      for (let i = 0; i < crabs.length; i++) {
+        const c = crabs[i]
+        if (c.goneUntil > 0 || !c.mesh.visible) continue
+        const wx = opts.x + c.x
+        const wz = opts.z + c.z
+        const d = Math.hypot(point.x - wx, point.z - wz)
+        if (d < bestD) {
+          bestD = d
+          best = i
+        }
+      }
+      return best < 0 ? null : { index: best, dist: bestD }
+    },
+    positionAt(index: number, out: THREE.Vector3) {
+      const c = crabs[index]
+      const h = surface(c.x, c.z)
+      return out.set(opts.x + c.x, h + 0.05, opts.z + c.z)
+    },
+    take(index: number) {
+      const c = crabs[index]
+      if (!c || c.goneUntil > 0 || !c.mesh.visible) return false
+      c.mesh.visible = false
+      // Respawn delay set from update's clock on first hidden frame
+      c.goneUntil = -1
+      return true
+    },
+  }
+
+  let wildlifeTime = 0
+
   function update(camera: THREE.Camera, underwater: boolean, time = 0) {
     // Nothing is visible 700 m through water. Close in it's the shelf you dive,
     // so keep it once the island is the thing you're swimming around.
     group.visible = !underwater || camera.position.distanceToSquared(centre) < 420 * 420
+
+    const dt = wildlifeTime > 0 ? Math.min(0.05, Math.max(0, time - wildlifeTime)) : 0.016
+    wildlifeTime = time
+    const camX = camera.position.x - opts.x
+    const camZ = camera.position.z - opts.z
+
+    // —— crabs ——————————————————————————————————————————————
+    for (const c of crabs) {
+      if (c.goneUntil < 0) {
+        c.goneUntil = time + 75 + c.phase * 8
+      }
+      if (c.goneUntil > 0) {
+        if (time < c.goneUntil) {
+          c.mesh.visible = false
+          continue
+        }
+        c.goneUntil = 0
+        c.x = c.homeX
+        c.z = c.homeZ
+        c.spook = 0
+        c.mesh.visible = true
+      }
+
+      const dist = Math.hypot(camX - c.x, camZ - c.z)
+      // Freeze a beat when first noticed, then sidestep — gives a grab window
+      if (dist < 3.8) c.spook = Math.min(1, c.spook + dt * 1.4)
+      else c.spook = Math.max(0, c.spook - dt * 0.35)
+
+      if (c.spook > 0.45) {
+        // Sidestep away from the camera — crabs don't run straight
+        const away = Math.atan2(c.z - camZ, c.x - camX) + 1.1
+        c.heading = away
+        const spd = 1.2 + c.spook * 1.8
+        c.x += Math.cos(c.heading) * spd * dt
+        c.z += Math.sin(c.heading) * spd * dt
+      } else if (c.spook > 0.08) {
+        // Locked — the tell before they bolt
+        c.heading += Math.sin(time * 20 + c.phase) * 0.05
+      } else {
+        // Idle wander near home
+        c.heading += Math.sin(time * 0.7 + c.phase) * 0.4 * dt
+        const spd = 0.25 + Math.sin(time * 1.3 + c.phase) * 0.15
+        c.x += Math.cos(c.heading) * spd * dt
+        c.z += Math.sin(c.heading) * spd * dt
+        // Leash
+        const hx = c.x - c.homeX
+        const hz = c.z - c.homeZ
+        if (hx * hx + hz * hz > 36) {
+          c.heading = Math.atan2(c.homeZ - c.z, c.homeX - c.x)
+        }
+      }
+
+      const h = surface(c.x, c.z)
+      // Keep them on the wet band — if they climb too high, turn home
+      if (h < 0.1 || h > 4.5) {
+        c.heading = Math.atan2(c.homeZ - c.z, c.homeX - c.x)
+        c.x += Math.cos(c.heading) * 2 * dt
+        c.z += Math.sin(c.heading) * 2 * dt
+      }
+      c.mesh.position.set(c.x, surface(c.x, c.z) + 0.02, c.z)
+      c.mesh.rotation.y = c.heading
+      // Tiny bob while moving
+      c.mesh.position.y += Math.abs(Math.sin(time * 14 + c.phase)) * 0.015 * (0.3 + c.spook)
+    }
+
+    // —— lizards ————————————————————————————————————————————
+    for (const l of lizards) {
+      const dist = Math.hypot(camX - l.x, camZ - l.z)
+      if (dist < 4.2) l.alert = Math.min(1, l.alert + dt * 3)
+      else l.alert = Math.max(0, l.alert - dt * 0.5)
+
+      if (l.alert > 0.5) {
+        l.heading += (Math.atan2(l.z - camZ, l.x - camX) - l.heading) * 0.2
+        l.x += Math.cos(l.heading) * 2.8 * dt
+        l.z += Math.sin(l.heading) * 2.8 * dt
+      } else {
+        // Push-ups in the sun
+        l.mesh.position.y = surface(l.x, l.z) + 0.02 + Math.sin(time * 3.5 + l.phase) * 0.012
+      }
+      const h = surface(l.x, l.z)
+      if (h < 1.5 || h > 35) {
+        l.heading += Math.PI * 0.5
+        l.x += Math.cos(l.heading) * dt
+        l.z += Math.sin(l.heading) * dt
+      }
+      l.mesh.position.x = l.x
+      l.mesh.position.z = l.z
+      if (l.alert > 0.5) l.mesh.position.y = surface(l.x, l.z) + 0.02
+      l.mesh.rotation.y = l.heading
+    }
+
+    // —— butterflies ——————————————————————————————————————
+    for (const f of flutters) {
+      f.x += Math.cos(time * f.speed + f.phase) * 0.55 * dt
+      f.z += Math.sin(time * f.speed * 0.85 + f.phase * 1.3) * 0.55 * dt
+      f.y = Math.max(surface(f.x, f.z) + 0.8, f.y + Math.sin(time * 2.2 + f.phase) * 0.35 * dt)
+      // Soft leash near the cove green
+      const dx = f.x - COVE_X
+      const dz = f.z - COVE_Z
+      if (dx * dx + dz * dz > 220 * 220) {
+        f.x -= dx * 0.01
+        f.z -= dz * 0.01
+      }
+      f.mesh.position.set(f.x, f.y, f.z)
+      f.mesh.rotation.y = time * f.speed + f.phase
+      const flap = Math.sin(time * 18 + f.phase) * 0.55
+      const left = f.mesh.userData.left as THREE.Mesh
+      const right = f.mesh.userData.right as THREE.Mesh
+      if (left && right) {
+        left.rotation.y = 0.35 + flap
+        right.rotation.y = -0.35 - flap
+      }
+    }
+
+    // —— gulls ——————————————————————————————————————————————
+    for (const g of gulls) {
+      const dist = Math.hypot(camX - g.x, camZ - g.z)
+      if (dist < 7 && g.flying < 0.2) g.flying = 1
+      if (g.flying > 0) {
+        g.flying = Math.min(1, g.flying + dt * 0.15)
+        g.y += (g.flyHeight - (g.y - surface(g.x, g.z))) * 1.5 * dt
+        g.heading += 0.55 * dt
+        g.x += Math.cos(g.heading) * 3.2 * dt
+        g.z += Math.sin(g.heading) * 3.2 * dt
+        // Settle again once far enough
+        if (dist > 18 && g.flying > 0.8) {
+          g.flying = Math.max(0, g.flying - dt * 0.4)
+          const ground = surface(g.x, g.z)
+          g.y += (ground + 0.12 - g.y) * 2 * dt
+          if (Math.abs(g.y - (ground + 0.12)) < 0.15 && dist > 14) g.flying = 0
+        }
+        const left = g.mesh.userData.left as THREE.Mesh
+        const right = g.mesh.userData.right as THREE.Mesh
+        const flap = Math.sin(time * 12 + g.phase) * 0.45
+        if (left && right) {
+          left.rotation.z = 0.15 + flap
+          right.rotation.z = -0.15 - flap
+        }
+      } else {
+        // Peck
+        g.mesh.rotation.x = Math.sin(time * 2.4 + g.phase) > 0.7 ? 0.35 : 0
+        g.heading += Math.sin(time * 0.4 + g.phase) * 0.3 * dt
+        g.x += Math.cos(g.heading) * 0.2 * dt
+        g.z += Math.sin(g.heading) * 0.2 * dt
+        g.y = surface(g.x, g.z) + 0.12
+        const left = g.mesh.userData.left as THREE.Mesh
+        const right = g.mesh.userData.right as THREE.Mesh
+        if (left && right) {
+          left.rotation.z = 0.08
+          right.rotation.z = -0.08
+        }
+      }
+      g.mesh.position.set(g.x, g.y, g.z)
+      g.mesh.rotation.y = g.heading
+    }
 
     for (const bird of birds) {
       const { radius, height, speed, phase } = bird.userData
@@ -1330,5 +1778,5 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     haze.copy(color).convertLinearToSRGB()
   }
 
-  return { group, centre, heightAt, resolve, shore, pools, cairn, update, setHaze }
+  return { group, centre, heightAt, resolve, shore, pools, cairn, crabs: crabsApi, update, setHaze }
 }

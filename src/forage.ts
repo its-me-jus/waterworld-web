@@ -15,6 +15,8 @@ import { eat, type Vitals } from './survival'
  *    fingers. Eat it raw, cook it at a fire for a meal now, or smoke it to
  *    keep for later.
  *  - Smoked fish: portable, better than raw, sits in the Pack until you eat it.
+ *  - Shore crabs (ashore): scuttle the wet sand. Grab one and eat it — thin
+ *    eating, and the shell comes back later.
  *
  * Catching lives here. Cooking / smoking live in improvise; this module only
  * holds the counts and applies the bite.
@@ -30,10 +32,17 @@ export type ForageDeps = {
     fling: (index: number, far: boolean) => void
     positionAt: (index: number, out: THREE.Vector3) => THREE.Vector3
   }
+  /** Island shore crabs — optional so wreck-only tests still construct. */
+  crabs?: {
+    nearest: (point: THREE.Vector3, maxDist: number) => { index: number; dist: number } | null
+    positionAt: (index: number, out: THREE.Vector3) => THREE.Vector3
+    take: (index: number) => boolean
+  }
 }
 
 const GRAB_RANGE = 2.2
 const CRATE_RANGE = 2.9
+const CRAB_RANGE = 2.8
 
 export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
   const cratePos = new THREE.Vector3()
@@ -79,6 +88,28 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     },
   })
 
+  // Shore crabs — ride the nearest live crab while you're ashore
+  let crabCurrent = -1
+  const crabPos = new THREE.Vector3()
+  if (deps.crabs) {
+    const crabs = deps.crabs
+    deps.interactions.add({
+      position: crabPos,
+      verb: 'Grab',
+      label: 'Crab',
+      radius: CRAB_RANGE,
+      available: () => crabCurrent >= 0 && vitals.alive,
+      use: () => {
+        const index = crabCurrent
+        if (index < 0) return
+        if (!crabs.take(index)) return
+        eat(vitals, 0.16, 0.02)
+        hud.whisper('A shore crab. Thin eating.')
+        crabCurrent = -1
+      },
+    })
+  }
+
   function update(camera: THREE.PerspectiveCamera, view: PlayerFrame) {
     const spot = deps.provisionSpot()
     if (spot) cratePos.copy(spot)
@@ -89,6 +120,15 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
       if (hit) {
         current = hit.index
         deps.fish.positionAt(hit.index, fishPos)
+      }
+    }
+
+    crabCurrent = -1
+    if (deps.crabs && !view.underwater && vitals.alive) {
+      const hit = deps.crabs.nearest(camera.position, CRAB_RANGE)
+      if (hit) {
+        crabCurrent = hit.index
+        deps.crabs.positionAt(hit.index, crabPos)
       }
     }
   }
