@@ -12,6 +12,7 @@ import { createInteractions } from './interact'
 import { createIsland } from './island'
 import { createOcean } from './ocean'
 import { createOpMenu, type TeleportSpot } from './opmenu'
+import { applyVitals, clearSave, readSave, writeSave, type SavedRun } from './persist'
 import { bindKeyboardMouse, createPlayer, updatePlayer } from './player'
 import { createPostChain } from './post'
 import { createSalvage } from './salvage'
@@ -276,6 +277,8 @@ let saidPerch = false
 let saidShore = false
 let saidBurden = false
 let saidAid = false
+/** Seconds since last autosave. */
+let saveTimer = 0
 
 function landfall(onPerch: boolean) {
   if (onPerch) {
@@ -372,6 +375,7 @@ const improvise = createImprovise(scene, camera, {
 raftAt = improvise.standAt
 
 function restart() {
+  clearSave()
   spawn()
   resetVitals(vitals)
   salvage.reset(new THREE.Vector3(player.x, player.y, player.z))
@@ -391,9 +395,84 @@ function restart() {
   saidShore = false
   saidBurden = false
   saidAid = false
+  saveTimer = 0
 }
 
-// —— the operating menu: pack + dev field kit ————————————————————————
+function captureSave(): SavedRun {
+  return {
+    v: 1,
+    savedAt: Date.now(),
+    player: {
+      x: player.x,
+      y: player.y,
+      z: player.z,
+      yaw: player.yaw,
+      pitch: player.pitch,
+      mode: player.mode,
+    },
+    vitals: {
+      breath: vitals.breath,
+      stamina: vitals.stamina,
+      warmth: vitals.warmth,
+      water: vitals.water,
+      food: vitals.food,
+      health: vitals.health,
+      elapsed: vitals.elapsed,
+      wounded: vitals.wounded,
+      woundClock: vitals.woundClock,
+      suited: vitals.suited,
+    },
+    stash: { ...salvage.stash },
+    rawFish: forage.rawFish,
+    smokedFish: forage.smokedFish,
+    knife: loot.hasKnife,
+    spear: loot.hasSpear,
+    suit: vitals.suited,
+    climateElapsed: climate.getElapsed(),
+    hasDived,
+    builds: improvise.snapshot(),
+    harvest: harvest.snapshot(),
+  }
+}
+
+function persistRun() {
+  if (dead || !vitals.alive) return
+  writeSave(captureSave())
+}
+
+function loadRun(data: SavedRun) {
+  player.x = data.player.x
+  player.y = data.player.y
+  player.z = data.player.z
+  player.yaw = data.player.yaw
+  player.pitch = data.player.pitch
+  player.mode = data.player.mode
+  player.vy = 0
+  player.speed = 0
+  applyVitals(vitals, data.vitals)
+  salvage.setStash(data.stash)
+  forage.setFish(data.rawFish, data.smokedFish)
+  harvest.restore(data.harvest)
+  improvise.restore(data.builds)
+  climate.setElapsed(data.climateElapsed)
+  hasDived = !!data.hasDived
+  loot.reset()
+  if (data.spear) loot.grant('spear')
+  else if (data.knife) loot.grant('knife')
+  if (data.suit || data.vitals.suited) {
+    loot.grant('suit')
+    swimmer.setSurvivalSuit(true)
+  } else {
+    swimmer.setSurvivalSuit(false)
+  }
+  collide(player)
+  dead = false
+  deathT = 0
+  hud.clearDead()
+  hud.whisper('Still here.')
+}
+
+// —— the operating menu: pack + field kit ————————————————————————
 function teleport(spot: TeleportSpot) {
   player.x = spot.x
   player.z = spot.z
@@ -436,6 +515,19 @@ const opMenu = createOpMenu(app, {
   },
   resetRun: restart,
 })
+
+// Continue a living camp across reloads — skip if the URL asked for a spawn
+{
+  const spawnOverride =
+    params.has('x') || params.has('z') || params.has('yaw') || params.has('depth')
+  const saved = !spawnOverride ? readSave() : null
+  if (saved) loadRun(saved)
+}
+
+window.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') persistRun()
+})
+window.addEventListener('pagehide', () => persistRun())
 
 const desktop = bindKeyboardMouse(renderer.domElement, player, {
   enablePointerLock: !mobile,
@@ -704,6 +796,7 @@ function frame() {
 
   if (!vitals.alive && !dead) {
     dead = true
+    clearSave()
     opMenu.setOpen(false)
     hud.setDead(vitals.cause, vitals.elapsed)
     if (document.pointerLockElement) document.exitPointerLock()
@@ -711,6 +804,12 @@ function frame() {
   if (dead) {
     deathT += dt
     oceanAudio.dim(Math.min(1, deathT / 3.2))
+  } else {
+    saveTimer += dt
+    if (saveTimer >= 12) {
+      saveTimer = 0
+      persistRun()
+    }
   }
 
   if (Number.isNaN(prevSurfaceForAudio)) prevSurfaceForAudio = surfaceY

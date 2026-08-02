@@ -335,7 +335,63 @@ export function createHarvest(scene: THREE.Scene, deps: HarvestDeps) {
     }
   }
 
-  return { update, reset }
+  function snapshot() {
+    const now = performance.now() / 1000
+    return nodes.map((node) => ({
+      taken: node.taken,
+      palmStage: node.palmStage,
+      returnIn:
+        node.kind === 'grass' && node.taken && node.returnAt > now
+          ? node.returnAt - now
+          : 0,
+    }))
+  }
+
+  function restore(
+    saved: { taken: boolean; palmStage?: 'fronds' | 'trunk' | 'gone'; returnIn?: number }[],
+  ) {
+    reset()
+    const now = performance.now() / 1000
+    for (let i = 0; i < nodes.length && i < saved.length; i++) {
+      const node = nodes[i]
+      const s = saved[i]
+      if (node.kind === 'palm') {
+        if (s.palmStage === 'gone' || s.taken) {
+          node.taken = true
+          node.palmStage = 'gone'
+          for (const child of node.object.children) {
+            if (child.name === 'stump') child.visible = true
+            else child.visible = false
+          }
+        } else if (s.palmStage === 'trunk') {
+          node.palmStage = 'trunk'
+          node.taken = false
+          for (const child of node.object.children) {
+            if (child.name === 'frond' || child.name === 'nut') child.visible = false
+            else if (child.name === 'stump') child.visible = false
+            else child.visible = true
+          }
+          node.item.verb = 'Fell'
+          node.item.label = 'Palm'
+        }
+      } else if (s.taken) {
+        if (node.kind === 'grass' && (s.returnIn ?? 0) > 0) {
+          node.taken = true
+          node.object.visible = false
+          node.returnAt = now + (s.returnIn ?? 0)
+        } else if (node.kind === 'grass') {
+          // Already regrown
+          node.taken = false
+          node.object.visible = true
+        } else {
+          node.taken = true
+          node.object.visible = false
+        }
+      }
+    }
+  }
+
+  return { update, reset, snapshot, restore }
 }
 
 export type Harvest = ReturnType<typeof createHarvest>

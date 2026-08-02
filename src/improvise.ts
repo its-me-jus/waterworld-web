@@ -4,6 +4,7 @@ import type { Hud } from './hud'
 import type { Interactable, Interactions } from './interact'
 import type { PlayerFrame } from './player'
 import type { Salvage, StashKind } from './salvage'
+import type { SavedBuild, SavedHold, SavedRoof } from './persist'
 import { eat, type Vitals } from './survival'
 import { sampleOcean } from './waves'
 import { barrelObject, crateObject, plankObject } from './wreck'
@@ -3001,11 +3002,180 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     washGrace = 0
   }
 
+  function fillHold(src?: SavedHold): Hold {
+    const h = emptyHold()
+    if (!src) return h
+    for (const k of Object.keys(h) as StashKind[]) {
+      h[k] = Math.max(0, Math.floor(src[k] ?? 0))
+    }
+    return h
+  }
+
+  function snapshot(): SavedBuild[] {
+    return builds.map((b) => ({
+      kind: b.kind,
+      x: b.x,
+      z: b.z,
+      yaw: b.object.rotation.y,
+      water: b.water,
+      buoyant: b.buoyant,
+      mast: b.mast,
+      rail: b.rail,
+      locker: b.locker,
+      oar: b.oar,
+      floats: b.floats,
+      expands: b.expands,
+      marked: b.marked,
+      sides: b.sides,
+      roof: (b.roof ?? 'none') as SavedRoof,
+      hasBarrel: b.hasBarrel,
+      hasMat: b.hasMat,
+      hold: b.hold ? { ...b.hold } : undefined,
+    }))
+  }
+
+  function attachWaterDrink(
+    build: Build,
+    label: string,
+    sipMax: number,
+    sipScale: number,
+    emptyLine: string,
+    fullLine: string,
+  ) {
+    const drink = deps.interactions.add({
+      position: build.object.position,
+      verb: 'Drink',
+      label,
+      radius: 2.5,
+      available: () => deps.vitals.alive && (build.water ?? 0) > 0.08,
+      use: () => {
+        const left = build.water ?? 0
+        if (left <= 0.08) return
+        const sip = Math.min(sipMax, left)
+        build.water = left - sip
+        eat(deps.vitals, 0, sip * sipScale)
+        const waterMesh = build.object.getObjectByName('water')
+        if (waterMesh) waterMesh.visible = (build.water ?? 0) > 0.05
+        deps.hud.whisper((build.water ?? 0) > 0.1 ? fullLine : emptyLine)
+      },
+    })
+    build.items.push(drink)
+  }
+
+  function restore(saved: SavedBuild[]) {
+    reset()
+    for (const s of saved) {
+      const x = s.x
+      const z = s.z
+      const kind = s.kind as BuildKind
+      let build: Build | null = null
+
+      if (kind === 'lean-to') {
+        const y = deps.groundAt(x, z)
+        build = addBuild('lean-to', shelterFrameMesh(m), x, z, y, 2.8, 0.28, {
+          sides: s.sides ?? 0,
+          roof: (s.roof ?? 'none') as RoofKind,
+          hasBarrel: !!s.hasBarrel,
+          hasMat: !!s.hasMat,
+          water: s.water ?? 0,
+        })
+        const sides = s.sides ?? 0
+        for (let i = 1; i <= sides; i++) fitShelterSide(build.object, m, i)
+        if (s.roof && s.roof !== 'none') fitShelterRoof(build.object, m, s.roof)
+        if (s.hasBarrel) {
+          fitShelterBarrel(build.object, m)
+          attachBarrelDrink(build, 'Barrel')
+        }
+        if (s.hasMat) fitShelterMat(build.object, m)
+        recomputeShelter(build)
+      } else if (kind === 'fire') {
+        const y = deps.groundAt(x, z)
+        // Deck fires: if near a raft snapshot, sit on ground for restore simplicity
+        build = addBuild('fire', fireMesh(m), x, z, y, 2.4, 1.35)
+      } else if (kind === 'catch') {
+        const y = deps.groundAt(x, z)
+        build = addBuild('catch', catchMesh(m), x, z, y, 2.2, 0, { water: s.water ?? 0.4 })
+        attachWaterDrink(
+          build,
+          'Rain-catch',
+          0.35,
+          0.85,
+          'The last of it.',
+          'Cool. Flat. Better than the sea.',
+        )
+      } else if (kind === 'seat') {
+        build = addBuild('seat', seatMesh(m), x, z, deps.groundAt(x, z), 1.8, 0.15)
+      } else if (kind === 'rack') {
+        build = addBuild('rack', rackMesh(m), x, z, deps.groundAt(x, z), 2.0, 0, { smoking: [] })
+      } else if (kind === 'signal') {
+        build = addBuild('signal', signalMesh(m), x, z, deps.groundAt(x, z), 1.6, 0)
+      } else if (kind === 'pit') {
+        build = addBuild('pit', digPitMesh(m), x, z, deps.groundAt(x, z), 1.6, 0, {
+          water: s.water ?? 0,
+        })
+        attachWaterDrink(build, 'Hollow', 0.28, 0.75, 'Muddy dregs.', 'Brackish. Better than salt.')
+      } else if (kind === 'drip') {
+        build = addBuild('drip', dripMesh(m), x, z, deps.groundAt(x, z), 1.4, 0, {
+          water: s.water ?? 0,
+        })
+        attachWaterDrink(build, 'Tin drip', 0.22, 0.9, 'The tin runs dry.', 'A mouthful from the tin.')
+      } else if (kind === 'cistern') {
+        build = addBuild('cistern', cisternMesh(m), x, z, deps.groundAt(x, z), 1.5, 0.05, {
+          water: s.water ?? 0,
+        })
+        attachBarrelDrink(build, 'Cistern')
+      } else if (kind === 'camp-locker') {
+        build = addBuild('camp-locker', campLockerMesh(m), x, z, deps.groundAt(x, z), 1.6, 0.08, {
+          hold: fillHold(s.hold),
+        })
+      } else if (kind === 'raft') {
+        const withBarrel = !!s.buoyant
+        const sea = sampleOcean(x, z, 0).y
+        const radius = (withBarrel ? 2.35 : 2.05) + (s.rail ? 0.35 : 0) + (s.expands ?? 0) * 0.38
+        build = addBuild('raft', raftMesh(m, withBarrel), x, z, sea + 0.22, radius, withBarrel ? 0.62 : 0.55, {
+          buoyant: withBarrel,
+          vx: 0,
+          vz: 0,
+          hold: fillHold(s.hold),
+          mast: !!s.mast,
+          rail: !!s.rail,
+          locker: !!s.locker,
+          oar: !!s.oar,
+          floats: !!s.floats,
+          expands: s.expands ?? 0,
+          marked: !!s.marked,
+        })
+        if (s.mast) fitMast(build.object, m)
+        if (s.rail) fitRail(build.object, m)
+        if (s.locker) fitLocker(build.object, m)
+        if (s.oar) fitOar(build.object, m)
+        if (s.floats) fitFloat(build.object, m)
+        if (s.marked) fitMark(build.object, m)
+        const expands = s.expands ?? 0
+        for (let i = 1; i <= expands; i++) fitExpand(build.object, m, i)
+        if (s.mast) build.shelter = Math.max(build.shelter, withBarrel ? 0.78 : 0.7)
+        if (s.rail) build.shelter = Math.max(build.shelter, build.shelter + 0.12)
+        if (s.floats) {
+          build.buoyant = true
+          build.shelter = Math.max(build.shelter, build.shelter + 0.08)
+        }
+      }
+
+      if (build && s.yaw !== undefined) build.object.rotation.y = s.yaw
+      if (build && build.water !== undefined) {
+        const waterMesh = build.object.getObjectByName('water')
+        if (waterMesh) waterMesh.visible = (build.water ?? 0) > 0.05
+      }
+    }
+  }
+
   return {
     update,
     standAt,
     shelterAt,
     reset,
+    snapshot,
+    restore,
     /** True while the player is holding a living brand. */
     get carryingFire() {
       return !!carried

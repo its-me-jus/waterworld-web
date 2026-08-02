@@ -206,3 +206,4 @@ taxes strength until it clots; a second bite while open ends the run.
 - Re-run `npm run sim:starts` before shipping a loop that has to outrun exposure.
 - The stash is a choice, not inventory padding: carry, Drop, Stow, or build.
 - Weather should change plans mid-run — never only meters.
+- A living camp persists locally across reloads; death and Start again wipe it.

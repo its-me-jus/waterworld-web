@@ -604,11 +604,28 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     }
   }
 
+  function setStash(next: Stash) {
+    for (const key of Object.keys(stash) as StashKind[]) {
+      stash[key] = Math.max(0, Math.floor(next[key] ?? 0))
+    }
+  }
+
   // Seed the first spread close in, so the opening minute has something in it
   const origin = new THREE.Vector3()
   drifters.forEach((find, i) => scatter(find, origin, 18 + i * 14, 40 + i * 20))
 
-  return { stash, labels: STASH_LABEL, has, spend, update, reset, jettison, drawFromPool, poolNear }
+  return {
+    stash,
+    labels: STASH_LABEL,
+    has,
+    spend,
+    update,
+    reset,
+    setStash,
+    jettison,
+    drawFromPool,
+    poolNear,
+  }
 }
 
 export type Salvage = ReturnType<typeof createSalvage>

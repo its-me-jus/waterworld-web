@@ -5,9 +5,11 @@ controls, underwater murk, and a body that keeps score. Built with Vite + Three.
 
 ## The run
 
-An open-ocean survival sandbox. There is no objective, no quest marker and no
-save — you last as long as you can keep breath, warmth, water and food off the
-floor, and when you drown you start again in the same water.
+An open-ocean survival sandbox. There is no objective, no quest marker — you
+last as long as you can keep breath, warmth, water and food off the floor.
+A living camp (stash, builds, where you stood) persists in the browser so
+closing the tab does not wipe a shelter you made; death, or **Start again**
+in the Pack, clears it and begins a new run.
 
 Nothing is signposted. The wreck, the drifting salvage, and the island on the
 horizon are all found by looking. Actions only announce themselves once
@@ -98,7 +100,8 @@ barrel as a cistern — a camp you made, not one the world planted for you.
   action button appears when something is in reach (take, eat, drink, lash,
   dig, chop, cook, take/plant fire — same verbs as desktop **F**)
 - **Desktop:** WASD · click for mouse-look · Space/E up · Shift/Q dive · **F**
-  to take, eat, drink, open, pry, cut, jab, lash, dig, kindle or cook
+  to take, eat, drink, open, pry, cut, jab, lash, dig, kindle or cook · **Tab**
+  opens the Pack (stash, field kit: Island / Wreck / Start again)
 
 ## Live
 
