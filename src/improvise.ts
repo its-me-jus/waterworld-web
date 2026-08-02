@@ -42,6 +42,10 @@ export type ImproviseDeps = {
   secondsUntilDawn: () => number
   /** True once the mate's spear is yours — unlocks the stern mark. */
   hasMark?: () => boolean
+  /** Live squall 0..1 — wash-off, rain-catch fill, camp value. */
+  storm?: () => number
+  /** Persistent sea set — rafts drift with the current. */
+  current?: () => { x: number; z: number; strength: number }
 }
 
 type BuildKind = 'lean-to' | 'fire' | 'raft' | 'catch' | 'seat' | 'rack' | 'signal'
@@ -95,6 +99,8 @@ const SIGNAL_COST: Cost = { plank: 1, canvas: 1 }
 const REACH = 3.2
 const PLACE_AHEAD = 1.7
 const CATCH_REFILL = 220
+/** Foul weather puts water in a rain-catch faster — up to ~2.6× in a gale. */
+const CATCH_STORM_BOOST = 1.6
 /** Daytime nap — a few hours of day-cycle time, not a full night. */
 const NAP_HOURS = 2.8
 /** Don't rest again until you've been awake this long (real seconds). */
@@ -115,6 +121,15 @@ const SAIL_SPEED_BARREL = 1.35
 const WALK_EYE = 1.62
 /** How far out you can still Climb aboard from the water. */
 const CLIMB_RANGE = 4.8
+/**
+ * Wash-off: how fast a foul sea fills the "over the side" meter while you're
+ * on deck. Rail cuts it hard; a locker (mass) helps a little.
+ */
+const WASH_RATE = 0.55
+const WASH_RAIL = 0.22
+const WASH_LOCKER = 0.08
+const WASH_STORM_GATE = 0.42
+const WASH_RAIL_GATE = 0.72
 
 const emptyHold = (): Hold => ({ plank: 0, barrel: 0, crate: 0, rope: 0, canvas: 0 })
 
@@ -816,10 +831,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let sitReadyAt = 0
   let saidPole = false
   let saidSail = false
+  let saidWash = false
   let swimming = false
   let onRaftDeck = false
   /** Seconds of stickiness after Climb — kills leftover swim speed that throws you off. */
   let boardGrace = 0
+  /** After a wash-off, stay swimming briefly so the deck skirt can't reclaim you. */
+  let washGrace = 0
+  /** 0..1 — fills in foul weather on an open deck; rail buys you time. */
+  let washMeter = 0
   /** Live player ref — Climb mutates this to seat you on the deck. */
   let live: {
     x: number
@@ -828,6 +848,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     mode: 'swim' | 'walk'
     vy: number
     submersion: number
+    speed?: number
   } | null = null
   /** Living brand in hand — null when every fire is planted. */
   let carried: Build | null = null
@@ -1550,8 +1571,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
       deps.skipTime(seconds)
 
-      // Shelter + optional fire do the warming; sleep itself mends the body
-      const warmthGain = (night ? 0.42 : 0.22) + (nearFire ? 0.18 : 0)
+      // Shelter + optional fire do the warming; sleep itself mends the body.
+      // Foul weather is when the lean-to earns its keep — more warmth back.
+      const storm = deps.storm?.() ?? 0
+      const foulBonus = storm > 0.35 ? 0.1 + storm * 0.18 : 0
+      const warmthGain = (night ? 0.42 : 0.22) + (nearFire ? 0.18 : 0) + foulBonus
       v.warmth = Math.min(1, v.warmth + warmthGain)
       v.stamina = Math.min(1, v.stamina + 0.75)
       v.food = Math.max(0, v.food - hours * 0.035)
@@ -1565,12 +1589,20 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         deps.hud.whisper(
           smokedDone > 1 ? 'The smoke rack is done. Fish for the road.' : 'Smoked fish waits in the Pack.',
         )
+      } else if (night && storm > 0.55) {
+        deps.hud.whisper(
+          nearFire
+            ? 'The gale works the canvas. Embers hold. Dawn.'
+            : 'You rode the night out under plank. Dawn.',
+        )
       } else if (night) {
         deps.hud.whisper(
           nearFire
             ? 'Dawn. Embers still warm the lean-to.'
             : 'Dawn finds you under plank and lashing.',
         )
+      } else if (storm > 0.5) {
+        deps.hud.whisper('You rest while the front works the roof.')
       } else {
         deps.hud.whisper('You rest. The sun has moved.')
       }
@@ -1626,6 +1658,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         onRaftDeck = true
         swimming = false
       }
+    }
+    if (washGrace > 0) {
+      washGrace = Math.max(0, washGrace - dt)
+      player.mode = 'swim'
+      onRaftDeck = false
+      swimming = true
     }
     const ahead = offset(player, facingYaw, PLACE_AHEAD, 0)
     const fireAt = offset(player, facingYaw, 0.9, 0)
@@ -1788,10 +1826,24 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         const waterDrag = Math.exp(-0.15 * dt)
         vx *= waterDrag
         vz *= waterDrag
+
+        // Current carries the deck. Poling fights it; an empty raft goes with
+        // the set. Applied as position drift (same as the swimmer) so it doesn't
+        // fight the pole velocity integrator.
+        const set = deps.current?.()
+        const carry =
+          set && set.strength > 1e-4
+            ? onDeck && view.speed > 0.2
+              ? 0.35
+              : onDeck && b.mast
+                ? 0.5
+                : 0.85
+            : 0
+
         b.vx = vx
         b.vz = vz
-        b.x += vx * dt
-        b.z += vz * dt
+        b.x += vx * dt + (set ? set.x * carry * dt : 0)
+        b.z += vz * dt + (set ? set.z * carry * dt : 0)
 
         const sea = sampleOcean(b.x, b.z, t)
         b.deckY = sea.y + 0.22
@@ -1813,6 +1865,50 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           player.z += b.z - prevZ
           px = player.x
           pz = player.z
+        }
+
+        // Wash-off — foul weather fills a meter; rail and mass buy you time.
+        // Climb grace is invulnerable so boarding isn't instantly punished.
+        if (onDeck && boardGrace <= 0 && live) {
+          const storm = deps.storm?.() ?? 0
+          const gate = b.rail ? WASH_RAIL_GATE : WASH_STORM_GATE
+          if (storm > gate) {
+            let rate = WASH_RATE * ((storm - gate) / Math.max(0.05, 1 - gate))
+            if (b.rail) rate *= WASH_RAIL / WASH_RATE
+            if (b.locker) rate = Math.max(0, rate - WASH_LOCKER)
+            // Steeper wave faces shove harder
+            rate *= 0.65 + Math.min(0.7, Math.hypot(sea.normal.x, sea.normal.z) * 2.2)
+            washMeter = Math.min(1, washMeter + rate * dt)
+            if (washMeter > 0.55 && !saidWash) {
+              saidWash = true
+              deps.hud.whisper(
+                b.rail ? 'Seas over the rail. Hold on.' : 'The deck wants you off.',
+              )
+            }
+            if (washMeter >= 1) {
+              washMeter = 0
+              saidWash = false
+              washGrace = 1.35
+              // Knock clear of the deck skirt, into the swim
+              const side = Math.random() > 0.5 ? 1 : -1
+              const yaw = b.object.rotation.y
+              live.x = b.x + Math.cos(yaw) * side * (b.radius + 2.4)
+              live.z = b.z + Math.sin(yaw) * side * (b.radius + 2.4)
+              live.y = sea.y - 0.25
+              live.mode = 'swim'
+              live.vy = 0
+              live.submersion = 0.85
+              if (live.speed !== undefined) live.speed = 0
+              onRaftDeck = false
+              swimming = true
+              deps.hud.whisper('A wave takes you over the side.')
+            }
+          } else {
+            washMeter = Math.max(0, washMeter - dt * 0.45)
+            if (washMeter < 0.3) saidWash = false
+          }
+        } else if (!onDeck) {
+          washMeter = Math.max(0, washMeter - dt * 0.8)
         }
 
         // Deck fire rides with the raft
@@ -1845,7 +1941,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         }
       }
       if (b.kind === 'catch') {
-        b.water = Math.min(1, (b.water ?? 0) + dt / CATCH_REFILL)
+        const storm = deps.storm?.() ?? 0
+        const rainRate = 1 + storm * CATCH_STORM_BOOST
+        b.water = Math.min(1, (b.water ?? 0) + (dt / CATCH_REFILL) * rainRate)
         const waterMesh = b.object.getObjectByName('water')
         if (waterMesh) {
           waterMesh.visible = (b.water ?? 0) > 0.05
@@ -1878,12 +1976,17 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
   function shelterAt(x: number, z: number, base: number) {
     let s = base
+    const storm = deps.storm?.() ?? 0
+    // Foul weather is when planted shelter earns its keep — lean-to / fire
+    // warmth reads higher once the sky closes over you.
+    const foulLift = storm > 0.3 ? 1 + (storm - 0.3) * 0.55 : 1
     for (const b of builds) {
       if (b.shelter <= 0) continue
       const d = Math.hypot(b.x - x, b.z - z)
       if (d > b.radius) continue
       const falloff = 1 - d / b.radius
-      s = Math.max(s, THREE.MathUtils.lerp(base, b.shelter, falloff))
+      const value = b.kind === 'lean-to' || b.kind === 'fire' ? b.shelter * foulLift : b.shelter
+      s = Math.max(s, THREE.MathUtils.lerp(base, value, falloff))
     }
     // A brand in hand is a personal hearth — warmth travels with you
     if (carried) s = Math.max(s, 1.2)
@@ -1906,7 +2009,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     sitReadyAt = 0
     saidPole = false
     saidSail = false
+    saidWash = false
+    washMeter = 0
     boardGrace = 0
+    washGrace = 0
   }
 
   return {

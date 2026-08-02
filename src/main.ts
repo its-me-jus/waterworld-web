@@ -26,8 +26,9 @@ import {
   swimLimits,
   updateVitals,
 } from './survival'
+import { burdenOf, burdenSpeedScale, heaviestKind, swimAidOf } from './logistics'
 import { createUnderwaterWorld } from './underwater'
-import { applyStormToWaves, oceanState, sampleOcean, setShelter } from './waves'
+import { applyStormToWaves, oceanState, sampleOcean, setShelter, shelterAt } from './waves'
 import { createWreck } from './wreck'
 import { createWreckLoot } from './wreckloot'
 
@@ -161,8 +162,13 @@ const climate = createClimate({
   storm: params.has('storm') ? Number(params.get('storm')) : undefined,
 })
 
-// The sea's slow breathing — seasons and glass-offs, stacked under the squalls
-const sea = createSeaState()
+// The sea's slow breathing — seasons, glass-offs, and the set that carries you.
+// Whispers attach after the HUD exists (see glassWhisper below).
+let glassWhisper: ((text: string) => void) | null = null
+const sea = createSeaState({
+  onGlassOff: () => glassWhisper?.('The sea lies flat. Dive while it holds.'),
+  onSwellUp: () => glassWhisper?.('The swell stands back up.'),
+})
 if (params.has('calm')) sea.pinCalm()
 
 // Capture the sky (and clouds) into a cube map so the water reflects the real sky
@@ -225,6 +231,7 @@ const touch = createTouchControls(app)
 touch.setVisible(true)
 
 const hud = createHud(app, { touch: mobile, onRestart: restart })
+glassWhisper = hud.whisper
 let dead = false
 let deathT = 0
 let hasDived = false
@@ -233,6 +240,8 @@ let hasDived = false
 // only reward — no counter, no achievement, just the body noticing.
 let saidPerch = false
 let saidShore = false
+let saidBurden = false
+let saidAid = false
 
 function landfall(onPerch: boolean) {
   if (onPerch) {
@@ -311,6 +320,8 @@ const improvise = createImprovise(scene, camera, {
   skipTime: (seconds) => climate.skip(seconds),
   secondsUntilDawn: () => climate.secondsUntilDawn(),
   hasMark: () => loot.hasSpear,
+  storm: () => climate.state.storm,
+  current: () => sea.current,
 })
 raftAt = improvise.standAt
 
@@ -331,6 +342,8 @@ function restart() {
   hasDived = false
   saidPerch = false
   saidShore = false
+  saidBurden = false
+  saidAid = false
 }
 
 // —— the operating menu: pack + dev field kit ————————————————————————
@@ -404,6 +417,7 @@ if (import.meta.env.DEV) {
       island,
       wreck,
       climate,
+      sea,
       shore,
       shark,
       loot,
@@ -487,8 +501,9 @@ function frame() {
   applyStormToWaves(weather.storm)
   syncWaves()
   // The sea breathes under the squalls — glass-offs oil the chop down, and
-  // they only come while the sky is settled
+  // they only come while the sky is settled. Storm raises the set.
   sea.setFair(weather.fair)
+  sea.setStorm(weather.storm)
   sea.update(dt, t)
   oceanAudio.setSeaWeight(sea.weight)
 
@@ -507,6 +522,29 @@ function frame() {
     void oceanAudio.unlock()
   }
 
+  // Logistics: what you carry slows the stroke; a plank/barrel buys float
+  const burden = burdenOf(salvage.stash)
+  const burdenScale = burdenSpeedScale(burden)
+  const aid = swimAidOf(salvage.stash)
+  if (vitals.alive && player.mode === 'swim') {
+    if (aid > 0 && !saidAid) {
+      saidAid = true
+      hud.whisper(
+        salvage.stash.barrel > 0
+          ? 'The barrel buoys you. Heavy, but it rides.'
+          : 'A plank under the arm. The surface comes easier.',
+      )
+    }
+    if (burdenScale < 0.82 && !saidBurden) {
+      saidBurden = true
+      hud.whisper('The stash pulls you down. Drop it, stow it, or build.')
+    }
+  }
+
+  // Glass-off is the dive window — every stroke costs less while it holds
+  const diveEase = sea.glassy ? 1 : Math.max(0, (0.68 - oceanState.amp) / 0.2)
+  const swimTax = weather.swimCost * (sea.glassy ? 0.72 : 1 - diveEase * 0.15)
+
   if (!vitals.alive) {
     // Dead men don't swim — the swell still has the body, though
     input.moveForward = 0
@@ -516,14 +554,20 @@ function frame() {
     input.interact = false
   } else {
     // A squall taxes every stroke; exhaustion is handled inside the swim model
-    input.moveForward /= weather.swimCost
-    input.moveStrafe /= weather.swimCost
+    input.moveForward /= swimTax
+    input.moveStrafe /= swimTax
   }
 
   // Last frame's tanks drive this frame's body — one frame of lag on a
-  // minutes-long decline is nothing
-  const limits = swimLimits(vitals)
-  const view = updatePlayer(player, camera, input, dt, t, collide, groundAt, limits)
+  // minutes-long decline is nothing. Burden and swim aid fold in here.
+  const limits = swimLimits(vitals, { burdenScale, swimAid: aid })
+  // Current, softened in the island's lee so the beach isn't a treadmill
+  const lee = 1 - shelterAt(player.x, player.z) * 0.9
+  const drift = {
+    x: sea.current.x * lee,
+    z: sea.current.z * lee,
+  }
+  const view = updatePlayer(player, camera, input, dt, t, collide, groundAt, limits, drift)
   const { underwater, surfaceY, depth } = view
   if (depth > 1) hasDived = true
 
@@ -549,7 +593,8 @@ function frame() {
     onLand: dry,
     shelter: onRaft ? raftShelter : shelter,
     cold: weather.cold,
-    swimCost: weather.swimCost,
+    swimCost: swimTax,
+    diveEase: sea.glassy ? 1 : diveEase,
     whisper: hud.whisper,
   })
   // Heartbeat and stomach, off the same tanks the HUD reads
@@ -608,8 +653,9 @@ function frame() {
   oceanMat.uniforms.uUnderwater.value = underwater ? 1 : 0
   oceanMat.uniforms.uSunColor.value.setRGB(1, 0.95, 0.85).lerp(new THREE.Color('#6a7a9a'), 1 - weather.daylight)
 
-  // The deeper you go, the tighter and darker the water closes in
-  const murk = Math.min(1, depth / 24)
+  // The deeper you go, the tighter and darker the water closes in.
+  // Glass-offs clear the murk a touch — the dive window you can see as well as feel.
+  const murk = Math.min(1, depth / 24) * (sea.glassy ? 0.7 : 1)
   underFog.density = 0.026 + murk * 0.032 + (1 - weather.daylight) * 0.012
   waterTint.copy(shallowTint).lerp(deepTint, murk)
   waterTint.lerp(nightWater, (1 - weather.daylight) * 0.55)
@@ -662,7 +708,7 @@ function frame() {
   wreck.update(t, camera)
   island.update(camera, underwater, t)
   shore.update(t, camera, underwater)
-  salvage.update(t, camera.position)
+  salvage.update(t, camera.position, weather.storm)
   loot.update(dt, view)
   forage.update(camera, view)
   improvise.update(dt, t, player, view, player.yaw)
@@ -670,8 +716,35 @@ function frame() {
   oceanAudio.setDanger(shark.proximity)
 
   const reachable = vitals.alive ? interactions.find(camera) : null
+  // Drop only when nothing else is in reach — the stash is a last resort,
+  // not a verb that steals Take / Climb / Lash.
+  const dropKind =
+    !reachable &&
+    vitals.alive &&
+    player.mode === 'swim' &&
+    view.submersion < 0.92 &&
+    burden > 0.8
+      ? heaviestKind(salvage.stash)
+      : null
   if (reachable && input.interact) reachable.use()
-  const prompt = reachable ? { verb: reachable.verb, label: reachable.label } : null
+  else if (dropKind && input.interact) {
+    const at = new THREE.Vector3(player.x, player.y, player.z)
+    const kind = salvage.jettison(at)
+    if (kind) {
+      hud.whisper(
+        kind === 'crate'
+          ? 'The crate goes. Arms lighten.'
+          : kind === 'barrel'
+            ? 'Barrel away. You swim freer.'
+            : `You let the ${salvage.labels[kind].one.toLowerCase()} go.`,
+      )
+    }
+  }
+  const prompt = reachable
+    ? { verb: reachable.verb, label: reachable.label }
+    : dropKind
+      ? { verb: 'Drop', label: salvage.labels[dropKind].one }
+      : null
   hud.setPrompt(prompt)
   // Mobile action button carries the same words as the centre prompt — verb
   // alone ("Lash") is ambiguous once lean-to and raft share a verb.

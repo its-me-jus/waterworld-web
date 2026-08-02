@@ -52,8 +52,11 @@ by — planks, barrels, crates, rope, canvas — goes in the stash, and from the
 you improvise: a lean-to you can rest under, a fire to cook or smoke fish (and
 carry as a brand at night), a rain-catch, a raft you Climb aboard and fit with
 sail, rail, and locker, and ashore a seat, drying rack, and signal smoke. Caught
-fish show in the Pack until you eat, cook, smoke, or hang them to dry. Nothing
-is the "right" path; see [`docs/paths.md`](docs/paths.md).
+fish show in the Pack until you eat, cook, smoke, or hang them to dry. A heavy
+stash slows the swim; a plank or barrel under the arm buys a little float; Drop
+sheds the heaviest piece when nothing else is in reach. The sea itself carries
+you on a swell-set current — glass-offs are dive windows, and a foul deck can
+wash you over the side. Nothing is the "right" path; see [`docs/paths.md`](docs/paths.md).
 Opening-run math: `npm run sim:starts`.
 
 ## Dry ground

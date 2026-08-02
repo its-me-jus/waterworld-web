@@ -89,6 +89,8 @@ export type SwimLimits = {
   cadenceScale: number
   /** 0..1 tremor folded into head roll — low breath, spent muscles. */
   wobble: number
+  /** 0..1 buoyancy from a carried plank/barrel — lifts the float target. */
+  floatAid?: number
 }
 
 export const FULL_STRENGTH: SwimLimits = {
@@ -96,7 +98,11 @@ export const FULL_STRENGTH: SwimLimits = {
   climbScale: 1,
   cadenceScale: 1,
   wobble: 0,
+  floatAid: 0,
 }
+
+/** Horizontal set from the sea state — drift that carries you between strokes. */
+export type SeaDrift = { x: number; z: number }
 
 export type PlayerFrame = {
   underwater: boolean
@@ -225,6 +231,7 @@ export function updatePlayer(
   collide?: Collider,
   groundAt?: (x: number, z: number) => number,
   limits: SwimLimits = FULL_STRENGTH,
+  drift?: SeaDrift,
 ): PlayerFrame {
   if (Math.abs(input.lookDeltaX) > 0.01 || Math.abs(input.lookDeltaY) > 0.01) {
     player.yaw -= input.lookDeltaX * LOOK_SENS_TOUCH
@@ -395,13 +402,23 @@ export function updatePlayer(
     player.x += SWELL.x * orbital * dt
     player.z += SWELL.z * orbital * dt
 
+    // Persistent set — the sea moves between inputs. Stronger at the surface;
+    // deep water still feels a fraction so a dive isn't a free pause on drift.
+    if (drift) {
+      const set = 0.35 + 0.65 * (1 - wasUnder * 0.85)
+      player.x += drift.x * set * dt
+      player.z += drift.z * set * dt
+    }
+
     const ride = 1 - submersion
 
     // —— vertical ————————————————————————————————————————————
     // Velocity control rather than a positional spring: a spring gated by
     // submersion loses all authority once a steep wave face pushes you under, and
     // you sink for good. A capped target velocity always recovers.
-    const floatEye = surfaceY + EYE_HEIGHT
+    // A plank or barrel under the arm rides the eyes a touch higher.
+    const aid = limits.floatAid ?? 0
+    const floatEye = surfaceY + EYE_HEIGHT + aid * 0.35
     const climbing = input.rise && depth > 0.05
 
     if (climbing || input.dive) {
@@ -412,8 +429,10 @@ export function updatePlayer(
       // Plenty of authority to climb back out of a wave that washed over us, but
       // it tapers off with depth so a dive still lets you hang and look around.
       // Exhaustion takes the edge off the cap too — spent, you ride the swell
-      // more than you fight it.
-      const climbCap = (1.0 + 6.5 * clamp(1 - depth / 6, 0, 1)) * (0.35 + 0.65 * limits.climbScale)
+      // more than you fight it. Swim aid raises the recovery floor.
+      const climbCap =
+        (1.0 + 6.5 * clamp(1 - depth / 6, 0, 1) + aid * 1.8) *
+        (0.35 + 0.65 * limits.climbScale)
       const target = clamp((floatEye - player.y) * 7, -3.5, climbCap) + surfaceVel * ride
       player.vy = damp(player.vy, target, 13, dt)
     }
