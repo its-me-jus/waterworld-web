@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "shot": "node scripts/shot.mjs",
+    "shot:look": "node scripts/shot-look.mjs",
     "shot:survival": "node scripts/shot-survival.mjs",
     "shot:salvage": "node scripts/shot-salvage.mjs",
     "smoke": "node scripts/smoke.mjs",

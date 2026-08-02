@@ -16,6 +16,12 @@ export type SkyRig = {
   dayHemiSky: THREE.Color
   dayHemiGround: THREE.Color
   update: (time: number, climate: Climate) => void
+  /**
+   * Park the shadow frustum on the player. A directional light shadows a fixed
+   * box, so the box has to travel; snapping it to whole shadow texels is what
+   * stops every edge in the world crawling as you walk.
+   */
+  focusShadow: (x: number, y: number, z: number) => void
 }
 
 const cloudVertex = /* glsl */ `
@@ -274,7 +280,12 @@ const MOON_AZIMUTH = 210
 const MOON_DISTANCE = 4200
 
 /** Sky dome + drifting cloud layer + matched sun/ambient lights. */
-export function createSky(scene: THREE.Scene, elevationDeg = 30, azimuthDeg = 155): SkyRig {
+export function createSky(
+  scene: THREE.Scene,
+  elevationDeg = 30,
+  azimuthDeg = 155,
+  opts: { shadows?: boolean; shadowSize?: number; shadowExtent?: number } = {},
+): SkyRig {
   const sky = new Sky()
   sky.scale.setScalar(6000)
   scene.add(sky)
@@ -296,6 +307,32 @@ export function createSky(scene: THREE.Scene, elevationDeg = 30, azimuthDeg = 15
   const sunLight = new THREE.DirectionalLight(0xfff0d4, 2.2)
   sunLight.position.copy(sunDir).multiplyScalar(200)
   scene.add(sunLight)
+  scene.add(sunLight.target)
+
+  const shadowExtent = opts.shadowExtent ?? 78
+  const shadowSize = opts.shadowSize ?? 2048
+  if (opts.shadows) {
+    sunLight.castShadow = true
+    sunLight.shadow.mapSize.set(shadowSize, shadowSize)
+    const cam = sunLight.shadow.camera
+    cam.left = -shadowExtent
+    cam.right = shadowExtent
+    cam.top = shadowExtent
+    cam.bottom = -shadowExtent
+    cam.near = 1
+    cam.far = 620
+    cam.updateProjectionMatrix()
+    // Palm blades and grass are single-sided sheets a few centimetres thick;
+    // a plain depth bias either acne-stripes them or lifts the shadow off the
+    // sand. Normal bias moves the sample along the surface instead, which is
+    // the only setting that holds for both.
+    sunLight.shadow.bias = -0.0004
+    sunLight.shadow.normalBias = 0.28
+    // PCF's kernel is the only softness available now that the soft variant is
+    // gone; a wide-ish radius reads as a canopy's diffuse edge rather than a
+    // stencil, and hides the map's resolution on a phone.
+    sunLight.shadow.radius = 2.4
+  }
 
   const hemi = new THREE.HemisphereLight(0x9dc6e8, 0x07202b, 0.4)
   scene.add(hemi)
@@ -437,7 +474,38 @@ export function createSky(scene: THREE.Scene, elevationDeg = 30, azimuthDeg = 15
   const dayHemiGround = new THREE.Color(0x07202b)
   const scratch = new THREE.Color()
   const sunTint = new THREE.Color()
-  const lightDir = new THREE.Vector3()
+  const lightDir = new THREE.Vector3().copy(sunDir)
+
+  // Scratch vectors for the shadow follow — allocating per frame here would
+  // churn the GC on the hot path
+  const focusPoint = new THREE.Vector3()
+  const lightRight = new THREE.Vector3()
+  const lightUp = new THREE.Vector3()
+  const worldUp = new THREE.Vector3(0, 1, 0)
+  const texel = (shadowExtent * 2) / shadowSize
+
+  function focusShadow(x: number, y: number, z: number) {
+    if (!sunLight.castShadow) return
+    focusPoint.set(x, y, z)
+    // Build the light's screen basis and round the focus onto its texel grid.
+    // Without this the shadow map resamples the world every frame and every
+    // frond edge shimmers as you walk.
+    lightRight.crossVectors(worldUp, lightDir)
+    if (lightRight.lengthSq() < 1e-6) lightRight.set(1, 0, 0)
+    lightRight.normalize()
+    lightUp.crossVectors(lightDir, lightRight).normalize()
+    const u = Math.round(focusPoint.dot(lightRight) / texel) * texel
+    const v = Math.round(focusPoint.dot(lightUp) / texel) * texel
+    const w = focusPoint.dot(lightDir)
+    focusPoint
+      .set(0, 0, 0)
+      .addScaledVector(lightRight, u)
+      .addScaledVector(lightUp, v)
+      .addScaledVector(lightDir, w)
+    sunLight.target.position.copy(focusPoint)
+    sunLight.target.updateMatrixWorld()
+    sunLight.position.copy(focusPoint).addScaledVector(lightDir, 300)
+  }
 
   return {
     sky,
@@ -451,6 +519,7 @@ export function createSky(scene: THREE.Scene, elevationDeg = 30, azimuthDeg = 15
     horizonColor,
     dayHemiSky,
     dayHemiGround,
+    focusShadow,
     update(time: number, climate: Climate) {
       cloudMat.uniforms.uTime.value = time
       starMat.uniforms.uTime.value = time
@@ -515,7 +584,9 @@ export function createSky(scene: THREE.Scene, elevationDeg = 30, azimuthDeg = 15
       } else {
         lightDir.copy(sunDir)
       }
-      sunLight.position.copy(lightDir).multiplyScalar(200)
+      // Placement is `focusShadow`'s job now; this is the fallback for the one
+      // frame before the loop has a player position to follow.
+      if (!sunLight.castShadow) sunLight.position.copy(lightDir).multiplyScalar(200)
 
       dayHemiSky.setRGB(0.62, 0.78, 0.91).lerp(new THREE.Color('#1a2838'), night)
       dayHemiSky.lerp(new THREE.Color('#3a4550'), storm * 0.55)

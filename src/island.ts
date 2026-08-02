@@ -139,8 +139,11 @@ function ground(lx: number, lz: number) {
  *   reaches ~350 m, so without this the island's shelf hangs below the horizon
  *   with nothing but sky behind it.
  *
- * `hazeColor` must already be sRGB-encoded: the mix runs after three's
- * colour-space conversion so that full haze lands exactly on the background.
+ * `hazeColor` stays in the working (linear) space. The mix is spliced in after
+ * the fog chunk, which used to sit downstream of the sRGB encode — but the
+ * scene now renders into a linear buffer and `post.ts` does the encode once at
+ * the end, so `colorspace_fragment` is a no-op here and full haze lands
+ * exactly on the linear background colour.
  */
 function hazeMaterial(hazeColor: THREE.Color, params: THREE.MeshStandardMaterialParameters) {
   const material = new THREE.MeshStandardMaterial({ ...params, fog: false })
@@ -580,7 +583,7 @@ function gullMesh(seed: number) {
 
 export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const low = opts.lowPower ?? false
-  const haze = opts.hazeColor.clone().convertLinearToSRGB()
+  const haze = opts.hazeColor.clone()
   const group = new THREE.Group()
   group.name = 'Island'
   group.position.set(opts.x, 0, opts.z)
@@ -1775,7 +1778,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
 
   /** Keep aerial perspective matched to the live horizon as day and storms move. */
   function setHaze(color: THREE.Color) {
-    haze.copy(color).convertLinearToSRGB()
+    haze.copy(color)
   }
 
   return { group, centre, heightAt, resolve, shore, pools, cairn, crabs: crabsApi, update, setHaze }

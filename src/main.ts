@@ -12,6 +12,7 @@ import { createIsland } from './island'
 import { createOcean } from './ocean'
 import { createOpMenu, type TeleportSpot } from './opmenu'
 import { bindKeyboardMouse, createPlayer, updatePlayer } from './player'
+import { createPostChain } from './post'
 import { createSalvage } from './salvage'
 import { createSeaState } from './sea'
 import { createShark } from './shark'
@@ -73,11 +74,22 @@ const renderer = new THREE.WebGLRenderer({
 })
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap))
 renderer.setSize(window.innerWidth, window.innerHeight)
-renderer.toneMapping = THREE.ACESFilmicToneMapping
-renderer.toneMappingExposure = 0.9
+// Sun shadows are what stop the island reading as a painted hill: they give
+// the canopy depth, sit the trunks on the sand, and turn a low sun into long
+// rake across the beach. Phones get a smaller map over a tighter box rather
+// than nothing — grass and terrain are excluded from casting there instead.
+renderer.shadowMap.enabled = true
+renderer.shadowMap.type = THREE.PCFShadowMap
 app.appendChild(renderer.domElement)
 
-const skyRig = createSky(scene, 30, 38)
+const post = createPostChain(renderer, { lowPower })
+post.setSize(window.innerWidth, window.innerHeight, renderer.getPixelRatio())
+
+const skyRig = createSky(scene, 30, 38, {
+  shadows: true,
+  shadowSize: lowPower ? 1024 : 2048,
+  shadowExtent: lowPower ? 52 : 80,
+})
 scene.background = skyRig.horizonColor.clone()
 
 const { mesh: ocean, material: oceanMat, follow, syncWaves } = createOcean({
@@ -178,11 +190,32 @@ envRT.texture.generateMipmaps = true
 const envCam = new THREE.CubeCamera(1, 8000, envRT)
 oceanMat.uniforms.uEnvMap.value = envRT.texture
 
+// The same capture doubles as image-based light for every standard material in
+// the scene. A hemisphere light can only say "sky above, ground below"; this
+// carries the actual sun, the actual cloud deck, and the green bounce off the
+// island, which is the difference between foliage that shades and foliage that
+// silhouettes. three PMREM-filters it for us on `needsPMREMUpdate`.
+scene.environment = envRT.texture
+scene.environmentIntensity = 0.42
+
 function captureEnv() {
   ocean.visible = false
   swimmer.rig.visible = false
+  // Feeding the cube map back into the shading of the objects being captured
+  // would compound its own brightness every refresh
+  const wasEnv = scene.environmentIntensity
+  scene.environmentIntensity = 0
+  // Six faces would otherwise re-render the shadow map six times for a probe
+  // that never shows a shadow edge at cube-map resolution. The first capture
+  // happens before any frame has drawn, though, and skipping it there would
+  // leave every lit material sampling a shadow map that doesn't exist yet.
+  renderer.shadowMap.autoUpdate = false
+  if (!skyRig.sunLight.shadow.map) renderer.shadowMap.needsUpdate = true
   envCam.position.set(camera.position.x, Math.max(camera.position.y, 2), camera.position.z)
   envCam.update(renderer, scene)
+  renderer.shadowMap.autoUpdate = true
+  scene.environmentIntensity = wasEnv
+  envRT.texture.needsPMREMUpdate = true
   ocean.visible = true
   swimmer.rig.visible = true
 }
@@ -473,6 +506,7 @@ function onResize() {
   applyView()
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap))
   renderer.setSize(window.innerWidth, window.innerHeight)
+  post.setSize(window.innerWidth, window.innerHeight, renderer.getPixelRatio())
 }
 window.addEventListener('resize', onResize)
 applyView()
@@ -484,6 +518,46 @@ app.addEventListener(
   },
   { passive: false },
 )
+
+/**
+ * Opt geometry into the shadow pass.
+ *
+ * Only lit materials qualify: the sky dome, the cloud shell, the ocean and the
+ * particle layers are all hand-written shaders that would either cast a
+ * planet-sized shadow or cost a depth pass for nothing. The swimmer's own body
+ * is parented to the camera and opts out by hand — a first-person torso throws
+ * a shadow that reads as a second person standing behind you.
+ *
+ * New geometry appears as you build, so this re-runs on a slow tick rather
+ * than only at startup.
+ */
+function markShadowCasters(root: THREE.Object3D) {
+  root.traverse((obj) => {
+    if (obj.userData.noShadow) return
+    const mesh = obj as THREE.Mesh
+    if (!mesh.isMesh || obj.userData.shadowChecked) return
+    obj.userData.shadowChecked = true
+    const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+    const lit = (mat as THREE.MeshStandardMaterial | undefined)?.isMeshStandardMaterial
+    if (!lit) return
+    mesh.receiveShadow = true
+    mesh.castShadow = !obj.userData.noCast
+  })
+}
+swimmer.rig.userData.noShadow = true
+// Grass and the terrain shell are the two heaviest things on the island. They
+// still take shadow; on a phone they stop giving it, which halves the depth
+// pass for detail you can't resolve at 1024 anyway.
+if (lowPower) {
+  for (const obj of island.group.children) {
+    const mesh = obj as THREE.Mesh
+    if (mesh.isMesh && (mesh.geometry.attributes.position?.count ?? 0) > 40000) {
+      obj.userData.noCast = true
+    }
+  }
+}
+markShadowCasters(scene)
+let shadowScanTimer = 0
 
 const shallowTint = new THREE.Color('#0a4f5e')
 const deepTint = new THREE.Color('#031f2d')
@@ -668,9 +742,39 @@ function frame() {
 
   scene.fog = underwater ? underFog : airFog
   scene.background = underwater ? waterTint : skyRig.horizonColor
-  renderer.toneMappingExposure = underwater
-    ? 0.98 - murk * 0.25 - (1 - weather.daylight) * 0.15
-    : 0.72 + weather.daylight * 0.28 - weather.storm * 0.22
+  // Exposure lives in the post chain now: nothing inside the scene tone-maps
+  // any more, so the renderer's own setting would never be read.
+  post.grade.exposure = underwater
+    ? 1.05 - murk * 0.28 - (1 - weather.daylight) * 0.16
+    : 0.82 + weather.daylight * 0.36 - weather.storm * 0.24
+
+  // The grade is where the day gets its mood. Above water it runs a warm-
+  // highlight / cool-shadow split that widens at dusk; below it goes cold and
+  // desaturated and the glow drops away, because water eats contrast long
+  // before it eats colour.
+  const dusk = THREE.MathUtils.clamp(1 - Math.abs(weather.daylight - 0.42) / 0.3, 0, 1)
+  if (underwater) {
+    post.grade.bloom = 0.24 + weather.biolum * 0.3
+    post.grade.lift.setRGB(0.03, 0.13, 0.16)
+    post.grade.gain.setRGB(0.78, 0.95, 1)
+    post.grade.contrast = 0.1
+    post.grade.saturation = 0.94 - murk * 0.16
+    post.grade.vignette = 0.34 + murk * 0.2
+    scene.environmentIntensity = 0.08
+  } else {
+    post.grade.bloom = 0.34 + weather.daylight * 0.3 + dusk * 0.22 - weather.storm * 0.18
+    post.grade.lift
+      .setRGB(0.05, 0.1, 0.18)
+      .lerp(new THREE.Color(0.16, 0.09, 0.05), dusk * 0.7)
+    post.grade.gain
+      .setRGB(1, 0.97, 0.9)
+      .lerp(new THREE.Color(1, 0.86, 0.7), dusk)
+      .lerp(new THREE.Color(0.86, 0.9, 0.95), weather.storm * 0.8)
+    post.grade.contrast = 0.16 + weather.storm * 0.05
+    post.grade.saturation = 1.12 + dusk * 0.1 - weather.storm * 0.2
+    post.grade.vignette = 0.26 + weather.storm * 0.14 + (1 - weather.daylight) * 0.1
+    scene.environmentIntensity = 0.42 - weather.storm * 0.12
+  }
   skyRig.sky.visible = !underwater
   skyRig.clouds.visible = !underwater
   skyRig.stars.visible = !underwater && skyRig.stars.visible
@@ -774,7 +878,14 @@ function frame() {
     envTimer = lowPower ? 10 : weather.storm > 0.2 || weather.daylight < 0.35 ? 2 : 4
   }
 
-  renderer.render(scene, camera)
+  shadowScanTimer -= dt
+  if (shadowScanTimer <= 0) {
+    markShadowCasters(scene)
+    shadowScanTimer = 1.5
+  }
+  skyRig.focusShadow(camera.position.x, Math.max(view.groundY, 0), camera.position.z)
+
+  post.render(scene, camera)
   requestAnimationFrame(frame)
 }
 
@@ -784,6 +895,7 @@ function frame() {
   syncWaves()
   sea.update(0, 0)
   skyRig.update(0, weather)
+  skyRig.focusShadow(player.x, 0, player.z)
   island.setHaze(skyRig.horizonColor)
   scene.background.copy(skyRig.horizonColor)
   airFog.color.copy(skyRig.horizonColor)
