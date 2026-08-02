@@ -559,6 +559,7 @@ if (lowPower) {
 markShadowCasters(scene)
 let shadowScanTimer = 0
 
+const keyLight = new THREE.Color()
 const shallowTint = new THREE.Color('#0a4f5e')
 const deepTint = new THREE.Color('#031f2d')
 const nightWater = new THREE.Color('#020c14')
@@ -720,6 +721,9 @@ function frame() {
   island.setHaze(skyRig.horizonColor)
   // A dead calm looks like a screenshot, so the trade wind never quite stops;
   // a squall roughly triples it.
+  // The leaf backlight has to fade with the sun, and `sunLight.color` is only
+  // a hue — the strength lives in its intensity
+  keyLight.copy(skyRig.sunLight.color).multiplyScalar(Math.min(1, skyRig.sunLight.intensity * 0.55))
   island.setWeather(
     t,
     0.45 + sea.weight * 0.35 + weather.storm * 1.5,
@@ -727,7 +731,7 @@ function frame() {
     // so there are no bands left to cast — everything is in shade already.
     weather.daylight * (0.55 - weather.storm * 0.45),
     skyRig.sunDir,
-    skyRig.sunLight.color,
+    keyLight,
   )
 
   oceanMat.uniforms.uTime.value = t
@@ -756,8 +760,8 @@ function frame() {
   // Exposure lives in the post chain now: nothing inside the scene tone-maps
   // any more, so the renderer's own setting would never be read.
   post.grade.exposure = underwater
-    ? 1.05 - murk * 0.28 - (1 - weather.daylight) * 0.16
-    : 0.82 + weather.daylight * 0.36 - weather.storm * 0.24
+    ? 1.16 - murk * 0.26 - (1 - weather.daylight) * 0.16
+    : 0.82 + weather.daylight * 0.36 - weather.storm * 0.14
 
   // The grade is where the day gets its mood. Above water it runs a warm-
   // highlight / cool-shadow split that widens at dusk; below it goes cold and
@@ -768,10 +772,12 @@ function frame() {
     post.grade.bloom = 0.24 + weather.biolum * 0.3
     post.grade.lift.setRGB(0.03, 0.13, 0.16)
     post.grade.gain.setRGB(0.78, 0.95, 1)
-    post.grade.contrast = 0.1
-    post.grade.saturation = 0.94 - murk * 0.16
-    post.grade.vignette = 0.34 + murk * 0.2
-    scene.environmentIntensity = 0.08
+    post.grade.contrast = 0.09
+    // Water is already a colour cast; pulling saturation on top of it turns
+    // the whole dive muddy rather than deep
+    post.grade.saturation = 1.06 - murk * 0.1
+    post.grade.vignette = 0.24 + murk * 0.14
+    scene.environmentIntensity = 0.06
   } else {
     post.grade.bloom = 0.34 + weather.daylight * 0.3 + dusk * 0.22 - weather.storm * 0.18
     post.grade.lift
@@ -783,8 +789,11 @@ function frame() {
       .lerp(new THREE.Color(0.86, 0.9, 0.95), weather.storm * 0.8)
     post.grade.contrast = 0.16 + weather.storm * 0.05
     post.grade.saturation = 1.12 + dusk * 0.1 - weather.storm * 0.2
-    post.grade.vignette = 0.26 + weather.storm * 0.14 + (1 - weather.daylight) * 0.1
-    scene.environmentIntensity = 0.42 - weather.storm * 0.12
+    post.grade.vignette = 0.26 + weather.storm * 0.12 + (1 - weather.daylight) * 0.08
+    // The probe is a picture of the sky, so it has to go out with the sky. Left
+    // at full strength after dark it lights the hillside with green bounce off
+    // itself and puts a glow on the ground with nothing casting it.
+    scene.environmentIntensity = (0.12 + weather.daylight * 0.34) * (1 - weather.storm * 0.25)
   }
   skyRig.sky.visible = !underwater
   skyRig.clouds.visible = !underwater

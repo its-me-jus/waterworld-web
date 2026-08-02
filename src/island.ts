@@ -71,6 +71,20 @@ export type Island = {
 /** Which way the trade wind runs across the island. Everything leans this way. */
 const WIND_HEADING = 0.62
 
+/**
+ * Uniform 0–1 from a pair of numbers, for scattering things across the island.
+ *
+ * `fbm` is the wrong tool for this and was quietly ruining the planting: it
+ * sums four octaves, so its values pile up around the mean, and a jitter of
+ * `(scatter(i, k) - 0.5) * 160` that reads as ±80 m actually lands almost
+ * everything within ±25 m. Whole bands of the island came out bare while the
+ * cove got planted four times over.
+ */
+function scatter(i: number, salt: number) {
+  const v = Math.sin(i * 127.1 + salt * 311.7) * 43758.5453
+  return v - Math.floor(v)
+}
+
 /** Half-width of the terrain patch — well past the shelf, into deep water. */
 const SPAN = 640
 const PEAK = 190
@@ -308,17 +322,23 @@ function deadTree(seed: number) {
   return geo
 }
 
-/** A grass tuft: a handful of blades that arc away from a common root. */
+/**
+ * A grass tuft: a handful of blades arcing away from a common root.
+ *
+ * Fewer, wider blades per tuft and more tufts covers far more ground for the
+ * same triangle budget, and coverage is what the eye reads — a hillside with
+ * gaps between clumps looks mown no matter how good the clumps are.
+ */
 function grassTuft(seed: number) {
   const rand = (n: number) => fbm(seed * 5.9 + n * 2.7, seed * 3.3 - n * 1.9)
   const blades: THREE.BufferGeometry[] = []
-  const count = 5 + Math.floor(rand(1) * 4)
+  const count = 4 + Math.floor(rand(1) * 3)
   for (let i = 0; i < count; i++) {
-    const h = 0.55 + rand(i + 2) * 1.1
-    const blade = leafBlade(0.11 + rand(i + 4) * 0.07, h, 0.24 + rand(i + 5) * 0.45)
+    const h = 0.6 + rand(i + 2) * 1.2
+    const blade = leafBlade(0.14 + rand(i + 4) * 0.1, h, 0.26 + rand(i + 5) * 0.5, 2)
     blade.rotateY(rand(i + 8) * Math.PI * 2)
-    blade.rotateZ((rand(i + 6) - 0.5) * 0.35)
-    blade.translate((rand(i + 10) - 0.5) * 0.4, 0, (rand(i + 12) - 0.5) * 0.4)
+    blade.rotateZ((rand(i + 6) - 0.5) * 0.4)
+    blade.translate((rand(i + 10) - 0.5) * 0.5, 0, (rand(i + 12) - 0.5) * 0.5)
     blades.push(blade)
   }
   return mergeGeometries(blades, false) as THREE.BufferGeometry
@@ -560,7 +580,14 @@ function butterflyMesh(seed: number) {
   const rand = (n: number) => fbm(seed * 8.1 + n * 1.9, seed * 3.5 - n * 4.4)
   const group = new THREE.Group()
   const tone = rand(1) > 0.5 ? 0xc4a35a : 0x6a8c4e
-  const wingMat = new THREE.MeshBasicMaterial({ color: tone, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+  // Lit, not unlit: an unlit wing keeps its full daylight colour after dark
+  // and turns into a scrap of neon drifting over a black hillside.
+  const wingMat = new THREE.MeshLambertMaterial({
+    color: tone,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.85,
+  })
   const left = new THREE.Mesh(new THREE.CircleGeometry(0.09 + rand(2) * 0.05, 5), wingMat)
   const right = left.clone()
   left.position.x = -0.06
@@ -577,7 +604,7 @@ function butterflyMesh(seed: number) {
 function gullMesh(seed: number) {
   const rand = (n: number) => fbm(seed * 5.2 + n * 2.7, seed * 7.9 - n * 1.3)
   const group = new THREE.Group()
-  const bodyMat = new THREE.MeshBasicMaterial({ color: 0xd8d2c4 })
+  const bodyMat = new THREE.MeshLambertMaterial({ color: 0xd8d2c4 })
   const body = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 4), bodyMat)
   body.scale.set(1, 0.7, 1.6)
   group.add(body)
@@ -585,7 +612,7 @@ function gullMesh(seed: number) {
   head.position.set(0, 0.04, 0.16)
   group.add(head)
   const wingGeo = new THREE.PlaneGeometry(0.55, 0.16)
-  const wingMat = new THREE.MeshBasicMaterial({ color: 0xc9c2b4, side: THREE.DoubleSide })
+  const wingMat = new THREE.MeshLambertMaterial({ color: 0xc9c2b4, side: THREE.DoubleSide })
   const left = new THREE.Mesh(wingGeo, wingMat)
   const right = new THREE.Mesh(wingGeo, wingMat)
   left.position.set(-0.28, 0.02, 0)
@@ -762,7 +789,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const woodWanted = low ? 28 : 60
   const scrubWanted = low ? 260 : 620
   const broadWanted = low ? 150 : 380
-  const grassWanted = low ? 3200 : 8600
+  const grassWanted = low ? 6000 : 15000
   const deadWanted = low ? 18 : 40
   const vineWanted = low ? 120 : 280
   const pathWanted = low ? 32 : 60
@@ -888,10 +915,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   {
     const groveWanted = low ? 12 : 22
     for (let i = 0; i < 600 && trunks.length < groveWanted; i++) {
-      const angle = Math.atan2(COVE_Z, COVE_X) + (fbm(i, 1.7) - 0.5) * 1.4
+      const angle = Math.atan2(COVE_Z, COVE_X) + (scatter(i, 1.7) - 0.5) * 1.4
       const radius = 155 + fbm(i, 2.9) * 95
-      const lx = Math.cos(angle) * radius + (fbm(i, 3.1) - 0.5) * 14
-      const lz = Math.sin(angle) * radius + (fbm(i, 4.2) - 0.5) * 14
+      const lx = Math.cos(angle) * radius + (scatter(i, 3.1) - 0.5) * 14
+      const lz = Math.sin(angle) * radius + (scatter(i, 4.2) - 0.5) * 14
       if (!onCove(lx, lz) && i % 3 !== 0) continue
       const h = surface(lx, lz)
       if (h < 2.0 || h > 14) continue
@@ -917,14 +944,14 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // Bias the spiral toward the cove so landfall isn't the empty face
     const covePull = i % 5 === 0
     const lx = prev
-      ? prev.x - opts.x + (fbm(i, 1.1) - 0.5) * 18
+      ? prev.x - opts.x + (scatter(i, 1.1) - 0.5) * 18
       : covePull
-        ? COVE_X + (fbm(i, 1.3) - 0.5) * 110
+        ? COVE_X + (scatter(i, 1.3) - 0.5) * 110
         : Math.cos(angle) * radius
     const lz = prev
-      ? prev.z - opts.z + (fbm(i, 2.2) - 0.5) * 18
+      ? prev.z - opts.z + (scatter(i, 2.2) - 0.5) * 18
       : covePull
-        ? COVE_Z + (fbm(i, 2.4) - 0.5) * 110
+        ? COVE_Z + (scatter(i, 2.4) - 0.5) * 110
         : Math.sin(angle) * radius
     const h = surface(lx, lz)
     if (h < 2.0 || h > 14) continue
@@ -948,10 +975,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const radius = 45 + ((i * 17) % 300)
     const approachBias = i % 3 === 0
     const lx = approachBias
-      ? COVE_X + (fbm(i, 3.3) - 0.5) * 210 + 50
+      ? COVE_X + (scatter(i, 3.3) - 0.5) * 210 + 50
       : Math.cos(angle) * radius
     const lz = approachBias
-      ? COVE_Z + (fbm(i, 4.4) - 0.5) * 210 - 30
+      ? COVE_Z + (scatter(i, 4.4) - 0.5) * 210 - 30
       : Math.sin(angle) * radius
     const h = surface(lx, lz)
     if (h < 4.5 || h > 85) continue
@@ -971,8 +998,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   for (let i = 0; i < 3200 && saplings < saplingWanted; i++) {
     const angle = i * 2.083
     const radius = 60 + ((i * 21) % 270)
-    const lx = Math.cos(angle) * radius + (fbm(i, 1.5) - 0.5) * 8
-    const lz = Math.sin(angle) * radius + (fbm(i, 2.5) - 0.5) * 8
+    const lx = Math.cos(angle) * radius + (scatter(i, 1.5) - 0.5) * 8
+    const lz = Math.sin(angle) * radius + (scatter(i, 2.5) - 0.5) * 8
     const h = surface(lx, lz)
     if (h < 3.5 || h > 72) continue
     const slope = Math.abs(surface(lx + 4, lz) - h) + Math.abs(surface(lx, lz + 4) - h)
@@ -1023,8 +1050,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const angle = i * 2.618
     const coveBias = i % 3 === 0
     const radius = 200 + ((i * 23) % 190)
-    const lx = coveBias ? COVE_X + (fbm(i, 3.3) - 0.5) * 100 : Math.cos(angle) * radius
-    const lz = coveBias ? COVE_Z + (fbm(i, 4.4) - 0.5) * 100 : Math.sin(angle) * radius
+    const lx = coveBias ? COVE_X + (scatter(i, 3.3) - 0.5) * 100 : Math.cos(angle) * radius
+    const lz = coveBias ? COVE_Z + (scatter(i, 4.4) - 0.5) * 100 : Math.sin(angle) * radius
     const h = surface(lx, lz)
     if (h < 0.6 || h > 5) continue
     const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
@@ -1037,8 +1064,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const angle = i * 2.311
     const coveBias = i % 2 === 0
     const radius = 210 + ((i * 29) % 200)
-    const lx = coveBias ? COVE_X + (fbm(i, 5.5) - 0.5) * 120 : Math.cos(angle) * radius
-    const lz = coveBias ? COVE_Z + (fbm(i, 6.6) - 0.5) * 120 : Math.sin(angle) * radius
+    const lx = coveBias ? COVE_X + (scatter(i, 5.5) - 0.5) * 120 : Math.cos(angle) * radius
+    const lz = coveBias ? COVE_Z + (scatter(i, 6.6) - 0.5) * 120 : Math.sin(angle) * radius
     const h = surface(lx, lz)
     if (h < 0.15 || h > 2.4) continue
     plant(wrackParts, tideWrack(i + 1700), i + 1700, SPECIES.wrack, lx, h, lz, 0.02)
@@ -1049,8 +1076,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const angle = i * 2.155
     const coveBias = i % 3 !== 2
     const radius = 200 + ((i * 31) % 210)
-    const lx = coveBias ? COVE_X + (fbm(i, 7.7) - 0.5) * 115 : Math.cos(angle) * radius
-    const lz = coveBias ? COVE_Z + (fbm(i, 8.8) - 0.5) * 115 : Math.sin(angle) * radius
+    const lx = coveBias ? COVE_X + (scatter(i, 7.7) - 0.5) * 115 : Math.cos(angle) * radius
+    const lz = coveBias ? COVE_Z + (scatter(i, 8.8) - 0.5) * 115 : Math.sin(angle) * radius
     const h = surface(lx, lz)
     if (h < 0.3 || h > 3.2) continue
     const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
@@ -1065,11 +1092,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const radius = 80 + ((i * 19) % 280)
     const coveBias = i % 3 === 0
     const lx = coveBias
-      ? COVE_X + (fbm(i, 1.9) - 0.5) * 170
-      : Math.cos(angle) * radius + (fbm(i, 1.9) - 0.5) * 12
+      ? COVE_X + (scatter(i, 1.9) - 0.5) * 170
+      : Math.cos(angle) * radius + (scatter(i, 1.9) - 0.5) * 12
     const lz = coveBias
-      ? COVE_Z + (fbm(i, 2.8) - 0.5) * 170
-      : Math.sin(angle) * radius + (fbm(i, 2.8) - 0.5) * 12
+      ? COVE_Z + (scatter(i, 2.8) - 0.5) * 170
+      : Math.sin(angle) * radius + (scatter(i, 2.8) - 0.5) * 12
     const h = surface(lx, lz)
     if (h < 2.8 || h > 62) continue
     const slope = Math.abs(surface(lx + 6, lz) - h) + Math.abs(surface(lx, lz + 6) - h)
@@ -1083,11 +1110,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const radius = 50 + ((i * 27) % 285)
     const approachBias = onApproach(Math.cos(angle) * radius, Math.sin(angle) * radius) || i % 3 === 0
     const lx = approachBias
-      ? COVE_X + (fbm(i, 9.1) - 0.5) * 180
-      : Math.cos(angle) * radius + (fbm(i, 9.1) - 0.5) * 10
+      ? COVE_X + (scatter(i, 9.1) - 0.5) * 180
+      : Math.cos(angle) * radius + (scatter(i, 9.1) - 0.5) * 10
     const lz = approachBias
-      ? COVE_Z + (fbm(i, 10.2) - 0.5) * 180
-      : Math.sin(angle) * radius + (fbm(i, 10.2) - 0.5) * 10
+      ? COVE_Z + (scatter(i, 10.2) - 0.5) * 180
+      : Math.sin(angle) * radius + (scatter(i, 10.2) - 0.5) * 10
     const h = surface(lx, lz)
     if (h < 3.5 || h > 82) continue
     const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
@@ -1097,27 +1124,27 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
 
   // Grass — dense ground cover across the green band. Heavy cove bias so
   // looking down on landfall isn't a blank olive plane.
-  for (let i = 0; i < 26000 && grassParts.length < grassWanted; i++) {
+  for (let i = 0; i < 46000 && grassParts.length < grassWanted; i++) {
     const angle = i * 2.39996
     const radius = 30 + ((i * 29) % 300)
     // First third of the budget is a tight carpet on the landing shelf, where
     // you'll be standing; the rest spreads out over the green band so the
     // slopes above don't read as mown
-    const carpet = grassParts.length < grassWanted * 0.32
+    const carpet = grassParts.length < grassWanted * 0.26
     const lx = carpet
-      ? COVE_X + (fbm(i, 7.7) - 0.5) * 85
+      ? COVE_X + (scatter(i, 7.7) - 0.5) * 85
       : i % 3 === 0
-        ? COVE_X + (fbm(i, 7.7) - 0.5) * 160
-        : Math.cos(angle) * radius + (fbm(i, 7.7) - 0.5) * 9
+        ? COVE_X + (scatter(i, 7.7) - 0.5) * 160
+        : Math.cos(angle) * radius + (scatter(i, 7.7) - 0.5) * 9
     const lz = carpet
-      ? COVE_Z + (fbm(i, 8.8) - 0.5) * 85
+      ? COVE_Z + (scatter(i, 8.8) - 0.5) * 85
       : i % 3 === 0
-        ? COVE_Z + (fbm(i, 8.8) - 0.5) * 160
-        : Math.sin(angle) * radius + (fbm(i, 8.8) - 0.5) * 9
+        ? COVE_Z + (scatter(i, 8.8) - 0.5) * 160
+        : Math.sin(angle) * radius + (scatter(i, 8.8) - 0.5) * 9
     const h = surface(lx, lz)
-    if (h < 1.6 || h > 95) continue
+    if (h < 1.6 || h > 110) continue
     const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
-    if (slope > 6) continue
+    if (slope > 9) continue
     plant(grassParts, grassTuft(i + 500), i + 500, SPECIES.grass, lx, h, lz, 0.02)
   }
 
@@ -1176,7 +1203,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       const heading = Math.atan2(-sx, -sz) // toward island centre
       for (let i = 0; i < pathWanted; i++) {
         const dist = 3 + i * 2.8
-        const wobble = (fbm(i * 0.7, 11.1) - 0.5) * 3.2
+        const wobble = (scatter(i * 0.7, 11.1) - 0.5) * 3.2
         const lx = sx + Math.sin(heading) * -dist + Math.cos(heading) * wobble
         const lz = sz + Math.cos(heading) * -dist - Math.sin(heading) * wobble
         const h = surface(lx, lz)
@@ -1226,11 +1253,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     { parts: broadTrunks, color: 0x6d573a, roughness: 0.96, wind: BROAD_WIND },
     {
       parts: broadCanopy,
-      color: 0x4d8130,
+      color: 0x5c9438,
       roughness: 0.88,
       wind: BROAD_WIND,
-      translucency: 0.6,
-      throughColor: '#b6d962',
+      translucency: 0.85,
+      throughColor: '#bfdd6a',
     },
     {
       parts: grassParts,
@@ -1497,8 +1524,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       const coveBias = i % 4 !== 3
       const angle = i * 2.399
       const radius = 180 + ((i * 17) % 200)
-      const lx = coveBias ? COVE_X + (fbm(i, 1.1) - 0.5) * 130 : Math.cos(angle) * radius
-      const lz = coveBias ? COVE_Z + (fbm(i, 2.2) - 0.5) * 130 : Math.sin(angle) * radius
+      const lx = coveBias ? COVE_X + (scatter(i, 1.1) - 0.5) * 130 : Math.cos(angle) * radius
+      const lz = coveBias ? COVE_Z + (scatter(i, 2.2) - 0.5) * 130 : Math.sin(angle) * radius
       const h = surface(lx, lz)
       if (h < 0.25 || h > 2.8) continue
       const mesh = crabMesh(i + 50)
@@ -1525,8 +1552,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       const angle = i * 2.618
       const radius = 90 + ((i * 23) % 240)
       const approachBias = i % 2 === 0
-      const lx = approachBias ? COVE_X + (fbm(i, 5.5) - 0.5) * 160 : Math.cos(angle) * radius
-      const lz = approachBias ? COVE_Z + (fbm(i, 6.6) - 0.5) * 160 : Math.sin(angle) * radius
+      const lx = approachBias ? COVE_X + (scatter(i, 5.5) - 0.5) * 160 : Math.cos(angle) * radius
+      const lz = approachBias ? COVE_Z + (scatter(i, 6.6) - 0.5) * 160 : Math.sin(angle) * radius
       const h = surface(lx, lz)
       if (h < 2.5 || h > 28) continue
       const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
@@ -1550,8 +1577,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   {
     const want = low ? 10 : 20
     for (let i = 0; i < want; i++) {
-      const lx = COVE_X + (fbm(i, 9.1) - 0.5) * 180 + (i % 3) * 20
-      const lz = COVE_Z + (fbm(i, 10.2) - 0.5) * 180
+      const lx = COVE_X + (scatter(i, 9.1) - 0.5) * 180 + (i % 3) * 20
+      const lz = COVE_Z + (scatter(i, 10.2) - 0.5) * 180
       const h = Math.max(surface(lx, lz), 2)
       const mesh = butterflyMesh(i + 120)
       mesh.position.set(lx, h + 1.2 + fbm(i, 1.4) * 1.5, lz)
@@ -1574,8 +1601,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       const coveBias = i % 3 !== 2
       const angle = i * 2.713
       const radius = 200 + ((i * 19) % 180)
-      const lx = coveBias ? COVE_X + (fbm(i, 4.1) - 0.5) * 140 : Math.cos(angle) * radius
-      const lz = coveBias ? COVE_Z + (fbm(i, 5.2) - 0.5) * 140 : Math.sin(angle) * radius
+      const lx = coveBias ? COVE_X + (scatter(i, 4.1) - 0.5) * 140 : Math.cos(angle) * radius
+      const lz = coveBias ? COVE_Z + (scatter(i, 5.2) - 0.5) * 140 : Math.sin(angle) * radius
       const h = surface(lx, lz)
       if (h < 0.4 || h > 4.5) continue
       const mesh = gullMesh(i + 140)

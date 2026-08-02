@@ -387,9 +387,13 @@ export function createSwimmer(camera: THREE.Camera) {
 
   // The sun is overhead and we mostly see the underside of our own arms, so
   // without help they render as near-silhouettes. A soft fill that travels
-  // with the camera lifts just the viewmodel — distance-capped so the world
-  // never notices.
-  const fill = new THREE.PointLight(0xd6e9f5, 3.5, 2.6, 1.9)
+  // with the camera lifts just the viewmodel.
+  //
+  // Its reach has to stop short of the ground. Eye height ashore is about
+  // 1.5 m, and at the old 2.6 m this pooled on the sand in front of your feet
+  // — invisible in daylight, but after dark it was the brightest thing on the
+  // island and nothing was casting it.
+  const fill = new THREE.PointLight(0xd6e9f5, 2.4, 1.15, 1.9)
   fill.position.set(0.12, -0.04, -0.26)
   rig.add(fill)
 

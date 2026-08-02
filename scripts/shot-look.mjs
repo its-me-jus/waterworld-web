@@ -23,8 +23,8 @@ const VIEWS = [
   { name: 'island-far', q: '?yaw=-0.96&pitch=0.02' },
   { name: 'island-near', q: '?x=668&z=-463&yaw=-0.96&pitch=0.05' },
   // —— light through the day ——
-  { name: 'dawn', q: '?x=830&z=-560&yaw=-0.6&pitch=0.1&hour=6.4' },
-  { name: 'dusk', q: '?x=830&z=-560&yaw=-0.6&pitch=0.1&hour=17.8' },
+  { name: 'dawn', q: '?x=830&z=-560&yaw=-0.6&pitch=0.1&hour=7.6' },
+  { name: 'dusk', q: '?x=830&z=-560&yaw=-0.6&pitch=0.1&hour=16.9' },
   { name: 'night', q: '?x=830&z=-560&yaw=-0.6&pitch=0.1&hour=22' },
   { name: 'storm', q: '?x=790&z=-540&yaw=-0.6&pitch=0.08&storm=1&hour=14' },
   // —— open water and below it ——

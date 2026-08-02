@@ -175,6 +175,20 @@ uniform vec3 uThroughColor;
  * the sun through the canopy and falls off as you turn away. `getShadowMask`
  * keeps a frond that is already in shade from glowing.
  */
+/**
+ * Undo three's back-face normal flip.
+ *
+ * A double-sided surface normally shades its back faces with an inverted
+ * normal, which is right for a wall and wrong for a leaf: it makes the far
+ * half of every blade shade as though it were the underside of the ground,
+ * and under a hemisphere light whose ground colour is near-black — because
+ * for the ocean it should be — that half goes black. A leaf has one lighting
+ * side, and both faces of it are that side.
+ */
+const leafNormalBody = /* glsl */ `
+  normal *= faceDirection;
+`
+
 const leafFragmentBody = /* glsl */ `
   {
     vec3 leafN = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
@@ -182,9 +196,11 @@ const leafFragmentBody = /* glsl */ `
     vec3 leafL = normalize(uSunDir);
     vec3 through = normalize(-leafL + leafN * 0.4);
     float back = pow(max(dot(leafV, through), 0.0), 3.5) * 1.5;
-    // A thin sheet still passes some light straight through at any angle
+    // Wrapped diffuse. A leaf a millimetre thick has no true shade side, and
+    // without this the half of every blade facing away from the sun crushes to
+    // black — which is exactly what a lawn of flat sheets must not do.
     float wrap = max(dot(leafN, leafL) * 0.5 + 0.5, 0.0);
-    float bleed = back + wrap * wrap * 0.3;
+    float bleed = back + wrap * 0.55;
     #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
       bleed *= 0.35 + 0.65 * getShadowMask();
     #endif
@@ -261,7 +277,7 @@ const groundNormalBody = /* glsl */ `
       gNoise(gp * 0.055) - gNoise(gp * 0.055 + vec2(0.35, 0.0)),
       0.0,
       gNoise(gp * 0.055) - gNoise(gp * 0.055 + vec2(0.0, 0.35))
-    ) * 0.9;
+    ) * 0.55;
     float gNear = 1.0 - smoothstep(14.0, 90.0, gDist);
     if (gNear > 0.01) {
       float h0 = gRelief(gp);
@@ -288,13 +304,16 @@ const groundColorBody = /* glsl */ `
     // blue-green where growth collects, bare dirt in between.
     vec3 bleached = diffuseColor.rgb * vec3(1.34, 1.2, 0.74);
     vec3 deep = diffuseColor.rgb * vec3(0.44, 0.74, 0.5);
-    vec3 bare = diffuseColor.rgb * vec3(1.16, 0.98, 0.78);
+    vec3 bare = diffuseColor.rgb * vec3(1.12, 1.02, 0.9);
 
     // Value noise clusters hard around 0.5 — it is an average of averages — so
     // these windows have to straddle the middle. Thresholds anywhere near the
     // ends simply never fire and the whole hillside comes out one colour.
-    float dry = smoothstep(0.46, 0.66, macro * 0.65 + fine * 0.35);
-    float lush = smoothstep(0.46, 0.66, (1.0 - macro) * 0.5 + mid * 0.5);
+    // Sand takes the value break-up but not the hue: green patches on a beach
+    // read as algae. The band only opens above the tide line.
+    float green = smoothstep(5.0, 13.0, vGroundPos.y);
+    float dry = smoothstep(0.46, 0.66, macro * 0.65 + fine * 0.35) * green;
+    float lush = smoothstep(0.46, 0.66, (1.0 - macro) * 0.5 + mid * 0.5) * green;
     vec3 patched = mix(bare, bleached, dry);
     patched = mix(patched, deep, lush);
 
@@ -391,6 +410,10 @@ export function createFoliage(haze: THREE.Color): FoliageRig {
         shader.uniforms.uTranslucency = uTranslucency
         shader.uniforms.uThroughColor = uThrough
         shader.fragmentShader = shader.fragmentShader
+          .replace(
+            '#include <normal_fragment_begin>',
+            `#include <normal_fragment_begin>\n${leafNormalBody}`,
+          )
           // getShadowMask lives in a chunk the standard material doesn't pull
           // in; it has to be declared after the shadow uniforms it reads
           .replace(

@@ -548,10 +548,13 @@ export function createSky(
       horizonColor.copy(scratch)
 
       // Physical sky params — storms muddy the air, night drops the scatter
-      // so the starfield isn't fighting grey Rayleigh
-      u['turbidity'].value = THREE.MathUtils.lerp(1.2, 12, storm) + night * 1.8
-      u['rayleigh'].value = THREE.MathUtils.lerp(0.18, 1.7, day) * (1 - storm * 0.55)
-      u['mieCoefficient'].value = 0.002 + storm * 0.018 + night * 0.003
+      // so the starfield isn't fighting grey Rayleigh. More Rayleigh and less
+      // Mie than looks right on paper: the tone map now runs at the end of the
+      // frame on real HDR values, and it flattens a pale sky into a white band
+      // unless the zenith is given somewhere deeper to go.
+      u['turbidity'].value = THREE.MathUtils.lerp(1.0, 12, storm) + night * 1.8
+      u['rayleigh'].value = THREE.MathUtils.lerp(0.18, 2.7, day) * (1 - storm * 0.55)
+      u['mieCoefficient'].value = 0.0014 + storm * 0.018 + night * 0.003
 
       // Cloud deck: lower uCover = more cloud. Storms fill the sky.
       cloudMat.uniforms.uCover.value = THREE.MathUtils.lerp(0.62, 0.12, storm)
@@ -591,7 +594,10 @@ export function createSky(
       dayHemiSky.setRGB(0.62, 0.78, 0.91).lerp(new THREE.Color('#1a2838'), night)
       dayHemiSky.lerp(new THREE.Color('#3a4550'), storm * 0.55)
       dayHemiGround.setRGB(0.03, 0.125, 0.17).lerp(new THREE.Color('#0a1218'), night)
-      hemi.intensity = THREE.MathUtils.lerp(0.28, 0.5, day) * (1 - storm * 0.3)
+      // A squall dims the sun but turns the whole sky into one soft source, so
+      // skylight goes up, not down. Cutting both is what made a storm at noon
+      // as dark as dusk.
+      hemi.intensity = THREE.MathUtils.lerp(0.28, 0.5, day) * (1 + storm * 0.85)
 
       // Stars fade in after dusk, wash out under a storm
       const starOp = Math.max(0, night * 0.95 - storm * 0.7)
