@@ -79,6 +79,11 @@ export type VitalsContext = {
   cold?: number
   /** Storm swim-cost multiplier — effort burns stamina faster. */
   swimCost?: number
+  /**
+   * Glass-off dive window — calm water is kinder on the lungs and the stroke.
+   * 0 open sea, 1 flat glass.
+   */
+  diveEase?: number
   /** Quiet one-liners ("Your stomach knots.") — fired once per decline. */
   whisper?: (text: string) => void
 }
@@ -117,9 +122,11 @@ export function updateVitals(v: Vitals, dt: number, ctx: VitalsContext) {
   if (!v.alive) return
   v.elapsed += dt
 
-  // Breath — working hard underwater burns air, and so does depth
+  // Breath — working hard underwater burns air, and so does depth.
+  // A glass-off is the dive window: lungs last a little longer in still water.
   if (ctx.submerged) {
-    const work = 1 + ctx.effort * 1.35 + Math.min(ctx.depth, 30) * 0.022
+    const ease = 1 - Math.min(1, Math.max(0, ctx.diveEase ?? 0)) * 0.22
+    const work = (1 + ctx.effort * 1.35 + Math.min(ctx.depth, 30) * 0.022) * ease
     v.breath = drain(v.breath, dt * work, BREATH_HOLD)
   } else {
     v.breath = fill(v.breath, dt, BREATH_REFILL)
@@ -213,19 +220,35 @@ export function updateVitals(v: Vitals, dt: number, ctx: VitalsContext) {
 }
 
 /**
+ * Optional load from the stash. Burden slows the stroke; a plank or barrel
+ * under the arm buys float (see logistics.ts).
+ */
+export type SwimLoad = {
+  /** Speed multiplier from carried weight (1 = empty arms). */
+  burdenScale?: number
+  /** 0..1 buoyancy from a carried plank/barrel. */
+  swimAid?: number
+}
+
+/**
  * What the body has left for the swim model. Starving and bleeding cap how
  * much strength you can hold; low breath and spent muscles shake the stroke.
+ * A heavy stash slows you; a swim aid lifts the climb out of a wave.
  */
-export function swimLimits(v: Vitals) {
+export function swimLimits(v: Vitals, load: SwimLoad = {}) {
   const cap = Math.min(1, v.wounded ? 0.6 : 1, v.food < 0.3 ? 0.35 + 0.65 * (v.food / 0.3) : 1)
   const strength = Math.min(v.stamina, cap)
   const breathShort = v.breath < 0.35 ? (0.35 - v.breath) / 0.35 : 0
   const spentShake = v.stamina < 0.18 ? ((0.18 - v.stamina) / 0.18) * 0.5 : 0
+  const burden = load.burdenScale ?? 1
+  const aid = Math.min(1, Math.max(0, load.swimAid ?? 0))
   return {
-    speedScale: (0.55 + 0.45 * strength) * (v.suited ? SUIT_DRAG : 1),
-    climbScale: 0.45 + 0.55 * strength,
+    speedScale: (0.55 + 0.45 * strength) * (v.suited ? SUIT_DRAG : 1) * burden,
+    climbScale: (0.45 + 0.55 * strength) * (1 + aid * 0.4),
     cadenceScale: 0.68 + 0.32 * strength,
     wobble: Math.min(1, breathShort + spentShake),
+    /** Folded into the float target so a barrel keeps the head clearer. */
+    floatAid: aid,
   }
 }
 

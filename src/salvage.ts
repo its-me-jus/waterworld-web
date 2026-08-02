@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { Interactable, Interactions } from './interact'
+import { heaviestKind } from './logistics'
 import { eat, type Vitals } from './survival'
 import { sampleOcean } from './waves'
 import { barrelObject, crateObject, plankObject } from './wreck'
@@ -143,6 +144,8 @@ type Find = {
   item: Interactable
   taken: boolean
   drift?: Drift
+  /** Dropped from the arms — not a pool drifter; gone once taken or left behind. */
+  jettisoned?: boolean
 }
 
 export type SalvageOptions = {
@@ -386,26 +389,51 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
 
   let lastTime = -1
 
-  function update(time: number, viewer: THREE.Vector3) {
-    // Rain pools refill on their own clock. Derived from the frame time rather
-    // than taking a dt, so the signature stays the one main already calls.
+  function buildDropped(kind: StashKind) {
+    if (kind === 'barrel') return barrelObject(mat.wood, mat.iron)
+    if (kind === 'crate') return crateObject(mat.wood)
+    if (kind === 'rope') return ropeObject(mat)
+    if (kind === 'canvas') return canvasObject(mat)
+    return plankObject(2.2, 0.3, mat.wood)
+  }
+
+  function disposeFind(find: Find) {
+    interactions.remove(find.item)
+    scene.remove(find.object)
+    const idx = finds.indexOf(find)
+    if (idx >= 0) finds.splice(idx, 1)
+  }
+
+  function update(time: number, viewer: THREE.Vector3, rain = 0) {
+    // Rain pools refill on their own clock. Foul weather puts water back faster
+    // — the cascade that makes a rain-catch and a rock hollow pay off in a gale.
     const dt = lastTime < 0 ? 0 : Math.min(0.25, time - lastTime)
     lastTime = time
+    const rainBoost = 1 + Math.min(1, Math.max(0, rain)) * 1.85
     for (const pool of pools) {
-      if (pool.full < 1) pool.full = Math.min(1, pool.full + dt / POOL_REFILL)
+      if (pool.full < 1) pool.full = Math.min(1, pool.full + (dt / POOL_REFILL) * rainBoost)
     }
 
+    const drop: Find[] = []
     for (const find of finds) {
       const drift = find.drift
 
       if (drift) {
         if (find.taken) {
+          if (find.jettisoned) {
+            drop.push(find)
+            continue
+          }
           // Taken debris comes back as fresh debris, but not straight away
           if (drift.returnAt === 0) drift.returnAt = time + 30 + Math.random() * 45
           if (time < drift.returnAt) continue
           drift.returnAt = 0
           scatter(find, viewer)
         } else if (Math.hypot(drift.x - viewer.x, drift.z - viewer.z) > RECYCLE) {
+          if (find.jettisoned) {
+            drop.push(find)
+            continue
+          }
           scatter(find, viewer)
         }
 
@@ -428,11 +456,38 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
         find.item.position.copy(find.object.position)
       }
     }
+    for (const find of drop) disposeFind(find)
+  }
+
+  /**
+   * Shed the heaviest piece into the water at `at`. Returns the kind dropped,
+   * or null if the arms were empty. Debris bobs until Taken or left behind.
+   */
+  function jettison(at: THREE.Vector3): StashKind | null {
+    const kind = heaviestKind(stash)
+    if (!kind || stash[kind] <= 0) return null
+    stash[kind] -= 1
+
+    const object = dropAt(buildDropped(kind), at.clone())
+    const find = register(object, 'Take', STASH_LABEL[kind].one, (f) => take(f, kind), 2.8)
+    find.jettisoned = true
+    find.drift = {
+      x: at.x,
+      z: at.z,
+      lift: kind === 'barrel' || kind === 'crate' ? 0.14 : kind === 'plank' ? 0.04 : 0.08,
+      spin: (Math.random() - 0.5) * 0.06,
+      phase: Math.random() * 6,
+      returnAt: 0,
+    }
+    return kind
   }
 
   function reset(viewer: THREE.Vector3) {
     for (const key of Object.keys(stash) as StashKind[]) stash[key] = 0
     for (const pool of pools) pool.full = 1
+    for (let i = finds.length - 1; i >= 0; i--) {
+      if (finds[i].jettisoned) disposeFind(finds[i])
+    }
     for (const find of finds) {
       find.taken = false
       find.object.visible = true
@@ -447,7 +502,7 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
   const origin = new THREE.Vector3()
   drifters.forEach((find, i) => scatter(find, origin, 18 + i * 14, 40 + i * 20))
 
-  return { stash, labels: STASH_LABEL, has, spend, update, reset }
+  return { stash, labels: STASH_LABEL, has, spend, update, reset, jettison }
 }
 
 export type Salvage = ReturnType<typeof createSalvage>

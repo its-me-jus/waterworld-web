@@ -82,10 +82,24 @@ still a kilometre of open water in the dark.
 
 ## Still parked
 
-**Plank/barrel as a swim aid.** A buff while carrying them, not a build —
-different from the lashed raft below.
+**Soft fails** — only if runs start feeling cruel rather than sharp (wash-off
+is the first taste; broader recoverables still open).
 
-**Burden and jettison.** Heavy stash slowing the swim is still an open lever.
+---
+
+## Logistics & weather cascade
+
+The sea moves between your inputs, and what you carry is not free.
+
+| System | What it does |
+|--------|----------------|
+| **Current** | Drift along the swell. Fair water nudges; a gale shoves; glass kills it. Softened in the island's lee. Rafts ride it too — pole and sail fight the set |
+| **Burden** | Stash weight slows the swim. Crate > barrel > plank > canvas > rope |
+| **Swim aid** | A plank or barrel under the arm buys float (head clearer, easier climb out of a wave) — not a raft, just buoyancy |
+| **Drop** | When swimming with a load and nothing else in reach: shed the heaviest piece into the water. Stow in a locker is the lasting answer |
+| **Wash-off** | Foul weather fills a meter on an open deck; rail cuts it hard; locker mass helps. Over the side, Climb again |
+| **Dive window** | Glass-offs clear murk, ease the stroke and the lungs — dive the wreck while it holds |
+| **Camp cascade** | Rain pools and rain-catches fill faster in a front; lean-to / fire warmth reads higher in foul weather; resting through a gale earns its keep |
 
 ---
 
@@ -145,11 +159,8 @@ taxes strength until it clots; a second bite while open ends the run.
 
 - **Memory spine** — the log was one beat. More papers, a name, a reason.
 - **Second landmark** — a spar buoy or rock stack to break the 900 m binary.
-- **Night economy** — biolum, glass-off dive windows, a lantern in the wreck.
-  (Fire brands cover the beach walk; wreck lantern still open.)
-- **Currents** — swell that carries you, so the sea moves between inputs.
-- **Soft fails** — only if runs start feeling cruel rather than sharp.
-- **Burden and jettison** — heavy stash slowing the swim.
+- **Night economy** — biolum, wreck lantern. (Glass-off dive windows shipped with the cascade.)
+- **Soft fails** — recoverable disasters beyond wash-off, only if runs feel cruel.
 - **Crate sink** — kindling or dry storage beyond the raft locker.
 
 ---
@@ -164,3 +175,5 @@ taxes strength until it clots; a second bite while open ends the run.
 - Never let one rock's collider quietly floor a diver over the wreck — that
   failure looks like nothing and breaks every deep find.
 - Re-run `npm run sim:starts` before shipping a loop that has to outrun exposure.
+- The stash is a choice, not inventory padding: carry, Drop, Stow, or build.
+- Weather should change plans mid-run — never only meters.

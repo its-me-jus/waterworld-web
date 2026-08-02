@@ -1,9 +1,9 @@
-import { oceanState } from './waves'
+import { oceanState, WAVES } from './waves'
 
 /**
  * Sea state — the ocean's slow breathing.
  *
- * Two rhythms stacked on top of each other:
+ * Three rhythms stacked on top of each other:
  *
  *  - Seasons: a long ~8-minute swell cycle with a faster ~3-minute chop cycle
  *    riding it. Heavy periods close in, hold, and ease off; you learn to read
@@ -11,10 +11,12 @@ import { oceanState } from './waves'
  *  - Glass-offs: short, sudden calm spells (a minute or so) where the swell
  *    lies right down. They are the natural dive windows — the wreck sits still,
  *    visibility holds, and the surface stops shoving you around.
+ *  - Current: a slow drift along the dominant swell. Fair water nudges; a
+ *    gale shoves. Glass kills it. The sea moves between your inputs.
  *
- * The single output is `amp`, a multiplier on every wave's steepness. It is
- * published through `oceanState` so the CPU sampler (player, flotsam, splash)
- * and the GPU vertex shader flatten together — nothing bobs on a ghost sea.
+ * Amplitude (`amp`) is published through `oceanState` so the CPU sampler
+ * (player, flotsam, splash) and the GPU vertex shader flatten together —
+ * nothing bobs on a ghost sea. Current is read directly from this module.
  */
 
 const TAU = Math.PI * 2
@@ -29,6 +31,21 @@ export type SeaEvents = {
   onSwellUp?: () => void
 }
 
+/** Dominant swell axis — current rides this, same as the player's orbital drift. */
+const SWELL = (() => {
+  const [dx, dz] = WAVES[0].direction
+  const len = Math.hypot(dx, dz) || 1
+  return { x: dx / len, z: dz / len }
+})()
+
+export type SeaCurrent = {
+  /** Horizontal drift, metres per second. */
+  x: number
+  z: number
+  /** Scalar strength — handy for wash-off and whispers. */
+  strength: number
+}
+
 export function createSeaState(events: SeaEvents = {}) {
   /** Current amplitude multiplier; ~0.55 glassy, ~1.3 heavy. */
   let amp = 1
@@ -40,6 +57,10 @@ export function createSeaState(events: SeaEvents = {}) {
   let glassy = false
   /** 1 under a settled sky, 0 in a gale — set from the climate clock. */
   let fair = 1
+  /** Squall strength from climate — raises the drift under your stroke. */
+  let storm = 0
+
+  const drift: SeaCurrent = { x: 0, z: 0, strength: 0 }
 
   function update(dt: number, t: number) {
     // Glass-offs belong to fair weather. Under a settled sky they come around
@@ -78,6 +99,16 @@ export function createSeaState(events: SeaEvents = {}) {
 
     if (!wasGlass && amp < 0.68) events.onGlassOff?.()
     if (wasGlass && amp >= 0.68) events.onSwellUp?.()
+
+    // Drift along the swell. Glass almost kills it; a gale doubles the shove.
+    // A slow wander keeps the set from reading as a treadmill.
+    const glassMul = glassy ? 0.12 + Math.min(1, glassLeft / 20) * 0.08 : 1
+    const wander = 0.85 + 0.15 * Math.sin(t * 0.017 + 0.6)
+    const strength =
+      (0.28 + Math.max(0, amp - 0.55) * 0.95 + storm * 1.55) * glassMul * wander
+    drift.x = SWELL.x * strength
+    drift.z = SWELL.z * strength
+    drift.strength = strength
   }
 
   return {
@@ -86,12 +117,20 @@ export function createSeaState(events: SeaEvents = {}) {
     setFair(value: number) {
       fair = Math.min(1, Math.max(0, value))
     },
+    /** Squall strength — same 0..1 the waves and vitals already read. */
+    setStorm(value: number) {
+      storm = Math.min(1, Math.max(0, value))
+    },
     /** 0 = dead calm, 1 = as heavy as it gets. For audio / sky / UI. */
     get weight() {
       return Math.min(1, Math.max(0, (amp - 0.5) / 0.8))
     },
     get glassy() {
       return glassy
+    },
+    /** Live set — player and raft read this each frame. */
+    get current(): SeaCurrent {
+      return drift
     },
     /** Debug/tuning: pin the sea glass-calm (?calm=1). */
     pinCalm() {
