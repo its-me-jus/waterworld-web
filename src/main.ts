@@ -731,7 +731,7 @@ function frame() {
   // a squall roughly triples it.
   // The leaf backlight has to fade with the sun, and `sunLight.color` is only
   // a hue — the strength lives in its intensity
-  keyLight.copy(skyRig.sunLight.color).multiplyScalar(Math.min(1, skyRig.sunLight.intensity * 0.55))
+  keyLight.copy(skyRig.sunLight.color).multiplyScalar(Math.min(1.7, skyRig.sunLight.intensity * 0.3))
   island.setWeather(
     t,
     0.45 + sea.weight * 0.35 + weather.storm * 1.5,
@@ -767,9 +767,12 @@ function frame() {
   scene.background = underwater ? waterTint : skyRig.horizonColor
   // Exposure lives in the post chain now: nothing inside the scene tone-maps
   // any more, so the renderer's own setting would never be read.
+  // Stops come off as the light goes up, the way they would on a camera. The
+  // key is nine times what it used to be at noon, so midday now needs the
+  // shortest exposure of the day and a moonlit night the longest.
   post.grade.exposure = underwater
-    ? 1.16 - murk * 0.26 - (1 - weather.daylight) * 0.16
-    : 0.82 + weather.daylight * 0.36 - weather.storm * 0.14
+    ? 0.62 - murk * 0.14 - (1 - weather.daylight) * 0.1
+    : 1.35 - weather.daylight * 0.4 + weather.storm * 0.15
 
   // The grade is where the day gets its mood. Above water it runs a warm-
   // highlight / cool-shadow split that widens at dusk; below it goes cold and
@@ -798,10 +801,17 @@ function frame() {
     post.grade.contrast = 0.16 + weather.storm * 0.05
     post.grade.saturation = 1.12 + dusk * 0.1 - weather.storm * 0.2
     post.grade.vignette = 0.26 + weather.storm * 0.12 + (1 - weather.daylight) * 0.08
-    // The probe is a picture of the sky, so it has to go out with the sky. Left
-    // at full strength after dark it lights the hillside with green bounce off
-    // itself and puts a glow on the ground with nothing casting it.
-    scene.environmentIntensity = (0.12 + weather.daylight * 0.34) * (1 - weather.storm * 0.25)
+    // The probe is a picture of the sky, so most of the dimming happens on its
+    // own — after dark the cube it samples is dark. Scaling hard by daylight on
+    // top of that squares the falloff and drops the whole shaded side of the
+    // island out from under golden hour. Just enough taper is left to stop the
+    // probe lighting the hillside with green bounce off itself at night.
+    // Same twilight argument as the hemisphere in sky.ts: the probe is a
+    // picture of a sky that is still bright and now deeply coloured, and it is
+    // the only thing lighting the half of the island the sun has left.
+    const lowSun = THREE.MathUtils.clamp(1 - Math.abs(weather.sunElevation - 6) / 22, 0, 1)
+    scene.environmentIntensity =
+      (0.24 + weather.daylight * 0.22 + lowSun * lowSun * 0.5) * (1 - weather.storm * 0.25)
   }
   skyRig.sky.visible = !underwater
   skyRig.clouds.visible = !underwater

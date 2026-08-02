@@ -274,6 +274,10 @@ const STORM_CLOUD_SHADOW = new THREE.Color('#2a3238')
 const NIGHT_CLOUD = new THREE.Color('#1a222c')
 const NIGHT_CLOUD_SHADOW = new THREE.Color('#05080c')
 
+/** See the note where it's wired in — brings Preetham's radiances into the
+ * same range as the light rig that lights everything under them. */
+const skyScale = { value: 0.3 }
+
 /** Fixed moon direction — high enough to read, offset from the sun track. */
 const MOON_ELEVATION = 42
 const MOON_AZIMUTH = 210
@@ -295,6 +299,20 @@ export function createSky(
   u['rayleigh'].value = 1.55
   u['mieCoefficient'].value = 0.0025
   u['mieDirectionalG'].value = 0.8
+
+  // The Preetham fit hands back radiances around 2–5 at noon, which was fine
+  // when the material tone-mapped its own output and clamped everything above
+  // 1 into the same white. Rendering to a linear buffer, those numbers survive
+  // to the end of the frame, and 5 is four stops past the sand — the sky
+  // arrives at the tone map already flat white with nowhere left to go. Scaled
+  // down it sits a stop over the sunlit ground instead, which is where a
+  // photographed sky sits, and the zenith gets to stay blue.
+  sky.material.onBeforeCompile = (shader) => {
+    shader.uniforms.uSkyScale = skyScale
+    shader.fragmentShader = shader.fragmentShader
+      .replace('void main() {', 'uniform float uSkyScale;\nvoid main() {')
+      .replace('gl_FragColor = vec4( texColor, 1.0 );', 'gl_FragColor = vec4( texColor * uSkyScale, 1.0 );')
+  }
 
   const sunDir = new THREE.Vector3()
   sunDir.setFromSphericalCoords(
@@ -571,10 +589,18 @@ export function createSky(
       // Lights — after dusk the directional becomes cool moon fill from the moon.
       // Keep a readable floor of fill so silhouettes hold, but leave room for
       // campfire PointLights to own the warm pools on the sand.
+      //
+      // The key is deliberately huge next to the fill. A directional at 2.6 put
+      // barely a quarter of the light on sunlit sand, with skylight supplying
+      // the rest, and a subject lit three-quarters by ambient has no modelling
+      // in it — every surface reads as its own albedo and the island flattens
+      // into a painted backdrop. Noon is roughly nine parts sun to one part
+      // sky, and the tone map at the end of the chain is what brings that back
+      // into a displayable range.
       const sunUp = Math.max(0, climate.sunElevation / 62)
       const moonLift = night * (1 - storm * 0.75)
-      const dayIntensity = THREE.MathUtils.lerp(0.15, 2.6, sunUp * sunUp) * (1 - storm * 0.6)
-      const nightIntensity = THREE.MathUtils.lerp(0.28, 0.38, fair) * moonLift
+      const dayIntensity = THREE.MathUtils.lerp(0.3, 9.0, Math.pow(sunUp, 1.3)) * (1 - storm * 0.85)
+      const nightIntensity = THREE.MathUtils.lerp(0.5, 0.72, fair) * moonLift
       sunLight.intensity = Math.max(dayIntensity, nightIntensity)
 
       sunTint.setRGB(1, 0.94, 0.83).lerp(new THREE.Color('#8a9bb8'), night)
@@ -591,13 +617,24 @@ export function createSky(
       // frame before the loop has a player position to follow.
       if (!sunLight.castShadow) sunLight.position.copy(lightDir).multiplyScalar(200)
 
-      dayHemiSky.setRGB(0.62, 0.78, 0.91).lerp(new THREE.Color('#1a2838'), night)
+      // Squared, so the sky keeps its colour through the hour after sunrise
+      // instead of following `daylight` straight down into night blue
+      dayHemiSky.setRGB(0.62, 0.78, 0.91).lerp(new THREE.Color('#1a2838'), night * night)
       dayHemiSky.lerp(new THREE.Color('#3a4550'), storm * 0.55)
       dayHemiGround.setRGB(0.03, 0.125, 0.17).lerp(new THREE.Color('#0a1218'), night)
       // A squall dims the sun but turns the whole sky into one soft source, so
       // skylight goes up, not down. Cutting both is what made a storm at noon
       // as dark as dusk.
-      hemi.intensity = THREE.MathUtils.lerp(0.28, 0.5, day) * (1 + storm * 0.85)
+      //
+      // The same argument, harder, at either end of the day. A sun at ten
+      // degrees puts almost nothing on a slope that faces away from it, and if
+      // skylight is scaled by daylight as well then the entire shaded half of
+      // the island falls off a cliff into black within a few minutes of the
+      // sun getting low. Twilight is when the sky is doing the most work as a
+      // light, not the least, so it gets its own bump.
+      const twilight = THREE.MathUtils.clamp(1 - Math.abs(climate.sunElevation - 6) / 22, 0, 1)
+      hemi.intensity =
+        THREE.MathUtils.lerp(0.28, 0.5, day) * (1 + storm * 0.85) + twilight * twilight * 2.2
 
       // Stars fade in after dusk, wash out under a storm
       const starOp = Math.max(0, night * 0.95 - storm * 0.7)

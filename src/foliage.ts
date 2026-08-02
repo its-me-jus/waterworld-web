@@ -268,7 +268,10 @@ const cloudShadowBody = /* glsl */ `
     // overdraw there is enormous; the second octave was invisible at the
     // scale a cloud shadow works at anyway.
     float deck = gNoise(vGroundPos.xz * 0.0026 + uCloudDrift);
-    float shade = smoothstep(0.44, 0.62, deck) * uCloudShadow;
+    // Wide edges. A cloud's shadow has a penumbra a good fraction of its own
+    // width — tighten this and the island gets a hard diagonal line across it
+    // with a lit half and a dark half.
+    float shade = smoothstep(0.38, 0.74, deck) * uCloudShadow;
     reflectedLight.directDiffuse *= 1.0 - shade;
     reflectedLight.directSpecular *= 1.0 - shade;
   }
@@ -289,17 +292,22 @@ const groundNormalBody = /* glsl */ `
     // twenty metres across and stays on at any range — it's what gives a
     // distant hillside form instead of a silhouette. The fine one is clods
     // underfoot and has to fade out before it starts aliasing into fizz.
+    //
+    // Both are deliberately weak. A tilted normal costs whatever the key light
+    // is worth, so the amplitude that read as gentle undulation under a dim
+    // sun turns into soft black lobes the size of a house once the sun is
+    // doing most of the lighting.
     float coarse = gNoise(gp * 0.055);
     vec3 bump = vec3(
       coarse - gNoise(gp * 0.055 + vec2(0.35, 0.0)),
       0.0,
       coarse - gNoise(gp * 0.055 + vec2(0.0, 0.35))
-    ) * 0.55;
+    ) * 0.2;
     float gNear = 1.0 - smoothstep(10.0, 55.0, gDist);
     if (gNear > 0.01) {
       float h0 = gRelief(gp);
       bump += vec3(h0 - gRelief(gp + vec2(0.55, 0.0)), 0.0, h0 - gRelief(gp + vec2(0.0, 0.55)))
-        * 1.5 * gNear;
+        * 0.7 * gNear;
     }
     vec3 nw = normalize((vec4(normal, 0.0) * viewMatrix).xyz + bump);
     normal = normalize((viewMatrix * vec4(nw, 0.0)).xyz);
@@ -312,15 +320,25 @@ const groundColorBody = /* glsl */ `
     // None of these bands fade with distance: the whole point is that a
     // hillside seen from four hundred metres still has patches on it. Only the
     // relief bump above fades, because only the bump aliases.
+    float gDist = length(vGroundPos - cameraPosition);
     float macro = gNoise(gp * 0.0105);
     float mid = gNoise(gp * 0.062);
     float fine = gNoise(gp * 0.31);
+    // Nothing in the bands above is smaller than three metres across, which is
+    // why the ground held up at four hundred metres and turned to smooth
+    // plastic at four. Two more octaves carry it down to tussock and then to
+    // blade, and both have to be gone by the time a pixel covers more than one
+    // of them or the hillside boils.
+    float tussockFade = 1.0 - smoothstep(14.0, 46.0, gDist);
+    float bladeFade = 1.0 - smoothstep(3.0, 13.0, gDist);
+    float tussock = tussockFade > 0.01 ? gNoise(gp * 1.35) : 0.5;
+    float blade = bladeFade > 0.01 ? gNoise(gp * 6.2) : 0.5;
 
     // Value alone barely survives the tone map at these brightnesses, so the
     // patches change hue too: sun-bleached on the exposed shoulders, deep and
     // blue-green where growth collects, bare dirt in between.
-    vec3 bleached = diffuseColor.rgb * vec3(1.34, 1.2, 0.74);
-    vec3 deep = diffuseColor.rgb * vec3(0.44, 0.74, 0.5);
+    vec3 bleached = diffuseColor.rgb * vec3(1.3, 1.19, 0.78);
+    vec3 deep = diffuseColor.rgb * vec3(0.62, 0.86, 0.62);
     vec3 bare = diffuseColor.rgb * vec3(1.12, 1.02, 0.9);
 
     // Value noise clusters hard around 0.5 — it is an average of averages — so
@@ -334,7 +352,13 @@ const groundColorBody = /* glsl */ `
     vec3 patched = mix(bare, bleached, dry);
     patched = mix(patched, deep, lush);
 
-    diffuseColor.rgb = patched * (0.66 + macro * 0.26 + mid * 0.3 + fine * 0.18);
+    // Value break-up. The near octaves are signed about their own mean so they
+    // only ever add texture, never a brightness step at the distance they fade
+    // in at.
+    float shading = 0.66 + macro * 0.26 + mid * 0.3 + fine * 0.18;
+    shading += (tussock - 0.5) * 0.3 * tussockFade;
+    shading += (blade - 0.5) * 0.22 * bladeFade;
+    diffuseColor.rgb = patched * shading;
   }
 `
 
@@ -388,7 +412,7 @@ export function createFoliage(haze: THREE.Color): FoliageRig {
 
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uHaze = uHaze
-      shader.uniforms.uHazeDensity = { value: 0.0016 }
+      shader.uniforms.uHazeDensity = { value: 0.0021 }
       shader.uniforms.uHazeMax = { value: 0.88 }
 
       shader.vertexShader = `varying vec3 vGroundPos;\n${shader.vertexShader}`

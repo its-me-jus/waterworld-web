@@ -807,13 +807,13 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const palmWanted = low ? 32 : 72
   const rockWanted = low ? 90 : 200
   const woodWanted = low ? 28 : 60
-  const scrubWanted = low ? 220 : 620
+  const scrubWanted = low ? 300 : 880
   const broadWanted = low ? 150 : 380
-  const grassWanted = low ? 4500 : 15000
+  const grassWanted = low ? 7000 : 24000
   const deadWanted = low ? 18 : 40
   const vineWanted = low ? 120 : 280
   const pathWanted = low ? 32 : 60
-  const fernWanted = low ? 170 : 520
+  const fernWanted = low ? 240 : 760
   const fallenWanted = low ? 16 : 36
   const boulderWanted = low ? 32 : 70
   const wrackWanted = low ? 45 : 100
@@ -843,7 +843,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     nut: { spread: 0.35, sway: 1 },
     broadTrunk: { spread: 0.5, sway: 1, rootShade: 0.28 },
     canopy: { spread: 1, sway: 1, flutter: 0.55, underShade: 0.45 },
-    grass: { spread: 1.15, sway: 1, flutter: 0.4, rootShade: 0.38 },
+    // Tight on value. A tuft is one pixel from out at sea, and a spread wide
+    // enough to look varied underfoot puts the brightest of them a long way
+    // above the hillside they stand on — which from that distance is not
+    // variation, it is a hill with snow on it.
+    grass: { spread: 0.78, sway: 1, flutter: 0.4, rootShade: 0.38 },
     fern: { spread: 1, sway: 1, flutter: 0.45, rootShade: 0.34 },
     scrub: { spread: 0.95, sway: 1, flutter: 0.3, rootShade: 0.3, underShade: 0.22 },
     reed: { spread: 0.85, sway: 1, flutter: 0.5, rootShade: 0.28 },
@@ -1142,25 +1146,29 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     plant(fernParts, fernClump(i + 1900), i + 1900, SPECIES.fern, lx, h, lz, 0.03)
   }
 
-  // Grass — dense ground cover across the green band. Heavy cove bias so
-  // looking down on landfall isn't a blank olive plane.
-  for (let i = 0; i < 46000 && grassParts.length < grassWanted; i++) {
+  // Grass — ground cover across the whole green band.
+  //
+  // `radius = 30 + (i * 29) % 300` walks a sawtooth, which lays tufts down in
+  // concentric rings and leaves the gaps between them bare; and area grows with
+  // r, so even a clean uniform angle spends most of the budget crowding the
+  // middle. Golden angle on a square-rooted radius is the standard fix: even
+  // density per unit of ground, which is the only thing that reads as cover.
+  const grassInner = 26
+  const grassOuter = 302
+  for (let i = 0; i < 90000 && grassParts.length < grassWanted; i++) {
     const angle = i * 2.39996
-    const radius = 30 + ((i * 29) % 300)
-    // First third of the budget is a tight carpet on the landing shelf, where
-    // you'll be standing; the rest spreads out over the green band so the
-    // slopes above don't read as mown
-    const carpet = grassParts.length < grassWanted * 0.26
+    const t = (i % 4096) / 4096
+    const radius = Math.sqrt(grassInner * grassInner + t * (grassOuter * grassOuter - grassInner * grassInner))
+    // Two in five go to the landing shelf. It is a fraction of the island's
+    // area and where nearly all the standing around happens, so it carries a
+    // much higher density than the ring pass would ever give it.
+    const carpet = i % 5 < 2
     const lx = carpet
-      ? COVE_X + (scatter(i, 7.7) - 0.5) * 85
-      : i % 3 === 0
-        ? COVE_X + (scatter(i, 7.7) - 0.5) * 160
-        : Math.cos(angle) * radius + (scatter(i, 7.7) - 0.5) * 9
+      ? COVE_X + (scatter(i, 7.7) - 0.5) * 190
+      : Math.cos(angle) * radius + (scatter(i, 7.7) - 0.5) * 7
     const lz = carpet
-      ? COVE_Z + (scatter(i, 8.8) - 0.5) * 85
-      : i % 3 === 0
-        ? COVE_Z + (scatter(i, 8.8) - 0.5) * 160
-        : Math.sin(angle) * radius + (scatter(i, 8.8) - 0.5) * 9
+      ? COVE_Z + (scatter(i, 8.8) - 0.5) * 190
+      : Math.sin(angle) * radius + (scatter(i, 8.8) - 0.5) * 7
     const h = surface(lx, lz)
     if (h < 1.6 || h > 110) continue
     const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
@@ -1262,7 +1270,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     /** Metres past which this layer stops being drawn at all. */
     range?: number
   }[] = [
-    { parts: trunks, color: 0x8a6f4c, roughness: 0.95, wind: PALM_WIND },
+    // Bark is rough but it is not chalk. Left at 0.95 a trunk picks up nothing
+    // at all from the sky probe, so backlit it goes to a flat black cutout —
+    // exactly the silhouette the environment map was added to prevent. Enough
+    // gloss to catch a rim off the sky is all it takes to give it a round side.
+    { parts: trunks, color: 0x8a6f4c, roughness: 0.74, wind: PALM_WIND },
     {
       parts: leaves,
       color: 0x74a83f,
@@ -1274,7 +1286,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       doubleSided: true,
     },
     { parts: nuts, color: 0x7c6038, roughness: 1, wind: PALM_WIND },
-    { parts: broadTrunks, color: 0x6d573a, roughness: 0.96, wind: BROAD_WIND },
+    { parts: broadTrunks, color: 0x6d573a, roughness: 0.76, wind: BROAD_WIND },
     {
       parts: broadCanopy,
       color: 0x5c9438,
@@ -1287,11 +1299,15 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     {
       parts: grassParts,
       range: 330,
-      color: 0x6f9c40,
+      color: 0x62903a,
       roughness: 0.93,
       wind: 0.15,
-      translucency: 0.8,
-      throughColor: '#e0ec86',
+      // Grass is the one layer you are always inside. A canopy can afford to
+      // glow because you see it from underneath against the sky; a blade lit
+      // this hard at arm's length turns the same pale yellow whatever it's
+      // doing, and a hillside of them speckles white from out at sea.
+      translucency: 0.42,
+      throughColor: '#cbdd7a',
       doubleSided: true,
     },
     {
@@ -1300,7 +1316,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       color: 0x4c7a2f,
       roughness: 0.9,
       wind: 0.13,
-      translucency: 0.85,
+      translucency: 0.6,
       throughColor: '#cbe374',
       doubleSided: true,
     },
@@ -1320,8 +1336,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       color: 0x7a8d4a,
       roughness: 0.9,
       wind: 0.17,
-      translucency: 0.75,
-      throughColor: '#e2e88a',
+      translucency: 0.55,
+      throughColor: '#dbe382',
       doubleSided: true,
     },
     {

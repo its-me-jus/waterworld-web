@@ -243,11 +243,14 @@ export function createPostChain(
   const brightMat = new THREE.ShaderMaterial({
     uniforms: {
       tDiffuse: { value: null },
-      // High enough that only a genuine specular hit crosses it. Lower and the
-      // whole sea surface qualifies, and the glitter — which is the best thing
-      // about the water — dissolves into milk.
-      uThreshold: { value: 1.55 },
-      uKnee: { value: 0.85 },
+      // Has to sit above the sky, not just above white. A daylit sky is 2–5 in
+      // scene-linear and covers half the frame; with the threshold under that,
+      // the bright pass returns "the sky, slightly dimmer", the blur turns it
+      // into one flat sheet of glow, and every tree punches a soft grey hole in
+      // it. What looked like a blur artefact around the palms was the sky's
+      // own bloom missing behind them.
+      uThreshold: { value: 5.5 },
+      uKnee: { value: 2.2 },
       uExposure: { value: 1 },
     },
     vertexShader: fullscreenVertex,
@@ -339,6 +342,10 @@ export function createPostChain(
       // not from a wider stride.
       blurInto(nearB.texture, nearA, nearB, 1.0)
       blurInto(nearB.texture, nearA, nearB, 1.0)
+      // A third round on anything with the headroom for it. A sun glint is a
+      // couple of texels at quarter res, and two Gaussians leave it a rounded
+      // square; the shape only stops reading as a sprite after a third.
+      if (!opts.lowPower) blurInto(nearB.texture, nearA, nearB, 1.0)
       compositeMat.uniforms.tBloomNear.value = nearB.texture
       if (useWideBloom) {
         // nearB holds the tight halo; farA takes the wide one off it
