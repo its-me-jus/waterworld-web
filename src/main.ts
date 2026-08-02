@@ -293,6 +293,7 @@ const forage = createForage(hud, vitals, {
   provisionSpot: wreck.provisionSpot,
   takeProvision: wreck.takeProvision,
   fish: underwaterWorld.fish,
+  crabs: island.crabs,
 })
 
 const improvise = createImprovise(scene, camera, {

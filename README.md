@@ -67,14 +67,17 @@ about half the rate dry sand does, and a gale still comes over the top — but i
 turns the wreck from a raid into somewhere you can work.
 
 The far one is a volcanic island ~1.2 km off the spawn heading's right
-shoulder: beach, scrub, cliffs and palms. Wade far enough up and you climb out
+shoulder: beach, scrub, cliffs and palms. The spawn-facing shore shelves into
+a landing cove — palm grove, tide wrack, and a worn path inland — so landfall
+is a beach you can work, not a cliff. Wade far enough up and you climb out
 of the swim into a walk — slope-aware, with real gravity off the ledges. Cliffs
 past ~50° refuse you; a storm face that closes over your head knocks you back
-into the sea. Coconuts lie on the sand, rain stands in hollows in the rock
-above the beach, and inland a small cairn holds rope someone left under the
-stones. Bring salvage ashore and you can improvise a lean-to, a fire, a
-rain-catch, a seat, a drying rack, a signal on the ridge — a camp you made, not
-one the world planted for you.
+into the sea. Coconuts lie on the sand, crabs scuttle the wash (grab one when
+you're quick enough), rain stands in hollows in the rock above the beach, and
+inland a small cairn holds rope someone left under the stones. Gulls, lizards
+and butterflies keep the place from reading empty. Bring salvage ashore and you
+can improvise a lean-to, a fire, a rain-catch, a seat, a drying rack, a signal
+on the ridge — a camp you made, not one the world planted for you.
 
 ## Controls
 

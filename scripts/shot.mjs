@@ -21,18 +21,20 @@ const VIEWS = [
   { name: 'island-far', url: 'http://localhost:5173/?yaw=-0.96&pitch=0.02' },
   { name: 'island-near', url: 'http://localhost:5173/?x=668&z=-463&yaw=-0.96&pitch=0.05' },
   { name: 'island-shore', url: 'http://localhost:5173/?x=717&z=-498&yaw=-0.96&pitch=0.02' },
-  // Standing in the shallows, looking along the beach
-  { name: 'island-land', url: 'http://localhost:5173/?x=744&z=-516&yaw=0.61&pitch=0.02' },
+  // Standing in the shallows of the landing cove, looking along the beach
+  { name: 'island-land', url: 'http://localhost:5173/?x=770&z=-530&yaw=0.61&pitch=0.02' },
   // Ashore in walk mode — eye height, upright body, mid-stride arms and legs
-  { name: 'beach-walk', url: 'http://localhost:5173/?x=740&z=-533&yaw=-1.02&pitch=0.05' },
-  { name: 'beach-stride', url: 'http://localhost:5173/?x=740&z=-533&yaw=-1.02&pitch=-0.45', fwd: 1.6 },
-  { name: 'beach-lookdown', url: 'http://localhost:5173/?x=740&z=-533&yaw=-1.02&pitch=-1.25' },
+  { name: 'beach-walk', url: 'http://localhost:5173/?x=775&z=-532&yaw=-1.02&pitch=0.05' },
+  { name: 'beach-stride', url: 'http://localhost:5173/?x=775&z=-532&yaw=-1.02&pitch=-0.45', fwd: 1.6 },
+  { name: 'beach-lookdown', url: 'http://localhost:5173/?x=775&z=-532&yaw=-1.02&pitch=-1.25' },
+  // Looking inland from the cove up into the green
+  { name: 'island-inland', url: 'http://localhost:5173/?x=800&z=-550&yaw=-0.6&pitch=0.12' },
   // Climate — storm locked, night locked, shore foam up close
   { name: 'storm', url: 'http://localhost:5173/?storm=1&hour=14&yaw=-0.3&pitch=0.05' },
   { name: 'dusk', url: 'http://localhost:5173/?hour=17.6&yaw=-0.96&pitch=0.02' },
   { name: 'night', url: 'http://localhost:5173/?hour=22&yaw=-0.4&pitch=0.05' },
   { name: 'night-dive', url: 'http://localhost:5173/?hour=22&pitch=-0.15', dive: 2.4 },
-  { name: 'shore-foam', url: 'http://localhost:5173/?x=728&z=-525&yaw=-0.4&pitch=-0.2' },
+  { name: 'shore-foam', url: 'http://localhost:5173/?x=755&z=-520&yaw=-0.4&pitch=-0.2' },
   // Floating within arm's reach of the wreck's first plank — the action prompt
   { name: 'prompt', url: 'http://localhost:5173/?x=-32.5&z=-96.4&yaw=0&pitch=-0.35' },
   { name: 'jelly', url: 'http://localhost:5173/?pitch=-0.05', dive: 2.2 },

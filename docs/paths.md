@@ -129,8 +129,9 @@ A raft at the wreck is one path — **Climb** aboard from the water, **pole it
 from the deck**, then **Rig** a sail, **Lash** a rail and locker, **Scratch**
 the stern once the mate's spear has given you a name to cut. Stow gear you
 cannot swim with. A camp on the island is another — seat, drying rack, signal
-smoke, rain pools, and one inland cairn with rope left under the stones. Working
-the spire with a lean-to and a fire is a third. The sandbox is the point.
+smoke, rain pools, shore crabs on the wash, and one inland cairn with rope left
+under the stones. Working the spire with a lean-to and a fire is a third. The
+sandbox is the point.
 
 ### Shark
 

@@ -41,6 +41,16 @@ export type Island = {
    * host one (shouldn't happen on the stock island).
    */
   cairn: THREE.Vector3 | null
+  /**
+   * Shore crabs that scuttle the wet sand. Grab one when you're close enough —
+   * same rule as fish and shellfish, nothing points at them.
+   */
+  crabs: {
+    nearest: (point: THREE.Vector3, maxDist: number) => { index: number; dist: number } | null
+    positionAt: (index: number, out: THREE.Vector3) => THREE.Vector3
+    /** Hide and eat; the shell comes back later. */
+    take: (index: number) => boolean
+  }
   update: (camera: THREE.Camera, underwater: boolean, time?: number) => void
   /** Keep aerial perspective matched to the live horizon. */
   setHaze: (color: THREE.Color) => void
@@ -71,23 +81,50 @@ function relief(lx: number, lz: number) {
   )
 }
 
+/**
+ * Spawn sits near the world origin; the island centre is ~1.2 km off that
+ * heading's right shoulder. The cove is the soft beach you actually swim onto
+ * — without it the approach face is a cliff that sheds every palm.
+ */
+const COVE_X = -205
+const COVE_Z = 148
+
 /** Height above mean sea level, in island-local coordinates. */
 function ground(lx: number, lz: number) {
   let h =
     cone(lx, lz, 0, 0, 330, PEAK, 1.45) +
     cone(lx, lz, 180, -104, 190, 76, 1.4) +
     cone(lx, lz, -142, 124, 172, 52, 1.4) +
-    cone(lx, lz, 64, 208, 124, 26, 1.35)
+    cone(lx, lz, 64, 208, 124, 26, 1.35) +
+    // Broad low shoulder toward the approach, so the cove has something to carve
+    cone(lx, lz, COVE_X * 0.85, COVE_Z * 0.85, 175, 22, 1.15)
 
   h *= 1 + relief(lx, lz) * 1.15
   // Micro-relief: root flares and hummocks under the green band so the ground
   // isn't a smooth plane once the grass and trees are in
   const greenBand = THREE.MathUtils.smoothstep(h, 3, 14) * (1 - THREE.MathUtils.smoothstep(h, 40, 90))
   h += (noise2(lx * 0.09 + 5.5, lz * 0.09 - 3.3) - 0.5) * 1.1 * greenBand
+  // A second octave of hummocks higher up — breaks the painted-cone silhouette
+  // from the water before you're close enough to see individual trees
+  const midBand = THREE.MathUtils.smoothstep(h, 12, 28) * (1 - THREE.MathUtils.smoothstep(h, 70, 110))
+  h += (noise2(lx * 0.018 + 9.1, lz * 0.018 - 6.4) - 0.5) * 4.2 * midBand
   h -= SEA_CUT
   // The last few metres either side of the waterline flatten into beach and
   // shallows, instead of the cone driving straight into the sea
   h *= 0.22 + 0.78 * THREE.MathUtils.smoothstep(Math.abs(h), 3, 40)
+  // Landing cove: pull the spawn-facing shore onto a wadable shelf so landfall
+  // is a beach with palms, not a cliff that rejects every plant.
+  // (smoothstep needs min < max — an inverted range silently returns 1.)
+  {
+    const d = Math.hypot(lx - COVE_X, lz - COVE_Z)
+    const cove = 1 - THREE.MathUtils.smoothstep(d, 20, 175)
+    if (cove > 0) {
+      // Keep the shelf low enough that sand still reads as sand underfoot
+      const beach = 2.4 + relief(lx, lz) * 1.6
+      if (h > beach) h = THREE.MathUtils.lerp(h, beach, cove * 0.88)
+      else if (h < 0.4) h = THREE.MathUtils.lerp(h, Math.min(beach * 0.55, 1.6), cove * 0.65)
+    }
+  }
   // Then fall away into deep water so the patch edge isn't a bathtub rim
   h -= THREE.MathUtils.smoothstep(Math.hypot(lx, lz), 330, 620) * 30
   return h
@@ -265,14 +302,14 @@ function deadTree(seed: number) {
 function grassTuft(seed: number) {
   const rand = (n: number) => fbm(seed * 5.9 + n * 2.7, seed * 3.3 - n * 1.9)
   const blades: THREE.BufferGeometry[] = []
-  const count = 4 + Math.floor(rand(1) * 3)
+  const count = 5 + Math.floor(rand(1) * 4)
   for (let i = 0; i < count; i++) {
-    const h = 0.5 + rand(i + 2) * 0.9
-    const blade = new THREE.ConeGeometry(0.06 + rand(i + 4) * 0.06, h, 3)
+    const h = 0.65 + rand(i + 2) * 1.15
+    const blade = new THREE.ConeGeometry(0.07 + rand(i + 4) * 0.07, h, 3)
     blade.translate(0, h / 2, 0)
     blade.rotateZ((rand(i + 6) - 0.5) * 0.9)
     blade.rotateY(rand(i + 8) * Math.PI * 2)
-    blade.translate((rand(i + 10) - 0.5) * 0.5, 0, (rand(i + 12) - 0.5) * 0.5)
+    blade.translate((rand(i + 10) - 0.5) * 0.55, 0, (rand(i + 12) - 0.5) * 0.55)
     blades.push(blade)
   }
   return mergeGeometries(blades, false) as THREE.BufferGeometry
@@ -327,6 +364,218 @@ function scrubBush(seed: number) {
     parts.push(cone)
   }
   return mergeGeometries(parts, false) as THREE.BufferGeometry
+}
+
+/** A fern — wider, drooping fronds that fill the understory between trees. */
+function fernClump(seed: number) {
+  const rand = (n: number) => fbm(seed * 4.7 + n * 2.1, seed * 6.2 - n * 3.4)
+  const fronds: THREE.BufferGeometry[] = []
+  const count = 5 + Math.floor(rand(1) * 4)
+  for (let i = 0; i < count; i++) {
+    const h = 0.7 + rand(i + 2) * 1.1
+    const frond = new THREE.ConeGeometry(0.28 + rand(i + 4) * 0.22, h, 3)
+    frond.translate(0, h / 2, 0)
+    frond.scale(1, 1, 0.22)
+    frond.rotateZ(0.55 + rand(i + 6) * 0.7)
+    frond.rotateY(rand(i + 8) * Math.PI * 2)
+    frond.translate((rand(i + 10) - 0.5) * 0.35, 0, (rand(i + 12) - 0.5) * 0.35)
+    fronds.push(frond.toNonIndexed())
+  }
+  return mergeGeometries(fronds, false) as THREE.BufferGeometry
+}
+
+/** A fallen inland log — longer and darker than beach driftwood. */
+function fallenLog(seed: number) {
+  const rand = (n: number) => fbm(seed * 8.9 + n * 2.6, seed * 3.8 - n * 4.2)
+  const len = 3.4 + rand(1) * 4.5
+  const geo = new THREE.CylinderGeometry(0.16 + rand(2) * 0.14, 0.2 + rand(3) * 0.16, len, 6, 2)
+  geo.rotateZ(Math.PI / 2)
+  const pos = geo.attributes.position
+  for (let i = 0; i < pos.count; i++) {
+    pos.setY(i, pos.getY(i) + Math.sin(pos.getX(i) * 1.4) * 0.12)
+  }
+  geo.computeVertexNormals()
+  geo.rotateY(rand(4) * Math.PI * 2)
+  geo.rotateX((rand(5) - 0.5) * 0.18)
+  return geo
+}
+
+/** A larger boulder — breaks the smooth green slopes into something geological. */
+function boulder(seed: number) {
+  const rand = (n: number) => fbm(seed * 10.2 + n * 4.1, seed * 6.6 - n * 2.5)
+  const geo = new THREE.IcosahedronGeometry(1.8 + rand(1) * 2.8, 0)
+  const pos = geo.attributes.position
+  for (let i = 0; i < pos.count; i++) {
+    const s = 0.65 + rand(i + 2) * 0.75
+    pos.setXYZ(i, pos.getX(i) * s, pos.getY(i) * (0.45 + rand(i + 5) * 0.45), pos.getZ(i) * s)
+  }
+  geo.computeVertexNormals()
+  geo.rotateY(rand(8) * Math.PI * 2)
+  geo.rotateX((rand(9) - 0.5) * 0.5)
+  return geo
+}
+
+/** Tide wrack — a low mat of washed-up weed on the wet sand. */
+function tideWrack(seed: number) {
+  const rand = (n: number) => fbm(seed * 5.4 + n * 3.3, seed * 7.1 - n * 1.6)
+  const parts: THREE.BufferGeometry[] = []
+  const clumps = 3 + Math.floor(rand(1) * 4)
+  for (let i = 0; i < clumps; i++) {
+    const w = 0.5 + rand(i + 2) * 0.9
+    const pad = new THREE.SphereGeometry(w * 0.5, 5, 3)
+    pad.scale(1, 0.18 + rand(i + 4) * 0.12, 0.7 + rand(i + 5) * 0.4)
+    pad.translate((rand(i + 6) - 0.5) * 1.4, 0.04, (rand(i + 7) - 0.5) * 1.4)
+    pad.rotateY(rand(i + 8) * Math.PI * 2)
+    parts.push(pad.toNonIndexed())
+  }
+  return mergeGeometries(parts, false) as THREE.BufferGeometry
+}
+
+/** Reeds / sea grass in the wet band — thin upright blades. */
+function reedClump(seed: number) {
+  const rand = (n: number) => fbm(seed * 6.1 + n * 2.4, seed * 4.5 - n * 3.1)
+  const blades: THREE.BufferGeometry[] = []
+  const count = 6 + Math.floor(rand(1) * 5)
+  for (let i = 0; i < count; i++) {
+    const h = 0.9 + rand(i + 2) * 1.4
+    const blade = new THREE.ConeGeometry(0.035 + rand(i + 4) * 0.03, h, 3)
+    blade.translate(0, h / 2, 0)
+    blade.rotateZ((rand(i + 6) - 0.5) * 0.35)
+    blade.rotateY(rand(i + 8) * Math.PI * 2)
+    blade.translate((rand(i + 10) - 0.5) * 0.7, 0, (rand(i + 12) - 0.5) * 0.7)
+    blades.push(blade.toNonIndexed())
+  }
+  return mergeGeometries(blades, false) as THREE.BufferGeometry
+}
+
+/** A young sapling — short trunk + canopy blob. Kept as two pieces so the
+ *  trunk and leaf materials can stay distinct when merged into batches. */
+function sapling(seed: number) {
+  const rand = (n: number) => fbm(seed * 7.2 + n * 2.8, seed * 4.9 - n * 1.7)
+  const height = 1.6 + rand(1) * 2.2
+  const trunk = new THREE.CylinderGeometry(0.05, 0.1, height, 5, 1)
+  trunk.translate(0, height / 2, 0)
+  trunk.rotateY(rand(2) * Math.PI * 2)
+
+  const canopy: THREE.BufferGeometry[] = []
+  const blobs = 1 + Math.floor(rand(3) * 2)
+  for (let i = 0; i < blobs; i++) {
+    const r = 0.55 + rand(i + 4) * 0.7
+    const blob = new THREE.IcosahedronGeometry(r, 0)
+    const pos = blob.attributes.position
+    for (let v = 0; v < pos.count; v++) {
+      const s = 0.85 + rand(i * 17 + v) * 0.3
+      pos.setXYZ(v, pos.getX(v) * s, pos.getY(v) * s * 0.9, pos.getZ(v) * s)
+    }
+    blob.computeVertexNormals()
+    blob.translate(
+      (rand(i + 5) - 0.5) * 0.5,
+      height + (rand(i + 6) - 0.5) * 0.4,
+      (rand(i + 7) - 0.5) * 0.5,
+    )
+    canopy.push(blob)
+  }
+  return { trunk, canopy }
+}
+
+/** A shore crab — flat body, sidling legs, two claws. Small enough to miss. */
+function crabMesh(seed: number) {
+  const rand = (n: number) => fbm(seed * 9.4 + n * 2.1, seed * 5.8 - n * 3.3)
+  const scale = 0.75 + rand(1) * 0.55
+  const group = new THREE.Group()
+  const shell = new THREE.Mesh(
+    new THREE.SphereGeometry(0.11, 6, 4),
+    new THREE.MeshStandardMaterial({ color: 0x8a4a32, roughness: 0.85 }),
+  )
+  shell.scale.set(1.35 * scale, 0.45 * scale, 1.1 * scale)
+  shell.position.y = 0.05 * scale
+  group.add(shell)
+
+  const legMat = new THREE.MeshStandardMaterial({ color: 0x6e3a28, roughness: 0.9 })
+  for (let side = -1; side <= 1; side += 2) {
+    for (let i = 0; i < 3; i++) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.01, 0.16 * scale, 3), legMat)
+      leg.position.set(side * (0.1 + i * 0.02) * scale, 0.04 * scale, (i - 1) * 0.06 * scale)
+      leg.rotation.z = side * (0.85 + i * 0.08)
+      leg.rotation.x = (i - 1) * 0.25
+      group.add(leg)
+    }
+    const claw = new THREE.Mesh(new THREE.BoxGeometry(0.05 * scale, 0.03 * scale, 0.07 * scale), legMat)
+    claw.position.set(side * 0.14 * scale, 0.05 * scale, 0.1 * scale)
+    claw.rotation.y = side * -0.4
+    group.add(claw)
+  }
+  return group
+}
+
+/** A sunning lizard — long body, tiny legs, the rock's little tenant. */
+function lizardMesh(seed: number) {
+  const rand = (n: number) => fbm(seed * 6.6 + n * 3.4, seed * 4.2 - n * 2.1)
+  const group = new THREE.Group()
+  const mat = new THREE.MeshStandardMaterial({ color: 0x5a6b3c, roughness: 0.88 })
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.035, 0.14, 3, 5), mat)
+  body.rotation.z = Math.PI / 2
+  body.position.y = 0.03
+  group.add(body)
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.028, 5, 4), mat)
+  head.position.set(0.1, 0.035, 0)
+  group.add(head)
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.12, 4), mat)
+  tail.rotation.z = Math.PI / 2
+  tail.position.set(-0.12, 0.03, 0)
+  group.add(tail)
+  for (let i = 0; i < 4; i++) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.005, 0.05, 3), mat)
+    leg.position.set((i < 2 ? 0.04 : -0.04), 0.015, (i % 2 === 0 ? 0.04 : -0.04))
+    leg.rotation.x = (i % 2 === 0 ? 1 : -1) * 0.9
+    group.add(leg)
+  }
+  group.scale.setScalar(0.85 + rand(1) * 0.4)
+  return group
+}
+
+/** A butterfly — two wing planes that flap in update. */
+function butterflyMesh(seed: number) {
+  const rand = (n: number) => fbm(seed * 8.1 + n * 1.9, seed * 3.5 - n * 4.4)
+  const group = new THREE.Group()
+  const tone = rand(1) > 0.5 ? 0xc4a35a : 0x6a8c4e
+  const wingMat = new THREE.MeshBasicMaterial({ color: tone, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+  const left = new THREE.Mesh(new THREE.CircleGeometry(0.09 + rand(2) * 0.05, 5), wingMat)
+  const right = left.clone()
+  left.position.x = -0.06
+  right.position.x = 0.06
+  left.rotation.y = 0.35
+  right.rotation.y = -0.35
+  group.add(left, right)
+  group.userData.left = left
+  group.userData.right = right
+  return group
+}
+
+/** A beach gull — body + wings, smaller and lower than the thermal birds. */
+function gullMesh(seed: number) {
+  const rand = (n: number) => fbm(seed * 5.2 + n * 2.7, seed * 7.9 - n * 1.3)
+  const group = new THREE.Group()
+  const bodyMat = new THREE.MeshBasicMaterial({ color: 0xd8d2c4 })
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 4), bodyMat)
+  body.scale.set(1, 0.7, 1.6)
+  group.add(body)
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.07, 5, 4), bodyMat)
+  head.position.set(0, 0.04, 0.16)
+  group.add(head)
+  const wingGeo = new THREE.PlaneGeometry(0.55, 0.16)
+  const wingMat = new THREE.MeshBasicMaterial({ color: 0xc9c2b4, side: THREE.DoubleSide })
+  const left = new THREE.Mesh(wingGeo, wingMat)
+  const right = new THREE.Mesh(wingGeo, wingMat)
+  left.position.set(-0.28, 0.02, 0)
+  right.position.set(0.28, 0.02, 0)
+  left.rotation.z = 0.15
+  right.rotation.z = -0.15
+  group.add(left, right)
+  group.userData.left = left
+  group.userData.right = right
+  group.scale.setScalar(0.85 + rand(1) * 0.35)
+  return group
 }
 
 export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
@@ -466,40 +715,101 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const deadParts: THREE.BufferGeometry[] = []
   const vineParts: THREE.BufferGeometry[] = []
   const pathParts: THREE.BufferGeometry[] = []
+  const fernParts: THREE.BufferGeometry[] = []
+  const fallenParts: THREE.BufferGeometry[] = []
+  const boulderParts: THREE.BufferGeometry[] = []
+  const wrackParts: THREE.BufferGeometry[] = []
+  const reedParts: THREE.BufferGeometry[] = []
+  // Saplings share the broadleaf batches — same bark / canopy materials
 
-  const palmWanted = low ? 16 : 34
-  const rockWanted = low ? 40 : 80
-  const woodWanted = low ? 14 : 28
-  const scrubWanted = low ? 60 : 130
-  const broadWanted = low ? 40 : 90
-  const grassWanted = low ? 700 : 1600
-  const deadWanted = low ? 8 : 16
-  const vineWanted = low ? 60 : 140
-  const pathWanted = low ? 24 : 44
+  const palmWanted = low ? 32 : 72
+  const rockWanted = low ? 90 : 200
+  const woodWanted = low ? 28 : 60
+  const scrubWanted = low ? 160 : 380
+  const broadWanted = low ? 100 : 240
+  const grassWanted = low ? 2800 : 7500
+  const deadWanted = low ? 18 : 40
+  const vineWanted = low ? 120 : 280
+  const pathWanted = low ? 32 : 60
+  const fernWanted = low ? 140 : 340
+  const fallenWanted = low ? 16 : 36
+  const boulderWanted = low ? 32 : 70
+  const wrackWanted = low ? 45 : 100
+  const reedWanted = low ? 60 : 130
+  const saplingWanted = low ? 60 : 140
+  // broadWanted is the mid-story tree target; saplings add on top of that
 
   const placeAt = (geo: THREE.BufferGeometry, lx: number, h: number, lz: number, sink = 0.15) => {
     const m = new THREE.Matrix4().setPosition(lx, h - sink, lz)
     return geo.applyMatrix4(m)
   }
 
+  /** Skip a plant if its local merge failed — better a gap than a hard crash. */
+  const pushPlant = (list: THREE.BufferGeometry[], geo: THREE.BufferGeometry | null, lx: number, h: number, lz: number, sink = 0.15) => {
+    if (!geo) return
+    list.push(placeAt(geo, lx, h, lz, sink))
+  }
+
+  /** True when a local point sits on the spawn-facing landing cove. */
+  const onCove = (lx: number, lz: number) => Math.hypot(lx - COVE_X, lz - COVE_Z) < 150
+
+  /** Approach-facing slopes — the silhouette you swim toward. */
+  const onApproach = (lx: number, lz: number) => {
+    // West/north-west of centre, including the cove shoulder
+    return lx < 80 && lz > -120
+  }
+
+  // Approach grove first — the beach you swim onto has to read as landfall,
+  // not empty sand with the palms tucked on the far side of the island.
+  {
+    const groveWanted = low ? 12 : 22
+    for (let i = 0; i < 600 && trunks.length < groveWanted; i++) {
+      const angle = Math.atan2(COVE_Z, COVE_X) + (fbm(i, 1.7) - 0.5) * 1.4
+      const radius = 155 + fbm(i, 2.9) * 95
+      const lx = Math.cos(angle) * radius + (fbm(i, 3.1) - 0.5) * 14
+      const lz = Math.sin(angle) * radius + (fbm(i, 4.2) - 0.5) * 14
+      if (!onCove(lx, lz) && i % 3 !== 0) continue
+      const h = surface(lx, lz)
+      if (h < 2.0 || h > 14) continue
+      const slope = Math.abs(surface(lx + 7, lz) - h) + Math.abs(surface(lx, lz + 7) - h)
+      if (slope > 5.5) continue
+      if (shore.some((s) => Math.hypot(s.x - opts.x - lx, s.z - opts.z - lz) < 5.5)) continue
+
+      const at = new THREE.Vector3(lx, h - 0.3, lz)
+      const tree = palm(i + 2000)
+      const place = new THREE.Matrix4().setPosition(at)
+      trunks.push(tree.trunk.applyMatrix4(place))
+      for (const blade of tree.leaves) leaves.push(blade.applyMatrix4(place))
+      for (const nut of tree.nuts) nuts.push(nut.applyMatrix4(place))
+      shore.push(new THREE.Vector3(opts.x + lx, h, opts.z + lz))
+    }
+  }
+
   // Palms — clustered a bit so the beach has groves, not a picket fence
-  for (let i = 0; i < 800 && trunks.length < palmWanted; i++) {
+  for (let i = 0; i < 1400 && trunks.length < palmWanted; i++) {
     const angle = i * 2.399
-    const radius = 160 + ((i * 13) % 200)
+    const radius = 150 + ((i * 13) % 220)
     // Pull every third candidate toward the previous successful plant for clusters
     const cluster = trunks.length > 0 && i % 3 === 0
     const prev = cluster ? shore[shore.length - 1] : null
+    // Bias the spiral toward the cove so landfall isn't the empty face
+    const covePull = i % 5 === 0
     const lx = prev
       ? prev.x - opts.x + (fbm(i, 1.1) - 0.5) * 18
-      : Math.cos(angle) * radius
+      : covePull
+        ? COVE_X + (fbm(i, 1.3) - 0.5) * 110
+        : Math.cos(angle) * radius
     const lz = prev
       ? prev.z - opts.z + (fbm(i, 2.2) - 0.5) * 18
-      : Math.sin(angle) * radius
+      : covePull
+        ? COVE_Z + (fbm(i, 2.4) - 0.5) * 110
+        : Math.sin(angle) * radius
     const h = surface(lx, lz)
-    if (h < 2.4 || h > 13) continue
-    // Palms want flat ground, not a cliff face
+    if (h < 2.0 || h > 14) continue
+    // Palms want flat ground, not a cliff face — cove gets a little more slack
     const slope = Math.abs(surface(lx + 7, lz) - h) + Math.abs(surface(lx, lz + 7) - h)
-    if (slope > 4.5) continue
+    if (slope > (onCove(lx, lz) ? 5.8 : 4.8)) continue
+    if (shore.some((s) => Math.hypot(s.x - opts.x - lx, s.z - opts.z - lz) < 5)) continue
 
     const at = new THREE.Vector3(lx, h - 0.3, lz)
     const tree = palm(i + 1)
@@ -511,130 +821,256 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   }
 
   // Broadleaf mid-story — the overgrown interior. Sits above the beach band,
-  // thicker in the gullies where the relief dips.
-  for (let i = 0; i < 1400 && broadTrunks.length < broadWanted; i++) {
+  // thicker in the gullies where the relief dips — and piled onto the
+  // approach face so the swim-in silhouette isn't a bare cone.
+  for (let i = 0; i < 3600 && broadTrunks.length < broadWanted; i++) {
     const angle = i * 2.197
-    const radius = 60 + ((i * 17) % 260)
-    const lx = Math.cos(angle) * radius
-    const lz = Math.sin(angle) * radius
+    const radius = 45 + ((i * 17) % 290)
+    const approachBias = i % 2 === 0
+    const lx = approachBias
+      ? COVE_X + (fbm(i, 3.3) - 0.5) * 210 + 50
+      : Math.cos(angle) * radius
+    const lz = approachBias
+      ? COVE_Z + (fbm(i, 4.4) - 0.5) * 210 - 30
+      : Math.sin(angle) * radius
     const h = surface(lx, lz)
-    if (h < 5 || h > 70) continue
+    if (h < 4.5 || h > 85) continue
     const slope = Math.abs(surface(lx + 6, lz) - h) + Math.abs(surface(lx, lz + 6) - h)
-    if (slope > 7) continue
+    if (slope > 8.5) continue
     // Gullies grow thicker — sample the local dip
     const dip = surface(lx + 14, lz) + surface(lx - 14, lz) + surface(lx, lz + 14) + surface(lx, lz - 14) - h * 4
-    if (dip < -2.5 && i % 2 === 0) continue
+    if (dip < -2.5 && i % 3 === 0) continue
     const tree = broadleaf(i + 300)
     const place = new THREE.Matrix4().setPosition(lx, h - 0.25, lz)
     broadTrunks.push(tree.trunk.applyMatrix4(place))
     for (const blob of tree.canopy) broadCanopy.push(blob.applyMatrix4(place))
   }
 
-  // Beach rocks — frame the waterline and break empty sand
-  for (let i = 0; i < 900 && rocks.length < rockWanted; i++) {
-    const angle = i * 2.193
-    const radius = 200 + ((i * 17) % 220)
-    const lx = Math.cos(angle) * radius
-    const lz = Math.sin(angle) * radius
+  // Saplings — fill the gaps between palms and broadleaf so the mid-story
+  // doesn't read as a few trees on a painted hill
+  let saplings = 0
+  for (let i = 0; i < 1600 && saplings < saplingWanted; i++) {
+    const angle = i * 2.083
+    const radius = 70 + ((i * 21) % 250)
+    const lx = Math.cos(angle) * radius + (fbm(i, 1.5) - 0.5) * 8
+    const lz = Math.sin(angle) * radius + (fbm(i, 2.5) - 0.5) * 8
     const h = surface(lx, lz)
-    if (h < 0.3 || h > 5.5) continue
+    if (h < 3.5 || h > 45) continue
     const slope = Math.abs(surface(lx + 4, lz) - h) + Math.abs(surface(lx, lz + 4) - h)
-    if (slope > 3.5) continue
+    if (slope > 6) continue
+    if (shore.some((s) => Math.hypot(s.x - opts.x - lx, s.z - opts.z - lz) < 4)) continue
+    const young = sapling(i + 1100)
+    const place = new THREE.Matrix4().setPosition(lx, h - 0.08, lz)
+    broadTrunks.push(young.trunk.applyMatrix4(place))
+    for (const blob of young.canopy) broadCanopy.push(blob.applyMatrix4(place))
+    saplings++
+  }
+
+  // Beach rocks — frame the waterline and break empty sand
+  for (let i = 0; i < 1600 && rocks.length < rockWanted; i++) {
+    const angle = i * 2.193
+    // Bias every fourth candidate onto the cove beach
+    const coveBias = i % 4 === 0
+    const radius = coveBias ? 160 + ((i * 11) % 100) : 190 + ((i * 17) % 240)
+    const lx = coveBias
+      ? COVE_X + Math.cos(angle) * (radius * 0.45)
+      : Math.cos(angle) * radius
+    const lz = coveBias
+      ? COVE_Z + Math.sin(angle) * (radius * 0.45)
+      : Math.sin(angle) * radius
+    const h = surface(lx, lz)
+    if (h < 0.2 || h > 6.5) continue
+    const slope = Math.abs(surface(lx + 4, lz) - h) + Math.abs(surface(lx, lz + 4) - h)
+    if (slope > 4) continue
     // Skip if buried under a palm trunk
-    if (shore.some((s) => Math.hypot(s.x - opts.x - lx, s.z - opts.z - lz) < 3.5)) continue
+    if (shore.some((s) => Math.hypot(s.x - opts.x - lx, s.z - opts.z - lz) < 3.2)) continue
     rocks.push(placeAt(rockChunk(i + 40), lx, h, lz, 0.2 + (i % 5) * 0.04))
   }
 
-  // Driftwood — mid-beach, sparse, sells the wash-up
-  for (let i = 0; i < 700 && wood.length < woodWanted; i++) {
-    const angle = i * 2.618
-    const radius = 210 + ((i * 23) % 180)
+  // Mid-slope boulders — the thing that stops a green cone reading as a cone
+  for (let i = 0; i < 900 && boulderParts.length < boulderWanted; i++) {
+    const angle = i * 2.467
+    const radius = 80 + ((i * 19) % 240)
     const lx = Math.cos(angle) * radius
     const lz = Math.sin(angle) * radius
     const h = surface(lx, lz)
-    if (h < 0.8 || h > 4.5) continue
+    if (h < 6 || h > 95) continue
     const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
-    if (slope > 2.8) continue
+    // Prefer a bit of pitch — boulders collect where the ground tips
+    if (slope < 1.2 || slope > 11) continue
+    boulderParts.push(placeAt(boulder(i + 1500), lx, h, lz, 0.35 + (i % 4) * 0.08))
+  }
+
+  // Driftwood — mid-beach, sparse, sells the wash-up
+  for (let i = 0; i < 1100 && wood.length < woodWanted; i++) {
+    const angle = i * 2.618
+    const coveBias = i % 3 === 0
+    const radius = 200 + ((i * 23) % 190)
+    const lx = coveBias ? COVE_X + (fbm(i, 3.3) - 0.5) * 100 : Math.cos(angle) * radius
+    const lz = coveBias ? COVE_Z + (fbm(i, 4.4) - 0.5) * 100 : Math.sin(angle) * radius
+    const h = surface(lx, lz)
+    if (h < 0.6 || h > 5) continue
+    const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
+    if (slope > 3.2) continue
     wood.push(placeAt(driftwood(i + 90), lx, h, lz, 0.08))
   }
 
+  // Tide wrack — wet-sand mats so the waterline isn't a painted edge
+  for (let i = 0; i < 1000 && wrackParts.length < wrackWanted; i++) {
+    const angle = i * 2.311
+    const coveBias = i % 2 === 0
+    const radius = 210 + ((i * 29) % 200)
+    const lx = coveBias ? COVE_X + (fbm(i, 5.5) - 0.5) * 120 : Math.cos(angle) * radius
+    const lz = coveBias ? COVE_Z + (fbm(i, 6.6) - 0.5) * 120 : Math.sin(angle) * radius
+    const h = surface(lx, lz)
+    if (h < 0.15 || h > 2.4) continue
+    pushPlant(wrackParts, tideWrack(i + 1700), lx, h, lz, 0.02)
+  }
+
+  // Reeds in the wet band — vertical rhythm along the wash
+  for (let i = 0; i < 1100 && reedParts.length < reedWanted; i++) {
+    const angle = i * 2.155
+    const coveBias = i % 3 !== 2
+    const radius = 200 + ((i * 31) % 210)
+    const lx = coveBias ? COVE_X + (fbm(i, 7.7) - 0.5) * 115 : Math.cos(angle) * radius
+    const lz = coveBias ? COVE_Z + (fbm(i, 8.8) - 0.5) * 115 : Math.sin(angle) * radius
+    const h = surface(lx, lz)
+    if (h < 0.3 || h > 3.2) continue
+    const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
+    if (slope > 2.8) continue
+    pushPlant(reedParts, reedClump(i + 1800), lx, h, lz, 0.02)
+  }
+
   // Dune scrub — sits where sand turns green, softens the colour cliff
-  for (let i = 0; i < 1100 && scrubParts.length < scrubWanted; i++) {
+  for (let i = 0; i < 2800 && scrubParts.length < scrubWanted; i++) {
     const angle = i * 2.071
-    const radius = 150 + ((i * 19) % 230)
+    const radius = 120 + ((i * 19) % 260)
+    const coveBias = i % 3 !== 2
+    const lx = coveBias ? COVE_X + (fbm(i, 1.9) - 0.5) * 170 : Math.cos(angle) * radius
+    const lz = coveBias ? COVE_Z + (fbm(i, 2.8) - 0.5) * 170 : Math.sin(angle) * radius
+    const h = surface(lx, lz)
+    if (h < 2.8 || h > 28) continue
+    const slope = Math.abs(surface(lx + 6, lz) - h) + Math.abs(surface(lx, lz + 6) - h)
+    if (slope > 7.5) continue
+    pushPlant(scrubParts, scrubBush(i + 120), lx, h, lz, 0.05)
+  }
+
+  // Ferns — understory between the trees, denser in the green band
+  for (let i = 0; i < 3000 && fernParts.length < fernWanted; i++) {
+    const angle = i * 2.279
+    const radius = 50 + ((i * 27) % 270)
+    const approachBias = onApproach(Math.cos(angle) * radius, Math.sin(angle) * radius) || i % 2 === 0
+    const lx = approachBias
+      ? COVE_X + (fbm(i, 9.1) - 0.5) * 180
+      : Math.cos(angle) * radius + (fbm(i, 9.1) - 0.5) * 10
+    const lz = approachBias
+      ? COVE_Z + (fbm(i, 10.2) - 0.5) * 180
+      : Math.sin(angle) * radius + (fbm(i, 10.2) - 0.5) * 10
+    const h = surface(lx, lz)
+    if (h < 3.5 || h > 60) continue
+    const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
+    if (slope > 7.5) continue
+    pushPlant(fernParts, fernClump(i + 1900), lx, h, lz, 0.03)
+  }
+
+  // Grass — dense ground cover across the green band. Heavy cove bias so
+  // looking down on landfall isn't a blank olive plane.
+  for (let i = 0; i < 20000 && grassParts.length < grassWanted; i++) {
+    const angle = i * 2.39996
+    const radius = 30 + ((i * 29) % 290)
+    // First ~40% of the budget is a tight carpet on the landing shelf
+    const carpet = grassParts.length < grassWanted * 0.4
+    const lx = carpet
+      ? COVE_X + (fbm(i, 7.7) - 0.5) * 85
+      : i % 2 === 0
+        ? COVE_X + (fbm(i, 7.7) - 0.5) * 160
+        : Math.cos(angle) * radius + (fbm(i, 7.7) - 0.5) * 9
+    const lz = carpet
+      ? COVE_Z + (fbm(i, 8.8) - 0.5) * 85
+      : i % 2 === 0
+        ? COVE_Z + (fbm(i, 8.8) - 0.5) * 160
+        : Math.sin(angle) * radius + (fbm(i, 8.8) - 0.5) * 9
+    const h = surface(lx, lz)
+    if (h < 1.6 || h > 70) continue
+    const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
+    if (slope > 6) continue
+    pushPlant(grassParts, grassTuft(i + 500), lx, h, lz, 0.02)
+  }
+
+  // Fallen logs — the interior's weather, lying where trees once stood
+  for (let i = 0; i < 700 && fallenParts.length < fallenWanted; i++) {
+    const angle = i * 2.701
+    const radius = 70 + ((i * 37) % 230)
     const lx = Math.cos(angle) * radius
     const lz = Math.sin(angle) * radius
     const h = surface(lx, lz)
-    if (h < 3.8 || h > 16) continue
-    const slope = Math.abs(surface(lx + 6, lz) - h) + Math.abs(surface(lx, lz + 6) - h)
-    if (slope > 5.5) continue
-    scrubParts.push(placeAt(scrubBush(i + 120), lx, h, lz, 0.05))
-  }
-
-  // Grass — dense ground cover across the green band, hugging the camera side
-  // of the island so the tufts land where you're actually walking
-  for (let i = 0; i < 6000 && grassParts.length < grassWanted; i++) {
-    const angle = i * 2.39996
-    const radius = 40 + ((i * 29) % 260)
-    const lx = Math.cos(angle) * radius + (fbm(i, 7.7) - 0.5) * 9
-    const lz = Math.sin(angle) * radius + (fbm(i, 8.8) - 0.5) * 9
-    const h = surface(lx, lz)
-    if (h < 3.2 || h > 55) continue
-    const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
-    if (slope > 4) continue
-    grassParts.push(placeAt(grassTuft(i + 500), lx, h, lz, 0.02))
+    if (h < 5 || h > 50) continue
+    const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
+    if (slope > 4.5) continue
+    fallenParts.push(placeAt(fallenLog(i + 2100), lx, h, lz, 0.12))
   }
 
   // Dead snags — scattered through the green, the island's weather showing
-  for (let i = 0; i < 500 && deadParts.length < deadWanted; i++) {
+  for (let i = 0; i < 800 && deadParts.length < deadWanted; i++) {
     const angle = i * 2.513
-    const radius = 90 + ((i * 31) % 240)
+    const radius = 80 + ((i * 31) % 250)
     const lx = Math.cos(angle) * radius
     const lz = Math.sin(angle) * radius
     const h = surface(lx, lz)
-    if (h < 4 || h > 40) continue
+    if (h < 4 || h > 55) continue
     const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
-    if (slope > 5) continue
+    if (slope > 6) continue
     deadParts.push(placeAt(deadTree(i + 700), lx, h, lz, 0.1))
   }
 
   // Vines — hang off steeper faces in the green band, and off the broadleaf
   // trunks, so the rock reads draped rather than bare
-  for (let i = 0; i < 900 && vineParts.length < vineWanted; i++) {
+  for (let i = 0; i < 1400 && vineParts.length < vineWanted; i++) {
     const angle = i * 2.341
-    const radius = 70 + ((i * 23) % 250)
+    const radius = 60 + ((i * 23) % 260)
     const lx = Math.cos(angle) * radius
     const lz = Math.sin(angle) * radius
     const h = surface(lx, lz)
-    if (h < 5 || h > 80) continue
+    if (h < 5 || h > 90) continue
     const slope = Math.abs(surface(lx + 4, lz) - h) + Math.abs(surface(lx, lz + 4) - h)
     // Want a face with some pitch — not flat ground, not a cliff
-    if (slope < 2.2 || slope > 9) continue
+    if (slope < 1.8 || slope > 10) continue
     const anchor = h + 1.2 + fbm(i, 3.3) * 2.4
     vineParts.push(placeAt(vine(i + 900), lx, anchor, lz, 0))
   }
 
   // A worn path from the landing beach up toward the interior — flat stones
-  // and trampled ground, subtle enough that you find it by walking it
+  // and trampled ground, subtle enough that you find it by walking it.
+  // Prefer a cove palm so the path starts where you actually come ashore.
   {
-    const from = shore.length > 0 ? shore[0] : null
+    const from =
+      shore.find((s) => onCove(s.x - opts.x, s.z - opts.z)) ??
+      (shore.length > 0 ? shore[0] : null)
     if (from) {
       const sx = from.x - opts.x
       const sz = from.z - opts.z
       const heading = Math.atan2(-sx, -sz) // toward island centre
       for (let i = 0; i < pathWanted; i++) {
-        const dist = 4 + i * 3.1
+        const dist = 3 + i * 2.8
         const wobble = (fbm(i * 0.7, 11.1) - 0.5) * 3.2
         const lx = sx + Math.sin(heading) * -dist + Math.cos(heading) * wobble
         const lz = sz + Math.cos(heading) * -dist - Math.sin(heading) * wobble
         const h = surface(lx, lz)
-        if (h < 1.5 || h > 30) continue
+        if (h < 1.2 || h > 35) continue
         const stone = new THREE.CylinderGeometry(0.5 + fbm(i, 5.5) * 0.5, 0.6 + fbm(i, 6.6) * 0.5, 0.16, 6)
         stone.rotateY(fbm(i, 7.7) * Math.PI)
         pathParts.push(placeAt(stone, lx, h, lz, 0.05))
       }
     }
   }
+
+  // Prefer the landing-cove palms first so Pack→Island and the beach teleport
+  // put you where the swim actually arrives, not on the far side of the island.
+  shore.sort((a, b) => {
+    const da = Math.hypot(a.x - opts.x - COVE_X, a.z - opts.z - COVE_Z)
+    const db = Math.hypot(b.x - opts.x - COVE_X, b.z - opts.z - COVE_Z)
+    return da - db
+  })
 
   if (trunks.length) {
     group.add(
@@ -718,7 +1154,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       new THREE.Mesh(
         mergeGeometries(grassParts, false) as THREE.BufferGeometry,
         hazeMaterial(haze, {
-          color: 0x4a7031,
+          color: 0x5a8438,
           roughness: 0.95,
           side: THREE.DoubleSide,
           ...skylight,
@@ -755,6 +1191,61 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       new THREE.Mesh(
         mergeGeometries(pathParts, false) as THREE.BufferGeometry,
         hazeMaterial(haze, { color: 0x7d7462, roughness: 0.98, ...skylight }),
+      ),
+    )
+  }
+
+  if (fernParts.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(fernParts, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, {
+          color: 0x3a5e2a,
+          roughness: 0.92,
+          side: THREE.DoubleSide,
+          ...skylight,
+        }),
+      ),
+    )
+  }
+
+  if (fallenParts.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(fallenParts, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, { color: 0x4a3c2c, roughness: 1, ...skylight }),
+      ),
+    )
+  }
+
+  if (boulderParts.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(boulderParts, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, { color: 0x5e574c, roughness: 0.97, ...skylight }),
+      ),
+    )
+  }
+
+  if (wrackParts.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(wrackParts, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, { color: 0x3d4a32, roughness: 0.95, ...skylight }),
+      ),
+    )
+  }
+
+  if (reedParts.length) {
+    group.add(
+      new THREE.Mesh(
+        mergeGeometries(reedParts, false) as THREE.BufferGeometry,
+        hazeMaterial(haze, {
+          color: 0x5a6e3c,
+          roughness: 0.9,
+          side: THREE.DoubleSide,
+          ...skylight,
+        }),
       ),
     )
   }
@@ -899,14 +1390,163 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
 
   const centre = new THREE.Vector3(opts.x, 0, opts.z)
 
-  // —— birds —————————————————————————————————————————————————
-  // A few silhouettes riding the thermals over the peak. Cheap: one merged
-  // geometry per bird (two wings), orbited in update. They sell the island as
-  // alive from half a kilometre out.
+  // —— wildlife ————————————————————————————————————————————————
+  // The island has to feel occupied, not dressed. Crabs on the wash, lizards
+  // on warm rock, butterflies in the green, gulls on the sand, and a few
+  // silhouettes on the thermals. Cheap meshes, live in update, nothing marked.
+
+  type Crab = {
+    mesh: THREE.Group
+    homeX: number
+    homeZ: number
+    x: number
+    z: number
+    heading: number
+    spook: number
+    phase: number
+    goneUntil: number
+  }
+  type Lizard = {
+    mesh: THREE.Group
+    x: number
+    z: number
+    heading: number
+    phase: number
+    alert: number
+  }
+  type Flutter = {
+    mesh: THREE.Group
+    x: number
+    y: number
+    z: number
+    phase: number
+    speed: number
+  }
+  type Gull = {
+    mesh: THREE.Group
+    x: number
+    z: number
+    y: number
+    heading: number
+    phase: number
+    flying: number
+    flyHeight: number
+  }
+
+  const crabs: Crab[] = []
+  const lizards: Lizard[] = []
+  const flutters: Flutter[] = []
+  const gulls: Gull[] = []
   const birds: THREE.Mesh[] = []
+
+  // Shore crabs — wet sand, mostly on the landing cove
+  {
+    const want = low ? 12 : 24
+    for (let i = 0; i < 900 && crabs.length < want; i++) {
+      const coveBias = i % 4 !== 3
+      const angle = i * 2.399
+      const radius = 180 + ((i * 17) % 200)
+      const lx = coveBias ? COVE_X + (fbm(i, 1.1) - 0.5) * 130 : Math.cos(angle) * radius
+      const lz = coveBias ? COVE_Z + (fbm(i, 2.2) - 0.5) * 130 : Math.sin(angle) * radius
+      const h = surface(lx, lz)
+      if (h < 0.25 || h > 2.8) continue
+      const mesh = crabMesh(i + 50)
+      mesh.position.set(lx, h + 0.02, lz)
+      group.add(mesh)
+      crabs.push({
+        mesh,
+        homeX: lx,
+        homeZ: lz,
+        x: lx,
+        z: lz,
+        heading: fbm(i, 3.3) * Math.PI * 2,
+        spook: 0,
+        phase: fbm(i, 4.4) * Math.PI * 2,
+        goneUntil: 0,
+      })
+    }
+  }
+
+  // Lizards — sun on rock and scrub edges
+  {
+    const want = low ? 8 : 16
+    for (let i = 0; i < 700 && lizards.length < want; i++) {
+      const angle = i * 2.618
+      const radius = 90 + ((i * 23) % 240)
+      const approachBias = i % 2 === 0
+      const lx = approachBias ? COVE_X + (fbm(i, 5.5) - 0.5) * 160 : Math.cos(angle) * radius
+      const lz = approachBias ? COVE_Z + (fbm(i, 6.6) - 0.5) * 160 : Math.sin(angle) * radius
+      const h = surface(lx, lz)
+      if (h < 2.5 || h > 28) continue
+      const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
+      if (slope < 0.8) continue
+      const mesh = lizardMesh(i + 80)
+      mesh.position.set(lx, h + 0.02, lz)
+      mesh.rotation.y = fbm(i, 7.7) * Math.PI * 2
+      group.add(mesh)
+      lizards.push({
+        mesh,
+        x: lx,
+        z: lz,
+        heading: mesh.rotation.y,
+        phase: fbm(i, 8.8) * Math.PI * 2,
+        alert: 0,
+      })
+    }
+  }
+
+  // Butterflies — green band, especially near the cove shoulder
+  {
+    const want = low ? 10 : 20
+    for (let i = 0; i < want; i++) {
+      const lx = COVE_X + (fbm(i, 9.1) - 0.5) * 180 + (i % 3) * 20
+      const lz = COVE_Z + (fbm(i, 10.2) - 0.5) * 180
+      const h = Math.max(surface(lx, lz), 2)
+      const mesh = butterflyMesh(i + 120)
+      mesh.position.set(lx, h + 1.2 + fbm(i, 1.4) * 1.5, lz)
+      group.add(mesh)
+      flutters.push({
+        mesh,
+        x: lx,
+        y: mesh.position.y,
+        z: lz,
+        phase: fbm(i, 2.5) * Math.PI * 2,
+        speed: 0.35 + fbm(i, 3.6) * 0.4,
+      })
+    }
+  }
+
+  // Beach gulls — walk the wash, lift off when you get close
+  {
+    const want = low ? 5 : 9
+    for (let i = 0; i < 500 && gulls.length < want; i++) {
+      const coveBias = i % 3 !== 2
+      const angle = i * 2.713
+      const radius = 200 + ((i * 19) % 180)
+      const lx = coveBias ? COVE_X + (fbm(i, 4.1) - 0.5) * 140 : Math.cos(angle) * radius
+      const lz = coveBias ? COVE_Z + (fbm(i, 5.2) - 0.5) * 140 : Math.sin(angle) * radius
+      const h = surface(lx, lz)
+      if (h < 0.4 || h > 4.5) continue
+      const mesh = gullMesh(i + 140)
+      mesh.position.set(lx, h + 0.12, lz)
+      group.add(mesh)
+      gulls.push({
+        mesh,
+        x: lx,
+        z: lz,
+        y: h + 0.12,
+        heading: fbm(i, 6.3) * Math.PI * 2,
+        phase: fbm(i, 7.4) * Math.PI * 2,
+        flying: 0,
+        flyHeight: 4 + fbm(i, 8.5) * 5,
+      })
+    }
+  }
+
+  // Thermal birds — silhouettes over the peak, readable from half a kilometre
   {
     const birdMat = new THREE.MeshBasicMaterial({ color: 0x1c2226, side: THREE.DoubleSide })
-    const birdCount = low ? 3 : 6
+    const birdCount = low ? 5 : 9
     for (let i = 0; i < birdCount; i++) {
       const wing = new THREE.PlaneGeometry(0.9, 0.28)
       wing.translate(0.45, 0, 0)
@@ -918,8 +1558,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       const geo = mergeGeometries([left, right], false) as THREE.BufferGeometry
       const bird = new THREE.Mesh(geo, birdMat)
       bird.userData = {
-        radius: 60 + i * 22 + fbm(i, 3.3) * 30,
-        height: 90 + i * 14 + fbm(i, 4.4) * 30,
+        radius: 55 + i * 18 + fbm(i, 3.3) * 28,
+        height: 85 + i * 12 + fbm(i, 4.4) * 28,
         speed: 0.12 + fbm(i, 5.5) * 0.1,
         phase: fbm(i, 6.6) * Math.PI * 2,
       }
@@ -929,10 +1569,199 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     }
   }
 
+  const crabsApi = {
+    nearest(point: THREE.Vector3, maxDist: number) {
+      let best = -1
+      let bestD = maxDist
+      for (let i = 0; i < crabs.length; i++) {
+        const c = crabs[i]
+        if (c.goneUntil > 0 || !c.mesh.visible) continue
+        const wx = opts.x + c.x
+        const wz = opts.z + c.z
+        const d = Math.hypot(point.x - wx, point.z - wz)
+        if (d < bestD) {
+          bestD = d
+          best = i
+        }
+      }
+      return best < 0 ? null : { index: best, dist: bestD }
+    },
+    positionAt(index: number, out: THREE.Vector3) {
+      const c = crabs[index]
+      const h = surface(c.x, c.z)
+      return out.set(opts.x + c.x, h + 0.05, opts.z + c.z)
+    },
+    take(index: number) {
+      const c = crabs[index]
+      if (!c || c.goneUntil > 0 || !c.mesh.visible) return false
+      c.mesh.visible = false
+      // Respawn delay set from update's clock on first hidden frame
+      c.goneUntil = -1
+      return true
+    },
+  }
+
+  let wildlifeTime = 0
+
   function update(camera: THREE.Camera, underwater: boolean, time = 0) {
     // Nothing is visible 700 m through water. Close in it's the shelf you dive,
     // so keep it once the island is the thing you're swimming around.
     group.visible = !underwater || camera.position.distanceToSquared(centre) < 420 * 420
+
+    const dt = wildlifeTime > 0 ? Math.min(0.05, Math.max(0, time - wildlifeTime)) : 0.016
+    wildlifeTime = time
+    const camX = camera.position.x - opts.x
+    const camZ = camera.position.z - opts.z
+
+    // —— crabs ——————————————————————————————————————————————
+    for (const c of crabs) {
+      if (c.goneUntil < 0) {
+        c.goneUntil = time + 75 + c.phase * 8
+      }
+      if (c.goneUntil > 0) {
+        if (time < c.goneUntil) {
+          c.mesh.visible = false
+          continue
+        }
+        c.goneUntil = 0
+        c.x = c.homeX
+        c.z = c.homeZ
+        c.spook = 0
+        c.mesh.visible = true
+      }
+
+      const dist = Math.hypot(camX - c.x, camZ - c.z)
+      // Freeze a beat when first noticed, then sidestep — gives a grab window
+      if (dist < 3.8) c.spook = Math.min(1, c.spook + dt * 1.4)
+      else c.spook = Math.max(0, c.spook - dt * 0.35)
+
+      if (c.spook > 0.45) {
+        // Sidestep away from the camera — crabs don't run straight
+        const away = Math.atan2(c.z - camZ, c.x - camX) + 1.1
+        c.heading = away
+        const spd = 1.2 + c.spook * 1.8
+        c.x += Math.cos(c.heading) * spd * dt
+        c.z += Math.sin(c.heading) * spd * dt
+      } else if (c.spook > 0.08) {
+        // Locked — the tell before they bolt
+        c.heading += Math.sin(time * 20 + c.phase) * 0.05
+      } else {
+        // Idle wander near home
+        c.heading += Math.sin(time * 0.7 + c.phase) * 0.4 * dt
+        const spd = 0.25 + Math.sin(time * 1.3 + c.phase) * 0.15
+        c.x += Math.cos(c.heading) * spd * dt
+        c.z += Math.sin(c.heading) * spd * dt
+        // Leash
+        const hx = c.x - c.homeX
+        const hz = c.z - c.homeZ
+        if (hx * hx + hz * hz > 36) {
+          c.heading = Math.atan2(c.homeZ - c.z, c.homeX - c.x)
+        }
+      }
+
+      const h = surface(c.x, c.z)
+      // Keep them on the wet band — if they climb too high, turn home
+      if (h < 0.1 || h > 4.5) {
+        c.heading = Math.atan2(c.homeZ - c.z, c.homeX - c.x)
+        c.x += Math.cos(c.heading) * 2 * dt
+        c.z += Math.sin(c.heading) * 2 * dt
+      }
+      c.mesh.position.set(c.x, surface(c.x, c.z) + 0.02, c.z)
+      c.mesh.rotation.y = c.heading
+      // Tiny bob while moving
+      c.mesh.position.y += Math.abs(Math.sin(time * 14 + c.phase)) * 0.015 * (0.3 + c.spook)
+    }
+
+    // —— lizards ————————————————————————————————————————————
+    for (const l of lizards) {
+      const dist = Math.hypot(camX - l.x, camZ - l.z)
+      if (dist < 4.2) l.alert = Math.min(1, l.alert + dt * 3)
+      else l.alert = Math.max(0, l.alert - dt * 0.5)
+
+      if (l.alert > 0.5) {
+        l.heading += (Math.atan2(l.z - camZ, l.x - camX) - l.heading) * 0.2
+        l.x += Math.cos(l.heading) * 2.8 * dt
+        l.z += Math.sin(l.heading) * 2.8 * dt
+      } else {
+        // Push-ups in the sun
+        l.mesh.position.y = surface(l.x, l.z) + 0.02 + Math.sin(time * 3.5 + l.phase) * 0.012
+      }
+      const h = surface(l.x, l.z)
+      if (h < 1.5 || h > 35) {
+        l.heading += Math.PI * 0.5
+        l.x += Math.cos(l.heading) * dt
+        l.z += Math.sin(l.heading) * dt
+      }
+      l.mesh.position.x = l.x
+      l.mesh.position.z = l.z
+      if (l.alert > 0.5) l.mesh.position.y = surface(l.x, l.z) + 0.02
+      l.mesh.rotation.y = l.heading
+    }
+
+    // —— butterflies ——————————————————————————————————————
+    for (const f of flutters) {
+      f.x += Math.cos(time * f.speed + f.phase) * 0.55 * dt
+      f.z += Math.sin(time * f.speed * 0.85 + f.phase * 1.3) * 0.55 * dt
+      f.y = Math.max(surface(f.x, f.z) + 0.8, f.y + Math.sin(time * 2.2 + f.phase) * 0.35 * dt)
+      // Soft leash near the cove green
+      const dx = f.x - COVE_X
+      const dz = f.z - COVE_Z
+      if (dx * dx + dz * dz > 220 * 220) {
+        f.x -= dx * 0.01
+        f.z -= dz * 0.01
+      }
+      f.mesh.position.set(f.x, f.y, f.z)
+      f.mesh.rotation.y = time * f.speed + f.phase
+      const flap = Math.sin(time * 18 + f.phase) * 0.55
+      const left = f.mesh.userData.left as THREE.Mesh
+      const right = f.mesh.userData.right as THREE.Mesh
+      if (left && right) {
+        left.rotation.y = 0.35 + flap
+        right.rotation.y = -0.35 - flap
+      }
+    }
+
+    // —— gulls ——————————————————————————————————————————————
+    for (const g of gulls) {
+      const dist = Math.hypot(camX - g.x, camZ - g.z)
+      if (dist < 7 && g.flying < 0.2) g.flying = 1
+      if (g.flying > 0) {
+        g.flying = Math.min(1, g.flying + dt * 0.15)
+        g.y += (g.flyHeight - (g.y - surface(g.x, g.z))) * 1.5 * dt
+        g.heading += 0.55 * dt
+        g.x += Math.cos(g.heading) * 3.2 * dt
+        g.z += Math.sin(g.heading) * 3.2 * dt
+        // Settle again once far enough
+        if (dist > 18 && g.flying > 0.8) {
+          g.flying = Math.max(0, g.flying - dt * 0.4)
+          const ground = surface(g.x, g.z)
+          g.y += (ground + 0.12 - g.y) * 2 * dt
+          if (Math.abs(g.y - (ground + 0.12)) < 0.15 && dist > 14) g.flying = 0
+        }
+        const left = g.mesh.userData.left as THREE.Mesh
+        const right = g.mesh.userData.right as THREE.Mesh
+        const flap = Math.sin(time * 12 + g.phase) * 0.45
+        if (left && right) {
+          left.rotation.z = 0.15 + flap
+          right.rotation.z = -0.15 - flap
+        }
+      } else {
+        // Peck
+        g.mesh.rotation.x = Math.sin(time * 2.4 + g.phase) > 0.7 ? 0.35 : 0
+        g.heading += Math.sin(time * 0.4 + g.phase) * 0.3 * dt
+        g.x += Math.cos(g.heading) * 0.2 * dt
+        g.z += Math.sin(g.heading) * 0.2 * dt
+        g.y = surface(g.x, g.z) + 0.12
+        const left = g.mesh.userData.left as THREE.Mesh
+        const right = g.mesh.userData.right as THREE.Mesh
+        if (left && right) {
+          left.rotation.z = 0.08
+          right.rotation.z = -0.08
+        }
+      }
+      g.mesh.position.set(g.x, g.y, g.z)
+      g.mesh.rotation.y = g.heading
+    }
 
     for (const bird of birds) {
       const { radius, height, speed, phase } = bird.userData
@@ -949,5 +1778,5 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     haze.copy(color).convertLinearToSRGB()
   }
 
-  return { group, centre, heightAt, resolve, shore, pools, cairn, update, setHaze }
+  return { group, centre, heightAt, resolve, shore, pools, cairn, crabs: crabsApi, update, setHaze }
 }
