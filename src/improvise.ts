@@ -105,16 +105,63 @@ function mats() {
       color: 0x3a2a22,
       roughness: 1,
       emissive: 0xc45a1a,
-      emissiveIntensity: 1.4,
+      emissiveIntensity: 1.8,
     }),
-    flame: new THREE.MeshStandardMaterial({
-      color: 0xffb14a,
+    coal: new THREE.MeshStandardMaterial({
+      color: 0x1a1210,
       roughness: 1,
-      emissive: 0xff6a1a,
-      emissiveIntensity: 2.2,
+      emissive: 0x8a2808,
+      emissiveIntensity: 0.85,
+    }),
+    flameCore: new THREE.MeshBasicMaterial({
+      color: 0xffcc66,
       transparent: true,
-      opacity: 0.92,
+      opacity: 0.9,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
+    }),
+    flameMid: new THREE.MeshBasicMaterial({
+      color: 0xff6a18,
+      transparent: true,
+      opacity: 0.78,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    }),
+    flameOuter: new THREE.MeshBasicMaterial({
+      color: 0xd02008,
+      transparent: true,
+      opacity: 0.42,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    }),
+    glow: new THREE.MeshBasicMaterial({
+      color: 0xff6020,
+      transparent: true,
+      opacity: 0.32,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    }),
+    sparkBit: new THREE.MeshBasicMaterial({
+      color: 0xffd090,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+    smokePuff: new THREE.MeshBasicMaterial({
+      color: 0x4a4540,
+      transparent: true,
+      opacity: 0.18,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+    brand: new THREE.MeshStandardMaterial({
+      color: 0x5a4430,
+      roughness: 0.95,
     }),
     water: new THREE.MeshStandardMaterial({
       color: 0x6a9aaa,
@@ -154,23 +201,206 @@ function leanToMesh(m: ReturnType<typeof mats>) {
   return g
 }
 
+/** Rising spark bits / smoke puffs — positions rewritten each frame in animateFire. */
+function fireBits(
+  count: number,
+  material: THREE.Material,
+  name: string,
+  radius: number,
+) {
+  const g = new THREE.Group()
+  g.name = name
+  for (let i = 0; i < count; i++) {
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 5, 4), material.clone())
+    mesh.userData.seed = Math.random()
+    g.add(mesh)
+  }
+  return g
+}
+
+function attachFireLight(g: THREE.Group, torch: boolean) {
+  // Candela units (Three r155+). A campfire is bright — hundreds of cd — so
+  // the night sand actually takes the orange.
+  const key = new THREE.PointLight(0xff8a3a, torch ? 55 : 110, torch ? 9 : 16, 2)
+  key.name = 'fireLight'
+  key.position.set(0, torch ? 0.55 : 0.5, 0)
+  g.add(key)
+  const fill = new THREE.PointLight(0xff6a28, torch ? 18 : 36, torch ? 14 : 26, 2)
+  fill.name = 'fireFill'
+  fill.position.set(0, torch ? 0.3 : 0.2, 0)
+  g.add(fill)
+}
+
+function flameStack(m: ReturnType<typeof mats>, scale = 1) {
+  const g = new THREE.Group()
+  g.name = 'flames'
+  const outer = new THREE.Mesh(new THREE.ConeGeometry(0.24 * scale, 0.78 * scale, 7), m.flameOuter.clone())
+  outer.position.y = 0.4 * scale
+  outer.name = 'flameOuter'
+  outer.renderOrder = 2
+  g.add(outer)
+  const mid = new THREE.Mesh(new THREE.ConeGeometry(0.15 * scale, 0.62 * scale, 6), m.flameMid.clone())
+  mid.position.y = 0.38 * scale
+  mid.name = 'flameMid'
+  mid.renderOrder = 3
+  g.add(mid)
+  const core = new THREE.Mesh(new THREE.ConeGeometry(0.08 * scale, 0.46 * scale, 5), m.flameCore.clone())
+  core.position.y = 0.34 * scale
+  core.name = 'flameCore'
+  core.renderOrder = 4
+  g.add(core)
+  return g
+}
+
 function fireMesh(m: ReturnType<typeof mats>) {
   const g = new THREE.Group()
-  for (let i = 0; i < 5; i++) {
-    const stick = plankObject(0.7, 0.08, m.wood)
-    stick.position.set(Math.cos(i * 1.3) * 0.18, 0.06, Math.sin(i * 1.3) * 0.18)
-    stick.rotation.set(0.4, i, 0.2)
+  g.name = 'campfire'
+
+  // Criss-crossed kindling — denser than the old five sticks
+  for (let i = 0; i < 7; i++) {
+    const stick = plankObject(0.72, 0.07, m.wood)
+    const a = (i / 7) * Math.PI * 2
+    stick.position.set(Math.cos(a) * 0.2, 0.05 + (i % 2) * 0.04, Math.sin(a) * 0.2)
+    stick.rotation.set(0.55, a + 0.4, 0.15 + (i % 3) * 0.08)
     g.add(stick)
   }
-  const coal = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), m.ember)
-  coal.scale.set(1.2, 0.45, 1.2)
-  coal.position.y = 0.08
+  // Charred coals under the flame
+  const bed = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 7), m.coal)
+  bed.scale.set(1.15, 0.38, 1.15)
+  bed.position.y = 0.06
+  g.add(bed)
+  const coal = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), m.ember.clone())
+  coal.scale.set(1.1, 0.42, 1.1)
+  coal.position.y = 0.1
+  coal.name = 'ember'
   g.add(coal)
-  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.55, 6), m.flame)
-  flame.position.y = 0.42
-  flame.name = 'flame'
-  g.add(flame)
+
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 10), m.glow.clone())
+  glow.position.y = 0.3
+  glow.name = 'glow'
+  glow.renderOrder = 1
+  g.add(glow)
+
+  g.add(flameStack(m, 1))
+  g.add(fireBits(14, m.sparkBit, 'sparks', 0.018))
+  g.add(fireBits(6, m.smokePuff, 'smoke', 0.07))
+  attachFireLight(g, false)
   return g
+}
+
+/** Brand you carry — a stick with the same living fire on the tip. */
+function torchMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  g.name = 'torch'
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.036, 0.85, 8), m.brand)
+  shaft.position.y = 0.2
+  g.add(shaft)
+  const wrap = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.12, 8), m.wood)
+  wrap.position.y = 0.58
+  g.add(wrap)
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), m.ember.clone())
+  tip.scale.set(1, 0.7, 1)
+  tip.position.y = 0.66
+  tip.name = 'ember'
+  g.add(tip)
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), m.glow.clone())
+  glow.position.y = 0.72
+  glow.name = 'glow'
+  glow.renderOrder = 1
+  g.add(glow)
+  const flames = flameStack(m, 0.55)
+  flames.position.y = 0.42
+  g.add(flames)
+  g.add(fireBits(10, m.sparkBit, 'sparks', 0.014))
+  g.add(fireBits(4, m.smokePuff, 'smoke', 0.05))
+  attachFireLight(g, true)
+  return g
+}
+
+function animateFire(root: THREE.Object3D, t: number, phase: number, daylight: number) {
+  const flicker =
+    0.78 +
+    Math.sin(t * 11.2 + phase) * 0.12 +
+    Math.sin(t * 17.7 + phase * 1.7) * 0.08 +
+    Math.sin(t * 29.3 + phase * 0.4) * 0.05
+
+  const flames = root.getObjectByName('flames')
+  if (flames) {
+    for (const child of flames.children) {
+      const n = child.name
+      const lean = Math.sin(t * 4.2 + phase + (n === 'flameOuter' ? 0.6 : n === 'flameMid' ? 0.2 : 0)) * 0.08
+      child.rotation.z = lean
+      child.rotation.x = Math.sin(t * 5.1 + phase * 1.3) * 0.05
+      const yPulse =
+        n === 'flameCore' ? 0.9 + flicker * 0.2 : n === 'flameMid' ? 0.85 + flicker * 0.22 : 0.8 + flicker * 0.28
+      child.scale.set(0.92 + flicker * 0.12, yPulse, 0.92 + flicker * 0.12)
+      child.rotation.y = t * (n === 'flameOuter' ? 0.9 : n === 'flameMid' ? 1.4 : 2.1)
+      if (child instanceof THREE.Mesh) {
+        const mat = child.material as THREE.MeshBasicMaterial
+        const base = n === 'flameCore' ? 0.95 : n === 'flameMid' ? 0.82 : 0.5
+        mat.opacity = base * (0.7 + flicker * 0.4)
+      }
+    }
+  }
+
+  const glow = root.getObjectByName('glow')
+  if (glow) {
+    const s = 0.9 + flicker * 0.4
+    glow.scale.setScalar(s)
+    const mat = (glow as THREE.Mesh).material as THREE.MeshBasicMaterial
+    mat.opacity = 0.28 + flicker * 0.28
+  }
+
+  const ember = root.getObjectByName('ember')
+  if (ember && ember instanceof THREE.Mesh) {
+    const mat = ember.material as THREE.MeshStandardMaterial
+    mat.emissiveIntensity = 1.2 + flicker * 1.1
+  }
+
+  const sparks = root.getObjectByName('sparks')
+  if (sparks) {
+    for (const child of sparks.children) {
+      if (!(child instanceof THREE.Mesh)) continue
+      const s = child.userData.seed as number
+      const life = ((t * (0.55 + s * 0.7) + s * 7) % 1.35) / 1.35
+      const spin = s * Math.PI * 2 + t * (1.2 + s)
+      const r = 0.03 + life * 0.14 + Math.sin(spin) * 0.02
+      child.position.set(Math.cos(spin) * r, 0.28 + life * 0.9, Math.sin(spin) * r)
+      const fade = life < 0.15 ? life / 0.15 : life > 0.7 ? 1 - (life - 0.7) / 0.3 : 1
+      child.scale.setScalar(0.6 + fade * 0.8)
+      ;(child.material as THREE.MeshBasicMaterial).opacity = fade * (0.55 + flicker * 0.4)
+    }
+  }
+  const smoke = root.getObjectByName('smoke')
+  if (smoke) {
+    for (const child of smoke.children) {
+      if (!(child instanceof THREE.Mesh)) continue
+      const s = child.userData.seed as number
+      const life = ((t * (0.16 + s * 0.18) + s * 4) % 2.4) / 2.4
+      const spin = s * Math.PI * 2 + t * 0.3
+      const r = 0.06 + life * 0.32
+      child.position.set(Math.cos(spin) * r, 0.55 + life * 1.5, Math.sin(spin * 0.8) * r)
+      child.scale.setScalar(0.7 + life * 1.6)
+      const night = Math.max(0, 1 - daylight)
+      ;(child.material as THREE.MeshBasicMaterial).opacity =
+        (0.08 + night * 0.1) * (1 - life * 0.85)
+    }
+  }
+
+  // Lights: strong at night, still a readable warm pool by day
+  const night = Math.max(0, 1 - daylight)
+  const key = root.getObjectByName('fireLight') as THREE.PointLight | undefined
+  const fill = root.getObjectByName('fireFill') as THREE.PointLight | undefined
+  const torch = root.name === 'torch'
+  if (key) {
+    const base = torch ? 28 + night * 55 : 40 + night * 95
+    key.intensity = base * flicker
+    key.color.setRGB(1, 0.48 + flicker * 0.12, 0.18 + flicker * 0.05)
+  }
+  if (fill) {
+    const base = torch ? 10 + night * 18 : 14 + night * 32
+    fill.intensity = base * (0.85 + flicker * 0.2)
+  }
 }
 
 function catchMesh(m: ReturnType<typeof mats>) {
@@ -265,7 +495,7 @@ function offset(player: { x: number; z: number }, yaw: number, ahead: number, si
   }
 }
 
-export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
+export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: ImproviseDeps) {
   const m = mats()
   const builds: Build[] = []
 
@@ -279,6 +509,8 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
   const smokePos = new THREE.Vector3()
   const takeSmokePos = new THREE.Vector3()
   const restPos = new THREE.Vector3()
+  const takeFirePos = new THREE.Vector3()
+  const plantFirePos = new THREE.Vector3()
 
   let yaw = 0
   let onLand = false
@@ -289,6 +521,22 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
   let pz = 0
   let restReadyAt = 0
   let saidPole = false
+  /** Living brand in hand — null when every fire is planted. */
+  let carried: Build | null = null
+  const torch = torchMesh(m)
+  torch.visible = false
+  camera.add(torch)
+  // Lower-right, tip forward — reads as carried, not bolted to the lens
+  const torchBase = new THREE.Vector3(0.38, -0.42, -0.55)
+  const torchSway = new THREE.Vector3()
+
+  function disposeBuildObject(object: THREE.Object3D) {
+    object.traverse((obj) => {
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.Points) {
+        obj.geometry.dispose()
+      }
+    })
+  }
 
   function nearestOfKind(x: number, z: number, kind: BuildKind, maxDist: number): Build | null {
     let best: Build | null = null
@@ -357,6 +605,7 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
     radius: REACH,
     available: () =>
       deps.vitals.alive &&
+      !carried &&
       onLand &&
       groundY > 0.6 &&
       deps.salvage.has(FIRE_COST) &&
@@ -369,6 +618,65 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
       const y = deps.groundAt(x, z)
       addBuild('fire', fireMesh(m), x, z, y, 2.4, 1.35)
       deps.hud.whisper('Smoke. Heat. Something like a camp.')
+    },
+  })
+
+  // Lift the fire as a brand — night walking, or to move camp. Fish still
+  // hanging in the smoke keep it planted until you take them (or they finish).
+  deps.interactions.add({
+    position: takeFirePos,
+    verb: 'Take',
+    label: 'Fire',
+    radius: 2.6,
+    available: () => {
+      if (!deps.vitals.alive || carried) return false
+      const fire = nearestOfKind(px, pz, 'fire', 2.6)
+      if (!fire) return false
+      if (fire.smoking?.length) return false
+      return true
+    },
+    use: () => {
+      const fire = nearestOfKind(px, pz, 'fire', 2.6)
+      if (!fire || fire.smoking?.length) return
+      const idx = builds.indexOf(fire)
+      if (idx < 0) return
+      builds.splice(idx, 1)
+      scene.remove(fire.object)
+      // Keep the planted mesh for restore; the viewmodel is the torch brand
+      fire.object.visible = false
+      carried = fire
+      torch.visible = true
+      deps.hud.whisper('A brand. Heat travels with you.')
+    },
+  })
+
+  deps.interactions.add({
+    position: plantFirePos,
+    verb: 'Plant',
+    label: 'Fire',
+    radius: REACH,
+    available: () =>
+      !!carried &&
+      deps.vitals.alive &&
+      onLand &&
+      groundY > 0.6 &&
+      clearOfBuilds(plantFirePos.x, plantFirePos.z, 1.4),
+    use: () => {
+      if (!carried) return
+      const x = plantFirePos.x
+      const z = plantFirePos.z
+      const y = deps.groundAt(x, z)
+      carried.x = x
+      carried.z = z
+      carried.deckY = y
+      carried.object.position.set(x, y, z)
+      carried.object.rotation.y = yaw
+      carried.object.visible = true
+      scene.add(carried.object)
+      builds.push(carried)
+      carried = null
+      torch.visible = false
+      deps.hud.whisper('Embers in the sand. Camp again.')
     },
   })
 
@@ -450,6 +758,11 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
   // The eat hotspot sits on the body, so without this gate it beats every
   // world prompt (lash, rest, …) on mobile.
   function craftPending() {
+    if (carried) {
+      return (
+        onLand && groundY > 0.6 && clearOfBuilds(plantFirePos.x, plantFirePos.z, 1.4)
+      )
+    }
     if (!onLand) {
       return nearWaterline && deps.salvage.has(RAFT_COST) && clearOfBuilds(raftPos.x, raftPos.z, 3.5)
     }
@@ -577,7 +890,8 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
       }
 
       const night = deps.daylight() < 0.38
-      const nearFire = !!nearestOfKind(shelter.x, shelter.z, 'fire', 4.5)
+      const nearFire =
+        !!nearestOfKind(shelter.x, shelter.z, 'fire', 4.5) || !!carried
       let smokedDone = 0
       // Sleep finishes anything hanging in a nearby smoke rack
       if (nearFire) {
@@ -654,7 +968,6 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
     const fireAt = offset(player, facingYaw, 0.9, 0)
     const catchAt = offset(player, facingYaw, PLACE_AHEAD, 1.1)
     const raftAt = offset(player, facingYaw, 2.2, 0)
-    const smokeAt = offset(player, facingYaw, 1.1, -0.7)
 
     const aheadY = deps.groundAt(ahead.x, ahead.z)
     const fireY = deps.groundAt(fireAt.x, fireAt.z)
@@ -665,6 +978,9 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
 
     if (onLand && fireY > 0.3) setAnchor(firePos, fireAt.x, fireAt.z, fireY + 0.3)
     else setAnchor(firePos, player.x, player.z, player.y)
+
+    if (onLand && fireY > 0.3) setAnchor(plantFirePos, fireAt.x, fireAt.z, fireY + 0.3)
+    else setAnchor(plantFirePos, player.x, player.z, player.y)
 
     if (onLand && catchY > 0.3) setAnchor(catchPos, catchAt.x, catchAt.z, catchY + 0.5)
     else setAnchor(catchPos, player.x, player.z, player.y)
@@ -684,12 +1000,13 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
     eatPos.set(player.x, player.y - 0.2, player.z)
     const fire = nearestOfKind(player.x, player.z, 'fire', 2.8)
     if (fire) {
+      takeFirePos.set(fire.x, fire.deckY + 0.45, fire.z)
       cookPos.set(fire.x, fire.deckY + 0.5, fire.z)
-      smokePos.set(fire.x + (smokeAt.x - player.x) * 0.15, fire.deckY + 0.55, fire.z + (smokeAt.z - player.z) * 0.15)
       // Prefer a clear side offset so Cook and Smoke don't share one spot
       smokePos.set(fire.x + 0.55, fire.deckY + 0.55, fire.z + 0.35)
       takeSmokePos.set(fire.x - 0.4, fire.deckY + 0.55, fire.z - 0.35)
     } else {
+      takeFirePos.copy(eatPos)
       cookPos.copy(eatPos)
       smokePos.copy(eatPos)
       takeSmokePos.copy(eatPos)
@@ -698,6 +1015,30 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
     const lean = nearestOfKind(player.x, player.z, 'lean-to', 2.4)
     if (lean) restPos.set(lean.x, lean.deckY + 0.6, lean.z)
     else restPos.copy(eatPos)
+
+    // Dive with a brand and the sea takes it — diegetic, no inventory slot
+    if (carried && view.submersion > 0.72) {
+      disposeBuildObject(carried.object)
+      carried = null
+      torch.visible = false
+      deps.hud.whisper('The brand hisses out in the water.')
+    }
+
+    // Torch viewmodel — soft sway with the walk / swim effort
+    if (carried && torch.visible) {
+      const sway = Math.sin(t * 5.5) * 0.012 * (0.4 + view.speed * 0.15)
+      const bob = Math.sin(t * 7.2) * 0.01
+      torchSway.set(sway, bob, 0)
+      torch.position.copy(torchBase).add(torchSway)
+      torch.rotation.set(0.35 + bob * 2, -0.25, 0.15 + sway * 3)
+      animateFire(torch, t, 2.1, deps.daylight())
+    } else if (!carried) {
+      // Keep dormant brand lights from leaking into the night
+      const key = torch.getObjectByName('fireLight') as THREE.PointLight | undefined
+      const fill = torch.getObjectByName('fireFill') as THREE.PointLight | undefined
+      if (key) key.intensity = 0
+      if (fill) fill.intensity = 0
+    }
 
     for (const b of builds) {
       if (b.kind === 'raft') {
@@ -750,11 +1091,7 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
         }
       }
       if (b.kind === 'fire') {
-        const flame = b.object.getObjectByName('flame')
-        if (flame) {
-          flame.scale.y = 0.85 + Math.sin(t * 9 + b.x) * 0.18
-          flame.rotation.y = t * 1.4
-        }
+        animateFire(b.object, t, b.x * 0.7 + b.z * 0.3, deps.daylight())
       }
       if (b.kind === 'catch') {
         b.water = Math.min(1, (b.water ?? 0) + dt / CATCH_REFILL)
@@ -795,6 +1132,8 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
       const falloff = 1 - d / b.radius
       s = Math.max(s, THREE.MathUtils.lerp(base, b.shelter, falloff))
     }
+    // A brand in hand is a personal hearth — warmth travels with you
+    if (carried) s = Math.max(s, 1.2)
     return s
   }
 
@@ -802,11 +1141,14 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
     for (const b of builds) {
       for (const item of b.items) deps.interactions.remove(item)
       scene.remove(b.object)
-      b.object.traverse((obj) => {
-        if (obj instanceof THREE.Mesh) obj.geometry.dispose()
-      })
+      disposeBuildObject(b.object)
     }
     builds.length = 0
+    if (carried) {
+      disposeBuildObject(carried.object)
+      carried = null
+    }
+    torch.visible = false
     restReadyAt = 0
     saidPole = false
   }
@@ -816,9 +1158,14 @@ export function createImprovise(scene: THREE.Scene, deps: ImproviseDeps) {
     standAt,
     shelterAt,
     reset,
+    /** True while the player is holding a living brand. */
+    get carryingFire() {
+      return !!carried
+    },
     get counts() {
       const out: Record<BuildKind, number> = { 'lean-to': 0, fire: 0, raft: 0, catch: 0 }
       for (const b of builds) out[b.kind]++
+      if (carried) out.fire++
       return out
     },
     costs: {
