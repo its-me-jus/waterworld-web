@@ -262,7 +262,7 @@ void main() {
 }
 `
 
-const DAY_HORIZON = new THREE.Color('#8fb3c9')
+const DAY_HORIZON = new THREE.Color('#7fa8c6')
 const DUSK_HORIZON = new THREE.Color('#c48a6a')
 const NIGHT_HORIZON = new THREE.Color('#08141f')
 const STORM_HORIZON = new THREE.Color('#3a4650')

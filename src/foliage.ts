@@ -42,6 +42,12 @@ export type FoliageParams = THREE.MeshStandardMaterialParameters & {
   /** Colour of the light that comes through — usually warmer than the leaf. */
   throughColor?: THREE.ColorRepresentation
   /**
+   * Stop the backlight glowing where the leaf is already in shade. Worth an
+   * extra shadow lookup on a canopy, which is large and cheap to cover; not
+   * worth it on grass, which is small and overdraws itself many times.
+   */
+  shadowedBleed?: boolean
+  /**
    * Break the surface up with procedural relief and colour drift. For the
    * terrain shell, which is one enormous smooth mesh and reads as a painted
    * plane without it.
@@ -201,7 +207,7 @@ const leafFragmentBody = /* glsl */ `
     // black — which is exactly what a lawn of flat sheets must not do.
     float wrap = max(dot(leafN, leafL) * 0.5 + 0.5, 0.0);
     float bleed = back + wrap * 0.55;
-    #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+    #if defined( SHADOWED_BLEED ) && defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
       bleed *= 0.35 + 0.65 * getShadowMask();
     #endif
     reflectedLight.directDiffuse +=
@@ -210,8 +216,16 @@ const leafFragmentBody = /* glsl */ `
 `
 
 const noiseFragmentPars = /* glsl */ `
+/**
+ * Sine-free hash. The usual fract(sin(dot)) form runs a transcendental per
+ * corner, and between the ground detail and the cloud deck this is evaluated a
+ * few dozen times on every terrain pixel in the frame — enough that the sines
+ * alone were the most expensive thing in the shader.
+ */
 float gHash(vec2 p) {
-  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+  vec2 q = fract(p * vec2(233.34, 851.73));
+  q += dot(q, q + 23.45);
+  return fract(q.x * q.y);
 }
 
 float gNoise(vec2 p) {
@@ -250,8 +264,10 @@ uniform float uCloudShadow;
 
 const cloudShadowBody = /* glsl */ `
   if (uCloudShadow > 0.001) {
-    vec2 cp = vGroundPos.xz * 0.0026 + uCloudDrift;
-    float deck = gNoise(cp) * 0.66 + gNoise(cp * 3.3 + 11.0) * 0.34;
+    // One octave. This runs on every blade of grass in the frame and the
+    // overdraw there is enormous; the second octave was invisible at the
+    // scale a cloud shadow works at anyway.
+    float deck = gNoise(vGroundPos.xz * 0.0026 + uCloudDrift);
     float shade = smoothstep(0.44, 0.62, deck) * uCloudShadow;
     reflectedLight.directDiffuse *= 1.0 - shade;
     reflectedLight.directSpecular *= 1.0 - shade;
@@ -273,12 +289,13 @@ const groundNormalBody = /* glsl */ `
     // twenty metres across and stays on at any range — it's what gives a
     // distant hillside form instead of a silhouette. The fine one is clods
     // underfoot and has to fade out before it starts aliasing into fizz.
+    float coarse = gNoise(gp * 0.055);
     vec3 bump = vec3(
-      gNoise(gp * 0.055) - gNoise(gp * 0.055 + vec2(0.35, 0.0)),
+      coarse - gNoise(gp * 0.055 + vec2(0.35, 0.0)),
       0.0,
-      gNoise(gp * 0.055) - gNoise(gp * 0.055 + vec2(0.0, 0.35))
+      coarse - gNoise(gp * 0.055 + vec2(0.0, 0.35))
     ) * 0.55;
-    float gNear = 1.0 - smoothstep(14.0, 90.0, gDist);
+    float gNear = 1.0 - smoothstep(10.0, 55.0, gDist);
     if (gNear > 0.01) {
       float h0 = gRelief(gp);
       bump += vec3(h0 - gRelief(gp + vec2(0.55, 0.0)), 0.0, h0 - gRelief(gp + vec2(0.0, 0.55)))
@@ -335,8 +352,16 @@ export function createFoliage(haze: THREE.Color): FoliageRig {
   const depthMaterials = new WeakMap<THREE.Material, THREE.MeshDepthMaterial>()
 
   function material(params: FoliageParams) {
-    const { wind = 0, translucency = 0, throughColor, ground = false, ...rest } = params
+    const {
+      wind = 0,
+      translucency = 0,
+      throughColor,
+      ground = false,
+      shadowedBleed = false,
+      ...rest
+    } = params
     const mat = new THREE.MeshStandardMaterial({ ...rest, fog: false })
+    if (shadowedBleed) mat.defines = { ...mat.defines, SHADOWED_BLEED: '' }
     const uWindScale = { value: wind }
     const uTranslucency = { value: translucency }
     const uThrough = { value: new THREE.Color(throughColor ?? '#cfe27a') }
@@ -414,16 +439,18 @@ export function createFoliage(haze: THREE.Color): FoliageRig {
             '#include <normal_fragment_begin>',
             `#include <normal_fragment_begin>\n${leafNormalBody}`,
           )
-          // getShadowMask lives in a chunk the standard material doesn't pull
-          // in; it has to be declared after the shadow uniforms it reads
-          .replace(
-            '#include <shadowmap_pars_fragment>',
-            '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>',
-          )
           .replace(
             '#include <lights_fragment_end>',
             `#include <lights_fragment_end>\n${leafFragmentBody}`,
           )
+        if (shadowedBleed) {
+          // getShadowMask lives in a chunk the standard material doesn't pull
+          // in; it has to be declared after the shadow uniforms it reads
+          shader.fragmentShader = shader.fragmentShader.replace(
+            '#include <shadowmap_pars_fragment>',
+            '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>',
+          )
+        }
       }
 
       shader.fragmentShader = shader.fragmentShader.replace(

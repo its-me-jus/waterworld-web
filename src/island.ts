@@ -23,6 +23,8 @@ export type IslandOptions = {
 
 export type Island = {
   group: THREE.Group
+  /** The terrain shell itself, for anything that needs to treat it specially. */
+  terrain: THREE.Mesh
   centre: THREE.Vector3
   /** World ground height. Deep negative once you're off the shelf. */
   heightAt: (x: number, z: number) => number
@@ -640,13 +642,33 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const step = (SPAN * 2) / segments
 
   /**
+   * The terrain grid, evaluated once.
+   *
+   * Planting is rejection sampling — tens of thousands of candidates, each
+   * asking for a height and two more for the local slope — and `ground` is a
+   * dozen noise octaves. Going back to the analytic function every time cost
+   * most of a second of load. The grid is thirty-odd thousand floats.
+   */
+  const gridN = segments + 1
+  const heights = new Float32Array(gridN * gridN)
+  for (let j = 0; j < gridN; j++) {
+    for (let i = 0; i < gridN; i++) {
+      heights[j * gridN + i] = ground(-SPAN + i * step, -SPAN + j * step)
+    }
+  }
+  const gridHeight = (i: number, j: number) =>
+    i < 0 || j < 0 || i >= gridN || j >= gridN
+      ? ground(-SPAN + i * step, -SPAN + j * step)
+      : heights[j * gridN + i]
+
+  /**
    * The height the island is actually *drawn* at.
    *
    * The mesh only samples `ground` every few metres, so between grid lines the
    * rendered surface and the analytic function disagree by up to a metre on a
    * steep slope. Anything that trusts the function instead of the mesh — feet,
-   * planted props, a pool of rainwater — ends up floating or buried. So both
-   * the collider and the planting interpolate the same corners the mesh used.
+   * planted props, a pool of rainwater — ends up floating or buried. So the
+   * mesh, the collider and the planting all read the same four corners.
    */
   function surface(lx: number, lz: number) {
     const gx = (lx + SPAN) / step
@@ -655,12 +677,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const j = Math.floor(gz)
     const fx = gx - i
     const fz = gz - j
-    const x0 = -SPAN + i * step
-    const z0 = -SPAN + j * step
-    const h00 = ground(x0, z0)
-    const h10 = ground(x0 + step, z0)
-    const h01 = ground(x0, z0 + step)
-    const h11 = ground(x0 + step, z0 + step)
+    const h00 = gridHeight(i, j)
+    const h10 = gridHeight(i + 1, j)
+    const h01 = gridHeight(i, j + 1)
+    const h11 = gridHeight(i + 1, j + 1)
     return (h00 * (1 - fx) + h10 * fx) * (1 - fz) + (h01 * (1 - fx) + h11 * fx) * fz
   }
 
@@ -671,7 +691,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
 
   const position = geometry.attributes.position
   for (let i = 0; i < position.count; i++) {
-    position.setY(i, ground(position.getX(i), position.getZ(i)))
+    position.setY(i, surface(position.getX(i), position.getZ(i)))
   }
   geometry.computeVertexNormals()
 
@@ -787,13 +807,13 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const palmWanted = low ? 32 : 72
   const rockWanted = low ? 90 : 200
   const woodWanted = low ? 28 : 60
-  const scrubWanted = low ? 260 : 620
+  const scrubWanted = low ? 220 : 620
   const broadWanted = low ? 150 : 380
-  const grassWanted = low ? 6000 : 15000
+  const grassWanted = low ? 4500 : 15000
   const deadWanted = low ? 18 : 40
   const vineWanted = low ? 120 : 280
   const pathWanted = low ? 32 : 60
-  const fernWanted = low ? 200 : 520
+  const fernWanted = low ? 170 : 520
   const fallenWanted = low ? 16 : 36
   const boulderWanted = low ? 32 : 70
   const wrackWanted = low ? 45 : 100
@@ -1237,7 +1257,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     wind?: number
     translucency?: number
     throughColor?: string
+    shadowedBleed?: boolean
     doubleSided?: boolean
+    /** Metres past which this layer stops being drawn at all. */
+    range?: number
   }[] = [
     { parts: trunks, color: 0x8a6f4c, roughness: 0.95, wind: PALM_WIND },
     {
@@ -1247,6 +1270,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       wind: PALM_WIND,
       translucency: 0.95,
       throughColor: '#dcec7c',
+      shadowedBleed: true,
       doubleSided: true,
     },
     { parts: nuts, color: 0x7c6038, roughness: 1, wind: PALM_WIND },
@@ -1258,9 +1282,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       wind: BROAD_WIND,
       translucency: 0.85,
       throughColor: '#bfdd6a',
+      shadowedBleed: true,
     },
     {
       parts: grassParts,
+      range: 330,
       color: 0x6f9c40,
       roughness: 0.93,
       wind: 0.15,
@@ -1270,6 +1296,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     },
     {
       parts: fernParts,
+      range: 380,
       color: 0x4c7a2f,
       roughness: 0.9,
       wind: 0.13,
@@ -1279,6 +1306,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     },
     {
       parts: scrubParts,
+      range: 450,
       color: 0x547a38,
       roughness: 0.92,
       wind: 0.11,
@@ -1288,6 +1316,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     },
     {
       parts: reedParts,
+      range: 300,
       color: 0x7a8d4a,
       roughness: 0.9,
       wind: 0.17,
@@ -1297,6 +1326,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     },
     {
       parts: vineParts,
+      range: 380,
       color: 0x4d7530,
       roughness: 0.9,
       wind: 0.22,
@@ -1304,14 +1334,26 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       throughColor: '#c6de70',
       doubleSided: true,
     },
-    { parts: wrackParts, color: 0x4f5c3a, roughness: 0.95 },
+    { parts: wrackParts,
+      range: 300, color: 0x4f5c3a, roughness: 0.95 },
     { parts: rocks, color: 0x8b8371, roughness: 0.97 },
     { parts: boulderParts, color: 0x79715f, roughness: 0.97 },
     { parts: wood, color: 0xa08a6a, roughness: 1 },
     { parts: fallenParts, color: 0x63513a, roughness: 1 },
     { parts: deadParts, color: 0xa89b86, roughness: 1, wind: 0.05 },
-    { parts: pathParts, color: 0x8f8674, roughness: 0.98 },
+    { parts: pathParts,
+      range: 320, color: 0x8f8674, roughness: 0.98 },
   ]
+
+  /**
+   * Undergrowth stops being worth drawing long before it stops being drawn.
+   * A grass blade is a couple of pixels at three hundred metres and none at
+   * four, but the whole batch still goes through the vertex stage every frame
+   * — including from out at the wreck, where the island is a smudge on the
+   * horizon and the ground cover is most of its triangle count. Each layer
+   * names the range past which it is only costing frames.
+   */
+  const fadeOut: { mesh: THREE.Mesh; range: number }[] = []
 
   for (const layer of layers) {
     if (layer.parts.length === 0) continue
@@ -1323,9 +1365,15 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       wind: layer.wind,
       translucency: layer.translucency,
       throughColor: layer.throughColor,
+      shadowedBleed: layer.shadowedBleed,
       ...skylight,
     })
-    group.add(foliage.mesh(mergeGeometries(layer.parts, false) as THREE.BufferGeometry, material))
+    const mesh = foliage.mesh(
+      mergeGeometries(layer.parts, false) as THREE.BufferGeometry,
+      material,
+    )
+    group.add(mesh)
+    if (layer.range) fadeOut.push({ mesh, range: layer.range })
   }
 
   // —— rain catchment ————————————————————————————————————————
@@ -1684,7 +1732,13 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   function update(camera: THREE.Camera, underwater: boolean, time = 0) {
     // Nothing is visible 700 m through water. Close in it's the shelf you dive,
     // so keep it once the island is the thing you're swimming around.
-    group.visible = !underwater || camera.position.distanceToSquared(centre) < 420 * 420
+    const range = Math.hypot(camera.position.x - centre.x, camera.position.z - centre.z)
+    group.visible = !underwater || range < 420
+
+    // Drop the undergrowth once it's too far away to resolve. Measured from
+    // the island's centre rather than the nearest ground, so the switch happens
+    // out at sea where there's nothing to see it happen to.
+    for (const layer of fadeOut) layer.mesh.visible = range < layer.range + 320
 
     const dt = wildlifeTime > 0 ? Math.min(0.05, Math.max(0, time - wildlifeTime)) : 0.016
     wildlifeTime = time
@@ -1869,6 +1923,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
 
   return {
     group,
+    terrain,
     centre,
     heightAt,
     resolve,

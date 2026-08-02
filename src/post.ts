@@ -154,7 +154,11 @@ void main() {
   vec3 col = min(texture2D(tDiffuse, vUv).rgb, vec3(64.0)) * uExposure;
 
   #ifdef USE_BLOOM
-    vec3 glow = texture2D(tBloomNear, vUv).rgb * 0.62 + texture2D(tBloomFar, vUv).rgb * 0.38;
+    #ifdef USE_WIDE_BLOOM
+      vec3 glow = texture2D(tBloomNear, vUv).rgb * 0.62 + texture2D(tBloomFar, vUv).rgb * 0.38;
+    #else
+      vec3 glow = texture2D(tBloomNear, vUv).rgb;
+    #endif
     col += glow * uBloom;
   #endif
 
@@ -191,7 +195,10 @@ export function createPostChain(
   renderer: THREE.WebGLRenderer,
   opts: { lowPower?: boolean } = {},
 ): PostChain {
-  const useBloom = !opts.lowPower
+  const useBloom = true
+  // Phones keep the tight halo and drop the wide one: the second octave is
+  // four more passes for a spread you mostly notice on a big screen.
+  const useWideBloom = !opts.lowPower
 
   const grade: Grade = {
     exposure: 1,
@@ -236,8 +243,11 @@ export function createPostChain(
   const brightMat = new THREE.ShaderMaterial({
     uniforms: {
       tDiffuse: { value: null },
-      uThreshold: { value: 1.05 },
-      uKnee: { value: 0.7 },
+      // High enough that only a genuine specular hit crosses it. Lower and the
+      // whole sea surface qualifies, and the glitter — which is the best thing
+      // about the water — dissolves into milk.
+      uThreshold: { value: 1.55 },
+      uKnee: { value: 0.85 },
       uExposure: { value: 1 },
     },
     vertexShader: fullscreenVertex,
@@ -258,7 +268,7 @@ export function createPostChain(
   })
 
   const compositeMat = new THREE.ShaderMaterial({
-    defines: useBloom ? { USE_BLOOM: '' } : {},
+    defines: useWideBloom ? { USE_BLOOM: '', USE_WIDE_BLOOM: '' } : { USE_BLOOM: '' },
     uniforms: {
       tDiffuse: { value: sceneTarget.texture },
       tBloomNear: { value: nearA.texture },
@@ -323,13 +333,19 @@ export function createPostChain(
       renderer.setRenderTarget(nearB)
       quad.render(renderer)
 
+      // The kernel's taps are placed for a one-texel step. Stretching it out to
+      // reach further turns the Gaussian into a box, and every sun glint comes
+      // back as a white square — spread has to come from the smaller buffer,
+      // not from a wider stride.
       blurInto(nearB.texture, nearA, nearB, 1.0)
-      blurInto(nearB.texture, nearA, nearB, 2.0)
-      // nearB now holds the tight halo; farA takes the wide one off it
-      blurInto(nearB.texture, farB, farA, 2.0)
-      blurInto(farA.texture, farB, farA, 3.0)
+      blurInto(nearB.texture, nearA, nearB, 1.0)
       compositeMat.uniforms.tBloomNear.value = nearB.texture
-      compositeMat.uniforms.tBloomFar.value = farA.texture
+      if (useWideBloom) {
+        // nearB holds the tight halo; farA takes the wide one off it
+        blurInto(nearB.texture, farB, farA, 1.0)
+        blurInto(farA.texture, farB, farA, 1.0)
+        compositeMat.uniforms.tBloomFar.value = farA.texture
+      }
     }
 
     compositeMat.uniforms.uBloom.value = grade.bloom

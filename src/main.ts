@@ -444,6 +444,9 @@ if (import.meta.env.DEV) {
     ww: {
       player,
       camera,
+      renderer,
+      post,
+      scene,
       vitals,
       interactions,
       salvage,
@@ -533,6 +536,9 @@ app.addEventListener(
  */
 function markShadowCasters(root: THREE.Object3D) {
   root.traverse((obj) => {
+    // `traverse` walks children regardless of what the callback returns, so an
+    // opted-out root has to disqualify its subtree explicitly
+    if (obj.parent?.userData.noShadow) obj.userData.noShadow = true
     if (obj.userData.noShadow) return
     const mesh = obj as THREE.Mesh
     if (!mesh.isMesh || obj.userData.shadowChecked) return
@@ -545,10 +551,12 @@ function markShadowCasters(root: THREE.Object3D) {
   })
 }
 swimmer.rig.userData.noShadow = true
-// Grass and the terrain shell are the two heaviest things on the island. They
-// still take shadow; on a phone they stop giving it, which halves the depth
-// pass for detail you can't resolve at 1024 anyway.
+// Grass and the terrain shell are the two heaviest things on the island, and
+// between them they're most of the depth pass. On a phone they still take
+// shadow but stop giving it: a hill's own shadow needs a wider frustum than
+// the phone gets anyway, and grass shadows don't survive a 1024 map.
 if (lowPower) {
+  island.terrain.userData.noCast = true
   for (const obj of island.group.children) {
     const mesh = obj as THREE.Mesh
     if (mesh.isMesh && (mesh.geometry.attributes.position?.count ?? 0) > 40000) {
