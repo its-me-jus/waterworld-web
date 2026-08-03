@@ -34,6 +34,7 @@ const vertexShader = /* glsl */ `
 uniform float uTime;
 uniform float uChopScale;
 uniform float uAmp;
+uniform float uTide;
 // The island's lee: xy = centre, z = fully-calm radius, w = fully-open radius
 uniform vec4 uShelter;
 uniform vec4 uWaves[${WAVE_COUNT}];
@@ -98,6 +99,8 @@ void main() {
   disp.y += chop * uChopScale * (1.0 - 0.65 * lee);
 
   world += disp;
+  // Mean sea level — matches oceanState.tide / sampleOcean
+  world.y += uTide;
 
   vCrest = smoothstep(0.4, 1.35, disp.y);
   vWorldPos = world;
@@ -308,6 +311,7 @@ export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: O
       uTime: { value: 0 },
       uChopScale: { value: 1 },
       uAmp: { value: 1 },
+      uTide: { value: 0 },
       uShelter: { value: new THREE.Vector4(0, 0, 0, -1) },
       uShelf: { value: new THREE.Vector4(0, 0, 0, -1) },
       uWaves: { value: uWaves },

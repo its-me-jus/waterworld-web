@@ -12,7 +12,7 @@ import type { CampGroup, CampRecipe } from './improvise'
  *
  * Hub destinations:
  * - Body: health and metrics (full read, not the urgent HUD alarms)
- * - Stash: salvage, fish, knife / spear
+ * - Stash: salvage, fish, knife / spear / rod / net
  * - Camp: construction recipes ready right now (Raise / Dig / Lash…)
  * - Field kit: island / wreck teleport, fill-stash, Start again
  * - Dev extras (DEV only): vitals, fish, arms — tucked in Field kit
@@ -34,6 +34,9 @@ export type OpMenuDeps = {
   eatSmoked?: () => boolean
   /** Dev only — put fish in hand. */
   grantFish?: (n?: number) => void
+  /** Crafted fishing gear — shows in the Pack Gear list. */
+  hasRod?: () => boolean
+  hasNet?: () => boolean
   /** Ready construction recipes from improvise (same use as F). */
   campRecipes: () => CampRecipe[]
   /** Which day of the run this is — the score in the header. */
@@ -116,9 +119,11 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
   /** Skip innerHTML writes that would detach buttons mid-tap. */
   let lastPaint = ''
 
-  const GEAR: { key: 'knife' | 'spear'; label: string; has: () => boolean }[] = [
+  const GEAR: { key: string; label: string; has: () => boolean }[] = [
     { key: 'knife', label: 'Galley knife', has: () => deps.loot.hasKnife },
     { key: 'spear', label: "Mate's spear", has: () => deps.loot.hasSpear },
+    { key: 'rod', label: 'Fishing rod', has: () => deps.hasRod?.() ?? false },
+    { key: 'net', label: 'Cast net', has: () => deps.hasNet?.() ?? false },
   ]
 
   function stashCount(stash: Stash) {

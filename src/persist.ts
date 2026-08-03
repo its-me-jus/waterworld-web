@@ -83,8 +83,10 @@ export type SavedRun = {
   stash: Stash
   rawFish: number
   smokedFish: number
-  knife: boolean
-  spear: boolean
+  knife?: boolean
+  spear?: boolean
+  rod?: boolean
+  net?: boolean
   suit: boolean
   climateElapsed: number
   /** World seconds this run has lasted — the days-alive score derives from it. */
