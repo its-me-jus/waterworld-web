@@ -879,15 +879,20 @@ function frame() {
   swimmer.update(dt, t, view, player.pitch + player.viewPitch, player.roll)
 
   skyRig.update(t, weather)
-  skyRig.sky.position.set(camera.position.x, 0, camera.position.z)
-  skyRig.clouds.position.set(camera.position.x, 0, camera.position.z)
-  skyRig.stars.position.set(camera.position.x, 0, camera.position.z)
-  skyRig.milky.position.set(camera.position.x, 0, camera.position.z)
+  // Keep every sky layer centred on the eye — an XZ-only follow left the
+  // Preetham box a couple of metres low and one face could read as a slab.
+  const cx = camera.position.x
+  const cy = camera.position.y
+  const cz = camera.position.z
+  skyRig.sky.position.set(cx, cy, cz)
+  skyRig.clouds.position.set(cx, cy, cz)
+  skyRig.stars.position.set(cx, cy, cz)
+  skyRig.milky.position.set(cx, cy, cz)
   // Moon rides with the camera origin; its local offset is set in createSky
   skyRig.moon.position.set(
-    camera.position.x + skyRig.moon.userData.ox,
-    skyRig.moon.userData.oy,
-    camera.position.z + skyRig.moon.userData.oz,
+    cx + skyRig.moon.userData.ox,
+    cy + skyRig.moon.userData.oy,
+    cz + skyRig.moon.userData.oz,
   )
   // A heavy sea carries more cloud; a glass-off opens the sky up — on top of
   // whatever the squall clock is already doing
