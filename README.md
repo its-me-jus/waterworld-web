@@ -149,7 +149,7 @@ barrel as a cistern — a camp you made, not one the world planted for you.
   dig, chop, cook, take/plant fire — same verbs as desktop **F**)
 - **Desktop:** WASD · click for mouse-look · Space/E up · Shift/Q dive · **F**
   to take, eat, drink, open, pry, cut, jab, lash, dig, kindle or cook · **Tab**
-  opens the Pack (stash, carpentry recipes, field kit: Island / Wreck / Start again)
+  opens the Pack hub (Body, Stash, Camp builds, Field kit: Island / Wreck / Start again)
 - **Raft:** walk the gunwale and look down (or hold dive on a phone) to pole ·
   with canvas rigged, stand at the stern and do the same to **helm** her — the
   tiller steers where you look · **Drop/Weigh anchor** holds her against the
