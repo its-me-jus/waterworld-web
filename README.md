@@ -59,7 +59,13 @@ is a first meal; after that, hang still underwater and the schools drift back
 in — grab fish by hand, or answer them properly with the mate's spear (reach
 and near-sure odds instead of a coin toss). Set a bottle **fish trap** in the
 shallows and the tide stocks it while you work; Check it when you pass again.
-Keep fish raw to eat, or cook them once you've kindled a fire. The debris that drifts
+Keep fish raw to eat, or cook them once you've kindled a fire. Fashion a
+**fishing rod** (plank + rope) to Cast from shore into schools you can see, or
+**Lash a cast net** (rope + fronds) and Scoop the wash while wading. The sea
+itself keeps a **tide** — two per day — so limpets and mussels on the foreshore
+bare at low water and drown at high; urchins and reef kelp want a dive on the
+drop-off. Seals haul out on cove rocks when the tide is low and slip when it
+makes (or when you get too close). The debris that drifts
 by — planks, barrels, crates, rope, canvas, bottles, cans — goes in the stash, and from there
 you improvise: a lean-to you can rest under, a fire to cook or smoke fish (and
 carry as a brand at night), a rain-catch, a raft you Climb aboard and fit with

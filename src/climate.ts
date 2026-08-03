@@ -9,9 +9,14 @@
  * a slow front, so weather arrives instead of switching. Fair weather is the
  * overwhelming majority of any run, which is what makes a gale mean something.
  *
+ * Tide rides the same clock: two tides per day so the foreshore exposes within
+ * a run. Rockpooling is a window you wait for, not a painted wet band.
+ *
  * Nothing here draws — it only names the numbers the ocean, sky, audio and
  * vitals already know how to feel.
  */
+
+import { TIDE_AMP } from './waves'
 
 export type Regime = 'glass' | 'fair' | 'breezy' | 'unsettled' | 'squall' | 'gale'
 
@@ -50,10 +55,20 @@ export type Climate = {
   regime: Regime
   /** 1 in settled weather, 0 at the height of a gale — the inverse of trouble. */
   fair: number
+  /**
+   * Mean sea level in metres (positive = high tide). Two tides per day so the
+   * foreshore exposes within a run — rockpooling is a real window, not a paint.
+   */
+  tide: number
+  /** -1 at low water … 0 mean … +1 at high water. */
+  tidePhase: number
 }
 
 /** Real seconds for one full day cycle. */
 export const DAY_LENGTH = 480
+
+/** Two tides per day — high→low within a playable window. */
+export const TIDE_PERIOD = DAY_LENGTH / 2
 
 /**
  * The weather table. `weight` is how often a spell is drawn, `hold` how long it
@@ -172,6 +187,8 @@ export function createClimate(opts?: ClimateOptions) {
     biolum: 0,
     regime: spell.name,
     fair: 1,
+    tide: 0,
+    tidePhase: 0,
   }
 
   function advanceWeather(dt: number) {
@@ -206,6 +223,12 @@ export function createClimate(opts?: ClimateOptions) {
     elapsed += dt
     const phase = (elapsed / DAY_LENGTH) % 1
     state.dayPhase = phase
+
+    // Semidiurnal tide — sin over half a day. Starts falling from a mid-morning
+    // high so the first low water arrives while you're still exploring.
+    const tideAngle = (elapsed / TIDE_PERIOD) * Math.PI * 2 + 0.6
+    state.tidePhase = Math.sin(tideAngle)
+    state.tide = state.tidePhase * TIDE_AMP
 
     const elev = sunElevation(phase)
     state.sunElevation = elev

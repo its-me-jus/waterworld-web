@@ -10,6 +10,7 @@ import { createImprovise } from './improvise'
 import { createInputState, isLowPowerDevice, preferTouchUI } from './input'
 import { createInteractions } from './interact'
 import { createIsland } from './island'
+import { createLittoral } from './littoral'
 import { createOcean } from './ocean'
 import { createOpMenu, type TeleportSpot } from './opmenu'
 import { applyVitals, clearSave, readSave, writeSave, type SavedRun } from './persist'
@@ -361,6 +362,19 @@ const forage = createForage(hud, vitals, {
   hasSpear: () => loot.hasSpear,
 })
 
+const beach = island.shore.length > 0 ? island.shore[0] : island.centre
+const littoral = createLittoral(scene, {
+  interactions,
+  vitals,
+  hud,
+  heightAt: island.heightAt,
+  origin: { x: island.centre.x, z: island.centre.z },
+  cove: { x: beach.x, z: beach.z },
+  reefResolve: wreck.resolve,
+  wreckOrigin: { x: wreck.group.position.x, z: wreck.group.position.z },
+  lowPower,
+})
+
 const harvest = createHarvest(scene, {
   interactions,
   salvage,
@@ -385,6 +399,10 @@ const improvise = createImprovise(scene, camera, {
   takeRawForSmoke: () => forage.takeRawForSmoke(),
   addSmoked: (n) => forage.addSmoked(n),
   grantFish: (n) => forage.grant(n),
+  fashionRod: () => forage.fashionRod(),
+  fashionNet: () => forage.fashionNet(),
+  hasRod: () => forage.hasRod,
+  hasNet: () => forage.hasNet,
   daylight: () => climate.state.daylight,
   skipTime: (seconds) => climate.skip(seconds),
   secondsUntilDawn: () => climate.secondsUntilDawn(),
@@ -403,6 +421,7 @@ function restart() {
   wreck.reset()
   loot.reset()
   forage.reset()
+  littoral.reset()
   harvest.reset()
   improvise.reset()
   swimmer.setSurvivalSuit(false)
@@ -452,6 +471,8 @@ function captureSave(): SavedRun {
     smokedFish: forage.smokedFish,
     knife: loot.hasKnife,
     spear: loot.hasSpear,
+    rod: forage.hasRod,
+    net: forage.hasNet,
     suit: vitals.suited,
     climateElapsed: climate.getElapsed(),
     runElapsed: runElapsed(),
@@ -478,6 +499,7 @@ function loadRun(data: SavedRun) {
   applyVitals(vitals, data.vitals)
   salvage.setStash(data.stash)
   forage.setFish(data.rawFish, data.smokedFish)
+  forage.setGear(!!data.rod, !!data.net)
   harvest.restore(data.harvest)
   improvise.restore(data.builds)
   climate.setElapsed(data.climateElapsed)
@@ -518,7 +540,6 @@ function teleport(spot: TeleportSpot) {
   collide(player)
 }
 
-const beach = island.shore.length > 0 ? island.shore[0] : island.centre
 const opMenu = createOpMenu(app, {
   salvage,
   loot,
@@ -536,6 +557,8 @@ const opMenu = createOpMenu(app, {
     return true
   },
   grantFish: (n) => forage.grant(n),
+  hasRod: () => forage.hasRod,
+  hasNet: () => forage.hasNet,
   campRecipes: () => improvise.campRecipes(),
   day: dayAlive,
   teleport,
@@ -726,6 +749,7 @@ function frame() {
   sea.setFair(weather.fair)
   sea.setStorm(weather.storm)
   sea.update(dt, t)
+  oceanState.tide = weather.tide
   oceanAudio.setSeaWeight(sea.weight)
 
   input.interact = false
@@ -950,6 +974,7 @@ function frame() {
 
   oceanMat.uniforms.uTime.value = t
   oceanMat.uniforms.uAmp.value = oceanState.amp
+  oceanMat.uniforms.uTide.value = oceanState.tide
   oceanMat.uniforms.uCameraPos.value.copy(camera.position)
   oceanMat.uniforms.uSunDir.value.copy(skyRig.sunDir)
   oceanMat.uniforms.uHorizonColor.value.copy(skyRig.horizonColor)
@@ -1058,7 +1083,8 @@ function frame() {
   shore.update(t, camera, underwater)
   salvage.update(t, camera.position, weather.storm)
   loot.update(dt, view)
-  forage.update(camera, view)
+  forage.update(camera, view, dt)
+  littoral.update(dt, player)
   harvest.update(t)
   improvise.update(dt, t, player, view, player.yaw, { dive: input.dive })
   shark.update(dt, t, camera, hasDived)

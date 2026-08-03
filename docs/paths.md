@@ -107,6 +107,26 @@ The sea moves between your inputs, and what you carry is not free.
 
 ---
 
+## Food across the map
+
+Nothing points at dinner. Places do:
+
+| Where | Window | What |
+|-------|--------|------|
+| Wreck surface | Always | Provision crate, hatch stash, drifting kelp/shellfish |
+| Foreshore rocks | **Low tide** (exposed) or dive when covered | Limpets, mussels |
+| Island shelf drop-off | Dive | Urchins |
+| Wreck reef | Dive | Edible kelp, mussels on rock |
+| Open water schools | Hang still / spear / rod / net / trap | Fish |
+| Wet sand | Ashore | Crabs |
+| Cove rocks | Low tide haul-out | Seals (presence — they slip if you close in) |
+
+Tide is real mean sea level (±0.72 m), two cycles per day on the climate clock.
+Bottle traps stock faster while the water is working (low / changing) than at
+slack high water.
+
+---
+
 ## Improvise (sandbox)
 
 The stash is a spend currency. Recipes announce themselves the same way
@@ -122,6 +142,9 @@ markers in-world, no "correct" build order.
 | **Roof fronds** | 2 frond | At a frame | Leaf thatch — enough shade to **Rest** |
 | **Roof tarp** | 1 canvas | At a frame | Canvas stretched taut — the proper roof |
 | **Roof scrap** | 3 bottle + 1 rope | At a frame | Ugly bottle-and-rope cover when you have nothing better |
+| **Set fish trap** | 1 bottle + 1 rope | Shallows | Passive stock; Check when the tide has worked (faster at low water) |
+| **Fashion fishing rod** | 1 plank + 1 rope | Dry ground | Cast from shore / surface into nearby schools |
+| **Lash cast net** | 1 rope + 2 frond | Dry ground | Scoop fish while wading the wash |
 | **Set barrel** | 1 barrel | At a frame | Cistern under the eaves; rain fills it; **Drink** |
 | **Fill barrel** | hands / tin can | At barrel + pool or catch | Scoop rock-pool or rain-catch water into the cask (can scoops better) |
 | **Lay mat** | 2 frond + 1 rope | Roofed shelter | Softer ground; warmer **Rest** |
