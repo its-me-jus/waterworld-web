@@ -484,6 +484,7 @@ function captureSave(): SavedRun {
     spear: loot.hasSpear,
     rod: forage.hasRod,
     net: forage.hasNet,
+    fishingTool: forage.equipped ?? undefined,
     suit: vitals.suited,
     climateElapsed: climate.getElapsed(),
     runElapsed: runElapsed(),
@@ -510,7 +511,7 @@ function loadRun(data: SavedRun) {
   applyVitals(vitals, data.vitals)
   salvage.setStash(data.stash)
   forage.setFish(data.rawFish, data.smokedFish)
-  forage.setGear(!!data.rod, !!data.net)
+  forage.setGear(!!data.rod, !!data.net, data.fishingTool)
   harvest.restore(data.harvest)
   improvise.restore(data.builds)
   climate.setElapsed(data.climateElapsed)

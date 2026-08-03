@@ -87,6 +87,8 @@ export type SavedRun = {
   spear?: boolean
   rod?: boolean
   net?: boolean
+  /** Equipped fishing tool when both are owned. */
+  fishingTool?: 'rod' | 'net'
   suit: boolean
   climateElapsed: number
   /** World seconds this run has lasted — the days-alive score derives from it. */
