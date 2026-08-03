@@ -597,6 +597,7 @@ if (import.meta.env.DEV) {
       forage,
       improvise,
       opMenu,
+      underwater: underwaterWorld,
     },
     __shark: shark,
     __spots: spots,

@@ -4155,13 +4155,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     if (onLand && dripY > 0.5) setAnchor(dripPos, dripAt.x, dripAt.z, dripY + 0.45)
     else setAnchor(dripPos, player.x, player.z, player.y)
 
-    // Trap anchor — ahead in the shallows. It rides the live sea so the Set
-    // prompt only makes sense over water the tide actually moves through.
+    // Trap anchor — ahead in the shallows. Depth is read against the mean
+    // sea, not the swell: a trough is a moment, the tide is what fills it.
     const trapAt = offset(player, facingYaw, 2.0, 0)
     const trapGround = deps.groundAt(trapAt.x, trapAt.z)
     const trapSea = sampleOcean(trapAt.x, trapAt.z, t).y
-    trapSpotValid =
-      trapGround > trapSea - 1.35 && trapGround < trapSea - 0.12 && trapGround > -3.2
+    trapSpotValid = trapGround > -1.45 && trapGround < -0.35
     setAnchor(trapPos, trapAt.x, trapAt.z, trapSea + 0.05)
 
     // —— carpentry anchors ———————————————————————————————————
@@ -4768,25 +4767,14 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         if (waterMesh) waterMesh.visible = (b.water ?? 0) > 0.08
       }
       if (b.kind === 'trap') {
-        // Ride the swell, and let the tide stock it — quick first fish,
-        // slower after, up to the bottle's fit
+        // Ride the swell; the tide stocks it (see stockTraps)
         const sea = sampleOcean(b.x, b.z, t).y
         b.object.position.set(b.x, sea + 0.05, b.z)
         b.object.rotation.x = Math.sin(t * 1.1 + b.x * 0.7) * 0.08
         b.object.rotation.z = Math.sin(t * 0.9 + b.z * 0.6) * 0.1
-        const stock = b.fish ?? 0
-        if (stock < TRAP_MAX) {
-          b.water = (b.water ?? 0) + dt
-          const need = stock === 0 ? TRAP_FIRST : TRAP_NEXT
-          if (b.water >= need) {
-            b.water = 0
-            b.fish = stock + 1
-            const stockMesh = b.object.getObjectByName('trapStock')
-            if (stockMesh) stockMesh.visible = true
-          }
-        }
       }
     }
+    stockTraps(dt)
 
     // Carpentry walls are real: the body stops at a solid panel and passes a
     // door's gap. Push back to whichever side of the plane you're on.
@@ -4809,6 +4797,22 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         player.x = b.x + lx * wc + out * ws
         player.z = b.z - lx * ws + out * wc
       }
+    }
+  }
+
+  /** The tide stocks the traps — quick first fish, slower after, up to the bottle's fit. */
+  function stockTraps(dt: number) {
+    for (const b of builds) {
+      if (b.kind !== 'trap') continue
+      const stock = b.fish ?? 0
+      if (stock >= TRAP_MAX) continue
+      b.water = (b.water ?? 0) + dt
+      const need = stock === 0 ? TRAP_FIRST : TRAP_NEXT
+      if ((b.water ?? 0) < need) continue
+      b.water = 0
+      b.fish = stock + 1
+      const stockMesh = b.object.getObjectByName('trapStock')
+      if (stockMesh) stockMesh.visible = true
     }
   }
 
@@ -5140,6 +5144,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     reset,
     snapshot,
     restore,
+    /** Dev/tests — fast-forward the slow camp clocks (trap stocking). */
+    debugTick(seconds: number) {
+      stockTraps(seconds)
+    },
     /** Construction recipes ready right now — Pack Camp tab. */
     campRecipes(): CampRecipe[] {
       return campEntries

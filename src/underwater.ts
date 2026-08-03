@@ -467,6 +467,11 @@ function createFishSchools(count: number, schoolCount: number, waterColor: THREE
     anchor.z += (camera.position.z - anchor.z) * Math.min(1, dt * 0.25)
 
     for (const s of schools) {
+      // Hanging still draws the schools back in over half a minute; working
+      // hard sends them out to the murk line. This is the drift the whole
+      // fishing loop — bare hands or spear — actually answers.
+      const target = 2.6 + Math.min(1, effort * 2.2) * 17
+      s.radius += (target - s.radius) * Math.min(1, dt * 0.08)
       const a = time * s.speed + s.phase
       s.centre.set(
         anchor.x + Math.cos(a) * s.radius,
@@ -555,7 +560,25 @@ function createFishSchools(count: number, schoolCount: number, waterColor: THREE
     return out.copy(fishes[index].prev)
   }
 
-  return { mesh, material, update, nearest, fling, positionAt }
+  /**
+   * Dev/tests — pin one fish hovering at a point. Probabilistic encounters
+   * can't be waited on in a time-dilated headless run; this sets the moment
+   * up exactly the way a long still hang would.
+   */
+  function debugDraw(point: THREE.Vector3) {
+    const hit = nearest(point, 1e9)
+    if (!hit) return false
+    const f = fishes[hit.index]
+    const c = schools[f.school].centre
+    f.ox = point.x - c.x
+    f.oy = point.y - c.y
+    f.oz = point.z - c.z
+    f.wanderAmp = 0.06
+    f.wanderSpeed = 0.25
+    return true
+  }
+
+  return { mesh, material, update, nearest, fling, positionAt, debugDraw }
 }
 
 // —— jellyfish ————————————————————————————————————————————
