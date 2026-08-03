@@ -116,7 +116,7 @@ Nothing points at dinner. Places do:
 | Wreck surface | Always | Provision crate, hatch stash, drifting kelp/shellfish |
 | Foreshore rocks | **Low tide** (exposed) or dive when covered | Limpets, mussels |
 | Tide pools | **Low tide only** (hollow exposed); life returns after high-tide flush | Anemones, periwinkles, starfish — rain + lively swell refill faster |
-| Island shelf drop-off wall | Dive — steep face ~250–340 m out | Urchins; swim-along reef wall |
+| Island shelf drop-off wall | Dive — steep face ~250–340 m out; **wreck approach plunges into abyss** | Urchins; swim-along reef wall; blue goes black toward the wreck |
 | Coral gardens (wreck reef + shelf wall) | Dive; **night biolum** | Oysters, coral snails; brain / stag / plate coral |
 | Wreck reef | Dive | Edible kelp, mussels on rock |
 | Open water schools | Hang still / spear / rod / net / trap | Fish (denser under swimming seals) |
@@ -125,9 +125,11 @@ Nothing points at dinner. Places do:
 
 Tide is real mean sea level (±0.72 m), two cycles per day on the climate clock.
 Tide pools flush when the sea covers the lip; rain and a lively swell settle
-life back for the next low. Bottle traps stock faster while the water is
-working (low / changing) than at slack high water. Coral gardens take the
-night bioluminescence the jellies already know.
+life back for the next low. Between the wreck and the island the shelf falls
+into a real abyss on the approach — deep blue from above, black when you look
+down. Bottle traps stock faster while the water is working (low / changing)
+than at slack high water. Coral gardens take the night bioluminescence the
+jellies already know.
 
 ---
 

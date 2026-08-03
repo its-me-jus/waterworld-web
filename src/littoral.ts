@@ -800,6 +800,7 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
   let saidSealFish = false
   let saidRefill = false
   let saidWall = false
+  let saidAbyss = false
   let saidCoralGlow = false
 
   function update(
@@ -918,6 +919,19 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
       }
     }
 
+    // Abyss between wreck and island — the column goes black past the lip
+    if (!saidAbyss) {
+      const lx = player.x - ox
+      const lz = player.z - oz
+      const r = Math.hypot(lx, lz)
+      const py = player.y ?? 0
+      const floor = deps.heightAt(player.x, player.z)
+      if (r > 310 && r < 520 && py < -1.2 && floor < -28) {
+        saidAbyss = true
+        deps.hud.whisper('The bottom falls away. Blue goes black between here and the wreck.')
+      }
+    }
+
     for (const s of seals) {
       const dist = Math.hypot(player.x - s.object.position.x, player.z - s.object.position.z)
       if (dist < 7.5) s.spook = Math.max(s.spook, 4.5)
@@ -975,6 +989,7 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
     saidSealFish = false
     saidRefill = false
     saidWall = false
+    saidAbyss = false
     saidCoralGlow = false
     for (const s of seals) {
       s.hauled = true

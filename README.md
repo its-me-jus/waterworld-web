@@ -66,7 +66,8 @@ itself keeps a **tide** — two per day — so limpets and mussels on the foresh
 bare at low water and drown at high; **tide pools** trap anemones, periwinkles
 and starfish until the sea returns — high water flushes them, rain and a lively
 swell refill life for the next low; urchins and coral cling to a **drop-off wall**
-you can swim along past the shelf; oysters and coral snails want a dive on the
+you can swim along past the shelf; between wreck and island that wall plunges
+into an **abyss** (blue goes black); oysters and coral snails want a dive on the
 gardens (which glow at night). Seals haul out on cove rocks when the
 tide is low and slip when it makes — while they swim, fish schools thicken
 under them. The debris that drifts

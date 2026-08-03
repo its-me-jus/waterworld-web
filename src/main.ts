@@ -142,12 +142,14 @@ setShelter(island.centre.x, island.centre.z, 430, 800)
   430,
   800,
 )
-// Shallows: ankle-deep over the inner beach (~240 m), opaque blue again past ~400 m
+// Shallows: ankle-deep over the inner beach (~180 m), opaque deep blue again
+// by ~300 m — so the wreck→island abyss past the shelf doesn't read as a
+// turquoise bathtub from above.
 ;(oceanMat.uniforms.uShelf.value as THREE.Vector4).set(
   island.centre.x,
   island.centre.z,
-  240,
-  400,
+  180,
+  300,
 )
 
 const shore = createShoreSurf(scene, {
@@ -983,8 +985,19 @@ function frame() {
 
   // The deeper you go, the tighter and darker the water closes in.
   // Glass-offs clear the murk a touch — the dive window you can see as well as feel.
-  const murk = Math.min(1, depth / 24) * (sea.glassy ? 0.7 : 1)
-  underFog.density = 0.026 + murk * 0.032 + (1 - weather.daylight) * 0.012
+  // Over the wreck→island abyss the column itself darkens the water when you
+  // look down, even before you've descended the full twenty-odd metres.
+  const diveMurk = Math.min(1, depth / 24) * (sea.glassy ? 0.7 : 1)
+  const seabed = island.heightAt(player.x, player.z)
+  const column = Math.max(0, oceanState.tide - seabed)
+  const abyssMurk = Math.min(1, Math.max(0, (column - 22) / 30))
+  const lookDown = THREE.MathUtils.clamp((-player.pitch - 0.12) / 0.75, 0, 1)
+  const murk = Math.min(
+    1,
+    Math.max(diveMurk, underwater ? abyssMurk * (0.35 + lookDown * 0.65) : 0),
+  )
+  underFog.density =
+    0.026 + murk * 0.032 + abyssMurk * lookDown * 0.022 + (1 - weather.daylight) * 0.012
   waterTint.copy(shallowTint).lerp(deepTint, murk)
   waterTint.lerp(nightWater, (1 - weather.daylight) * 0.55)
   // Fog has to track the tint or distant geometry fades to the wrong colour and
