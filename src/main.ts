@@ -184,12 +184,14 @@ const climate = createClimate({
   storm: params.has('storm') ? Number(params.get('storm')) : undefined,
 })
 
-// The run's score is days alive. World time keeps its own clock (resting
-// skips it ahead), so run age is measured off the climate, not vitals.
+// The run's score is days alive. The counter turns at world midnight, so
+// waking after your first night reads Day 2 — resting skips the clock ahead
+// and the dawn you reach still counts. Measured off the climate, not vitals.
 let runStart = climate.getElapsed()
 let lastDay = 1
 const runElapsed = () => Math.max(0, climate.getElapsed() - runStart)
-const dayAlive = () => Math.floor(runElapsed() / DAY_LENGTH) + 1
+const dayAlive = () =>
+  Math.floor(climate.getElapsed() / DAY_LENGTH) - Math.floor(runStart / DAY_LENGTH) + 1
 
 // The sea's slow breathing — seasons, glass-offs, and the set that carries you.
 // Whispers attach after the HUD exists (see glassWhisper below).
@@ -831,7 +833,7 @@ function frame() {
     dead = true
     clearSave()
     opMenu.setOpen(false)
-    hud.setDead(vitals.cause, runElapsed(), day)
+    hud.setDead(vitals.cause, day)
     if (document.pointerLockElement) document.exitPointerLock()
   }
   if (dead) {

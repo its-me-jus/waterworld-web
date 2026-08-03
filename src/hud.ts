@@ -1,5 +1,4 @@
 import { WOUND_CLOT, type Cause, type Vitals } from './survival'
-import { DAY_LENGTH } from './climate'
 import type { Stash, StashKind } from './salvage'
 
 /**
@@ -239,17 +238,13 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     }
   }
 
-  function setDead(cause: Cause | null, elapsed: number, day?: number) {
+  function setDead(cause: Cause | null, day: number) {
     deathTitle.textContent = cause ? DEATH_TITLE[cause] : 'You died'
-    const days = day ?? Math.floor(elapsed / DAY_LENGTH) + 1
-    let line = `Survived ${days} ${days === 1 ? 'day' : 'days'} · no save, no shortcut back`
+    let line = `Survived ${day} ${day === 1 ? 'day' : 'days'} · no save, no shortcut back`
     try {
-      const best = Math.max(elapsed, Number(localStorage.getItem('ww.best') ?? 0))
-      localStorage.setItem('ww.best', String(best))
-      if (best > elapsed + 1) {
-        const bestDays = Math.floor(best / DAY_LENGTH) + 1
-        line += ` · longest drift ${bestDays} ${bestDays === 1 ? 'day' : 'days'}`
-      }
+      const best = Math.max(day, Number(localStorage.getItem('ww.bestDays') ?? 0))
+      localStorage.setItem('ww.bestDays', String(best))
+      if (best > day) line += ` · longest drift ${best} ${best === 1 ? 'day' : 'days'}`
     } catch {
       // Private-mode storage is a nice-to-have, never a reason to lose the ending
     }

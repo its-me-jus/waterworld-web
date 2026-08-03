@@ -1652,6 +1652,30 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     for (const k of Object.keys(cost) as StashKind[]) s[k] += cost[k] ?? 0
   }
 
+  /**
+   * Fire clearance. On carpentry decks the platform itself must not block a
+   * hearth — walls only keep the flame out of their own plane. Everything
+   * else keeps the usual 1.4 m.
+   */
+  function clearForFire(x: number, z: number) {
+    for (const b of builds) {
+      if (b.kind === 'platform' || b.kind === 'roof') continue
+      // A hearth by the wall is the point of a closed-in tile — just keep the
+      // flame out of the wall plane itself
+      const min = b.kind === 'wall' ? 0.2 : 1.4
+      if (Math.hypot(b.x - x, b.z - z) < min) return false
+    }
+    return true
+  }
+
+  /** cos between the look direction and the direction to (x, z) — teardown gates. */
+  function facingDot(x: number, z: number) {
+    const dx = x - px
+    const dz = z - pz
+    const len = Math.hypot(dx, dz) || 1
+    return (-Math.sin(yaw) * dx + -Math.cos(yaw) * dz) / len
+  }
+
   function strikeDown(b: Build, cost: Cost, line: string) {
     const idx = builds.indexOf(b)
     if (idx < 0) return
@@ -2144,7 +2168,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       ((onLand && groundY > 0.6) || onRaftDeck || onPlatformDeck) &&
       deps.salvage.has(FIRE_COST) &&
       !nearestOfKind(firePos.x, firePos.z, 'fire', 3.5) &&
-      clearOfBuilds(firePos.x, firePos.z, 1.4),
+      clearForFire(firePos.x, firePos.z),
     use: () => {
       if (!deps.salvage.spend(FIRE_COST)) return
       const x = firePos.x
@@ -2200,7 +2224,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       !!carried &&
       deps.vitals.alive &&
       ((onLand && groundY > 0.6) || onRaftDeck || onPlatformDeck) &&
-      clearOfBuilds(plantFirePos.x, plantFirePos.z, 1.4),
+      clearForFire(plantFirePos.x, plantFirePos.z),
     use: () => {
       if (!carried) return
       const x = plantFirePos.x
@@ -2762,7 +2786,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
   // Drop the stone over the side — the set stops taking her while you work
   // the shallows (or sleep aboard). Weigh it when you mean to move again.
-  deps.interactions.add({
+  addCamp('raft', {
     position: shovePos,
     verb: 'Drop',
     label: 'Anchor',
@@ -2785,7 +2809,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('raft', {
     position: shovePos,
     verb: 'Weigh',
     label: 'Anchor',
@@ -3211,14 +3235,23 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   // Teardown — every piece comes back to the arms. Freedom means rethinking.
+  // Strike only announces itself when you're looking at the piece, so it can
+  // never steal the prompt from Sleep / work verbs on a closed-in tile.
+  const striking = (kind: BuildKind, dist: number) => {
+    if (!deps.vitals.alive) return null
+    const b = nearestOfKind(px, pz, kind, dist)
+    if (!b || facingDot(b.x, b.z) < 0.35) return null
+    return b
+  }
+
   deps.interactions.add({
     position: strikePos,
     verb: 'Strike',
     label: 'Wall',
     radius: 2.7,
-    available: () => deps.vitals.alive && !!nearestOfKind(px, pz, 'wall', 2.5),
+    available: () => !!striking('wall', 2.5),
     use: () => {
-      const b = nearestOfKind(px, pz, 'wall', 2.5)
+      const b = striking('wall', 2.5)
       if (!b) return
       strikeDown(b, WALL_COST, 'Struck. The planks come back to your arms.')
     },
@@ -3229,10 +3262,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     verb: 'Strike',
     label: 'Roof',
     radius: 2.7,
-    available: () =>
-      deps.vitals.alive && !nearestOfKind(px, pz, 'wall', 2.5) && !!nearestOfKind(px, pz, 'roof', 3.0),
+    available: () => !striking('wall', 2.5) && !!striking('roof', 3.0),
     use: () => {
-      const b = nearestOfKind(px, pz, 'roof', 3.0)
+      const b = striking('roof', 3.0)
       if (!b) return
       strikeDown(b, ROOF_COST, 'The roof comes down. Materials back in hand.')
     },
@@ -3244,16 +3276,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     label: 'Platform',
     radius: 2.7,
     available: () => {
-      if (!deps.vitals.alive) return false
-      if (nearestOfKind(px, pz, 'wall', 2.5) || nearestOfKind(px, pz, 'roof', 3.0)) return false
-      const b = nearestOfKind(px, pz, 'platform', 2.5)
+      if (striking('wall', 2.5) || striking('roof', 3.0)) return false
+      const b = striking('platform', 2.5)
       if (!b) return false
       // Not from under your own feet, and not with pieces still on it
       if (platformAt(px, pz) === b) return false
       return tilePieces(b, 'wall').length === 0 && !tileRoof(b)
     },
     use: () => {
-      const b = nearestOfKind(px, pz, 'platform', 2.5)
+      const b = striking('platform', 2.5)
       if (!b) return
       strikeDown(b, PLATFORM_COST, 'The deck comes apart. Planks back in the arms.')
     },
@@ -3295,8 +3326,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   function craftPending() {
     if (carried) {
       return (
-        (onLand && groundY > 0.6 && clearOfBuilds(plantFirePos.x, plantFirePos.z, 1.4)) ||
-        ((onRaftDeck || onPlatformDeck) && clearOfBuilds(plantFirePos.x, plantFirePos.z, 1.4))
+        (onLand && groundY > 0.6 && clearForFire(plantFirePos.x, plantFirePos.z)) ||
+        ((onRaftDeck || onPlatformDeck) && clearForFire(plantFirePos.x, plantFirePos.z))
       )
     }
     // Carpentry ready suppresses the raw-fish prompt the same as any build
@@ -3372,7 +3403,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       groundY > 0.6 &&
       deps.salvage.has(FIRE_COST) &&
       !nearestOfKind(firePos.x, firePos.z, 'fire', 3.5) &&
-      clearOfBuilds(firePos.x, firePos.z, 1.4)
+      clearForFire(firePos.x, firePos.z)
     ) {
       return true
     }
@@ -3798,7 +3829,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         const mid = tileEdgeMid(tile, tileSide(tile))
         setAnchor(wallPos, mid.x, mid.z, tile.deckY + 1.0)
         setAnchor(roofPos, tile.x, tile.z, tile.deckY + ROOF_RISE + 0.35)
-        setAnchor(sleepPlatPos, tile.x, tile.deckY + 0.6, tile.z)
+        setAnchor(sleepPlatPos, tile.x, tile.z, tile.deckY + 0.6)
       } else {
         setAnchor(roofPos, wallAt.x, wallAt.z, deps.groundAt(wallAt.x, wallAt.z) + 2.3)
         sleepPlatPos.copy(eatPos)
@@ -3812,7 +3843,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (struck) setAnchor(strikePos, struck.x, struck.z, struck.deckY + 0.9)
       else strikePos.copy(eatPos)
       const plat = nearestOfKind(player.x, player.z, 'platform', 3.0)
-      if (plat) setAnchor(climbPlatPos, plat.x, plat.deckY + 0.4, plat.z)
+      if (plat) setAnchor(climbPlatPos, plat.x, plat.z, plat.deckY + 0.4)
       else climbPlatPos.copy(eatPos)
     }
 
