@@ -5,12 +5,17 @@ import type { WreckLoot } from './wreckloot'
 import type { CampGroup, CampRecipe } from './improvise'
 
 /**
- * The operating menu — one bag icon that opens the modal the game is run from.
+ * The operating menu — one bag icon that opens a hub, then a screen.
  *
- * - Stash: what you're carrying (salvage, fish, knife / spear)
+ * Opening the Pack is deliberate: the map stays clean, and you come here to
+ * check the body, count what you're carrying, pick a build, or use the field kit.
+ *
+ * Hub destinations:
+ * - Body: health and metrics (full read, not the urgent HUD alarms)
+ * - Stash: salvage, fish, knife / spear
  * - Camp: construction recipes ready right now (Raise / Dig / Lash…)
  * - Field kit: island / wreck teleport, fill-stash, Start again
- * - Dev extras (DEV only): vitals, fish, arms
+ * - Dev extras (DEV only): vitals, fish, arms — tucked in Field kit
  */
 
 export type TeleportSpot = { x: number; z: number; y?: number; yaw?: number }
@@ -39,6 +44,8 @@ export type OpMenuDeps = {
   resetRun: () => void
 }
 
+type Screen = 'hub' | 'body' | 'stash' | 'camp' | 'kit'
+
 const GROUP_TITLE: Record<CampGroup, string> = {
   shelter: 'Shelter',
   build: 'Carpentry',
@@ -47,6 +54,23 @@ const GROUP_TITLE: Record<CampGroup, string> = {
 }
 
 const GROUP_ORDER: CampGroup[] = ['shelter', 'build', 'camp', 'raft']
+
+const BODY_ROWS: { key: keyof Vitals; label: string }[] = [
+  { key: 'health', label: 'Condition' },
+  { key: 'stamina', label: 'Strength' },
+  { key: 'energy', label: 'Energy' },
+  { key: 'warmth', label: 'Warmth' },
+  { key: 'water', label: 'Water' },
+  { key: 'food', label: 'Food' },
+  { key: 'breath', label: 'Breath' },
+]
+
+const SCREEN_TITLE: Record<Exclude<Screen, 'hub'>, string> = {
+  body: 'Body',
+  stash: 'Stash',
+  camp: 'Camp',
+  kit: 'Field kit',
+}
 
 export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
   const dev = import.meta.env.DEV
@@ -72,56 +96,101 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
   overlay.innerHTML = `
     <div class="op-panel">
       <div class="op-head">
-        <h2>Pack</h2>
+        <button class="op-back" type="button" aria-label="Back to pack" hidden>←</button>
+        <h2 id="op-title">Pack</h2>
         <span id="op-day" class="op-day"></span>
         <button class="op-close" type="button" aria-label="Close">×</button>
       </div>
-      <div class="op-section">
-        <h3>Stash</h3>
-        <div id="op-stash" class="op-grid"></div>
-      </div>
-      <div class="op-section">
-        <h3>Gear</h3>
-        <div id="op-gear" class="op-gear"></div>
-      </div>
-      <div class="op-section">
-        <h3>Camp <span id="op-camp-count">0 ready</span></h3>
-        <div id="op-camp" class="op-camp"></div>
-      </div>
-      <div class="op-section op-dev">
-        <h3>Field kit</h3>
-        <div class="op-cheats">
-          <button data-tp="island" type="button">Island</button>
-          <button data-tp="wreck" type="button">Wreck</button>
-          <button data-tp="spar" type="button">Spar</button>
-          <button data-cheat="stash" type="button">Fill stash</button>
-          <button data-cheat="reset" type="button" class="warn">Start again</button>
-          ${
-            dev
-              ? `<button data-cheat="fill" type="button">Fill vitals</button>
-          <button data-cheat="fish" type="button">Fish</button>
-          <button data-cheat="knife" type="button">Knife</button>
-          <button data-cheat="spear" type="button">Spear</button>`
-              : ''
-          }
-        </div>
-      </div>
+      <div id="op-screen" class="op-screen"></div>
     </div>`
   app.appendChild(overlay)
 
-  const stashBox = overlay.querySelector('#op-stash') as HTMLElement
-  const gearBox = overlay.querySelector('#op-gear') as HTMLElement
-  const campBox = overlay.querySelector('#op-camp') as HTMLElement
-  const campCount = overlay.querySelector('#op-camp-count') as HTMLElement
+  const screenBox = overlay.querySelector('#op-screen') as HTMLElement
+  const titleEl = overlay.querySelector('#op-title') as HTMLElement
   const dayChip = overlay.querySelector('#op-day') as HTMLElement
+  const backBtn = overlay.querySelector('.op-back') as HTMLButtonElement
 
   let open = false
+  let screen: Screen = 'hub'
   let liveTimer = 0
 
   const GEAR: { key: 'knife' | 'spear'; label: string; has: () => boolean }[] = [
     { key: 'knife', label: 'Galley knife', has: () => deps.loot.hasKnife },
     { key: 'spear', label: "Mate's spear", has: () => deps.loot.hasSpear },
   ]
+
+  function stashCount(stash: Stash) {
+    let n = 0
+    for (const key of Object.keys(stash) as StashKind[]) n += stash[key]
+    return n + deps.rawFish() + deps.smokedFish()
+  }
+
+  function bodyHint(v: Vitals) {
+    if (!v.alive) return 'Gone'
+    if (v.wounded) return 'Bleeding'
+    if (v.health < 0.45) return 'Hurting'
+    if (v.energy < 0.3) return 'Spent'
+    if (v.water < 0.3) return 'Thirsty'
+    if (v.food < 0.3) return 'Hungry'
+    if (v.warmth < 0.35) return 'Cold'
+    if (v.stamina < 0.35) return 'Winded'
+    return 'Steady'
+  }
+
+  function renderHub() {
+    const recipes = deps.campRecipes().length
+    const carried = stashCount(deps.salvage.stash)
+    const hint = bodyHint(deps.vitals)
+    screenBox.innerHTML = `
+      <p class="op-lead">Open a screen — the map stays for acting.</p>
+      <div class="op-hub">
+        <button type="button" class="op-hub-btn" data-go="body">
+          <span class="op-hub-name">Body</span>
+          <span class="op-hub-meta">${hint}</span>
+        </button>
+        <button type="button" class="op-hub-btn" data-go="stash">
+          <span class="op-hub-name">Stash</span>
+          <span class="op-hub-meta">${carried ? `${carried} carried` : 'Empty'}</span>
+        </button>
+        <button type="button" class="op-hub-btn" data-go="camp">
+          <span class="op-hub-name">Camp</span>
+          <span class="op-hub-meta">${recipes ? `${recipes} ready` : 'Nothing ready'}</span>
+        </button>
+        <button type="button" class="op-hub-btn" data-go="kit">
+          <span class="op-hub-name">Field kit</span>
+          <span class="op-hub-meta">Places · restart</span>
+        </button>
+      </div>`
+  }
+
+  function renderBody() {
+    const v = deps.vitals
+    const rows = BODY_ROWS.map(({ key, label }) => {
+      const value = v[key] as number
+      const low = value < 0.25
+      return (
+        `<div class="op-vital${low ? ' low' : ''}">` +
+        `<span class="op-vital-label">${label}</span>` +
+        `<i class="op-vital-track"><b style="transform:scaleX(${Math.max(0, Math.min(1, value))})"></b></i>` +
+        `<span class="op-vital-n">${Math.round(value * 100)}</span>` +
+        `</div>`
+      )
+    })
+    if (v.wounded) {
+      rows.push(
+        `<div class="op-vital low">` +
+          `<span class="op-vital-label">Bleeding</span>` +
+          `<i class="op-vital-track wound"><b style="transform:scaleX(1)"></b></i>` +
+          `<span class="op-vital-n">Open</span>` +
+          `</div>`,
+      )
+    }
+    const suited = v.suited ? 'Immersion suit on' : 'No suit'
+    screenBox.innerHTML = `
+      <p class="op-lead">How the body is holding — read it here, feel it out there.</p>
+      <div class="op-vitals">${rows.join('')}</div>
+      <p class="op-aside">${suited}</p>`
+  }
 
   function renderStash(stash: Stash, labels: Salvage['labels']) {
     const rows = (Object.keys(stash) as StashKind[]).map((key) => {
@@ -137,24 +206,25 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     rows.push(
       `<div class="op-cell${smoked ? '' : ' empty'}${smoked ? ' op-use' : ''}" data-eat-smoked="1"><span class="n">${smoked}</span><span class="k">Smoked fish</span></div>`,
     )
-    stashBox.innerHTML = rows.join('')
-  }
-
-  function renderGear() {
-    gearBox.innerHTML = GEAR.map(
+    const gear = GEAR.map(
       (g) =>
         `<div class="op-gear-item${g.has() ? '' : ' missing'}"><span class="dot"></span>${g.label}</div>`,
     ).join('')
+    screenBox.innerHTML = `
+      <div class="op-section op-section-first">
+        <h3>Carried</h3>
+        <div class="op-grid">${rows.join('')}</div>
+      </div>
+      <div class="op-section">
+        <h3>Gear</h3>
+        <div class="op-gear">${gear}</div>
+      </div>`
   }
 
   function renderCamp() {
     const recipes = deps.campRecipes()
-    campCount.textContent = recipes.length
-      ? `${recipes.length} ready`
-      : 'nothing ready'
-
     if (!recipes.length) {
-      campBox.innerHTML =
+      screenBox.innerHTML =
         '<p class="op-camp-empty">Stand where a build would work, with the materials on you — then it shows up here.</p>'
       return
     }
@@ -166,7 +236,7 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
       byGroup.set(r.group, list)
     }
 
-    const chunks: string[] = []
+    const chunks: string[] = ['<div class="op-camp">']
     for (const group of GROUP_ORDER) {
       const list = byGroup.get(group)
       if (!list?.length) continue
@@ -181,14 +251,57 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
       }
       chunks.push('</div>')
     }
-    campBox.innerHTML = chunks.join('')
+    chunks.push('</div>')
+    screenBox.innerHTML = chunks.join('')
+  }
+
+  function renderKit() {
+    screenBox.innerHTML = `
+      <div class="op-cheats">
+        <button data-tp="island" type="button">Island</button>
+        <button data-tp="wreck" type="button">Wreck</button>
+        <button data-tp="spar" type="button">Spar</button>
+        <button data-cheat="stash" type="button">Fill stash</button>
+        <button data-cheat="reset" type="button" class="warn">Start again</button>
+        ${
+          dev
+            ? `<button data-cheat="fill" type="button">Fill vitals</button>
+        <button data-cheat="fish" type="button">Fish</button>
+        <button data-cheat="knife" type="button">Knife</button>
+        <button data-cheat="spear" type="button">Spear</button>`
+            : ''
+        }
+      </div>`
+  }
+
+  function setScreen(next: Screen) {
+    screen = next
+    const onHub = next === 'hub'
+    titleEl.textContent = onHub ? 'Pack' : SCREEN_TITLE[next]
+    backBtn.hidden = onHub
+    dayChip.hidden = !onHub
+    render()
   }
 
   function render() {
     dayChip.textContent = deps.day ? `Day ${deps.day()}` : ''
-    renderStash(deps.salvage.stash, deps.salvage.labels)
-    renderGear()
-    renderCamp()
+    switch (screen) {
+      case 'hub':
+        renderHub()
+        break
+      case 'body':
+        renderBody()
+        break
+      case 'stash':
+        renderStash(deps.salvage.stash, deps.salvage.labels)
+        break
+      case 'camp':
+        renderCamp()
+        break
+      case 'kit':
+        renderKit()
+        break
+    }
   }
 
   function setOpen(next: boolean) {
@@ -201,11 +314,12 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     if (open) {
       // Hand the pointer back so the modal is clickable; re-locks on click
       if (document.pointerLockElement) document.exitPointerLock()
-      render()
-      // Stash counts can change while the menu's up (grab, then open)
+      setScreen('hub')
+      // Counts / vitals can change while the menu's up
       liveTimer = window.setInterval(render, 350)
     } else {
       window.clearInterval(liveTimer)
+      screen = 'hub'
     }
   }
 
@@ -214,18 +328,26 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     if (e.target === overlay) setOpen(false)
   })
   overlay.querySelector('.op-close')?.addEventListener('click', () => setOpen(false))
+  backBtn.addEventListener('click', () => setScreen('hub'))
 
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Tab') {
       e.preventDefault()
       setOpen(!open)
     } else if (e.code === 'Escape' && open) {
-      setOpen(false)
+      if (screen !== 'hub') setScreen('hub')
+      else setOpen(false)
     }
   })
 
-  // —— cheats + camp builds ——————————————————————————————————————
+  // —— navigation + cheats + camp builds ——————————————————————————
   overlay.addEventListener('click', (e) => {
+    const go = (e.target as HTMLElement).closest<HTMLElement>('[data-go]')
+    if (go?.dataset.go) {
+      setScreen(go.dataset.go as Screen)
+      return
+    }
+
     const campBtn = (e.target as HTMLElement).closest<HTMLElement>('[data-camp]')
     if (campBtn?.dataset.camp) {
       const id = campBtn.dataset.camp

@@ -5,7 +5,8 @@ import type { Stash, StashKind } from './salvage'
  * The HUD stays out of the way on purpose: nothing here tells you where to go
  * or what exists. A vital only draws itself once it's worth worrying about, the
  * breath ring only shows while you're holding it, and the action prompt only
- * appears when something is already within arm's reach.
+ * appears when something is already within arm's reach. Counts and full body
+ * readouts live in the Pack hub — the map is for acting.
  *
  * Two quiet layers on top of that:
  *

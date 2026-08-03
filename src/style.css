@@ -201,15 +201,9 @@ body.playing:not(.touch-ui) #crosshair {
   background: rgba(255, 132, 112, 0.92);
 }
 
+/* Stash lives in the Pack now — the map stays for acting, not counting. */
 #stash {
-  position: absolute;
-  right: max(1.1rem, env(safe-area-inset-right));
-  top: max(1.1rem, env(safe-area-inset-top));
-  font-size: 0.66rem;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: rgba(214, 234, 244, 0.72);
-  text-shadow: 0 1px 6px rgba(3, 14, 20, 0.9);
+  display: none;
 }
 
 #prompt {
@@ -691,6 +685,7 @@ body.underwater #bubbles {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.35rem;
   margin-bottom: 0.6rem;
 }
 
@@ -705,7 +700,7 @@ body.underwater #bubbles {
 }
 
 .op-day {
-  margin-right: 0.6rem;
+  margin-right: 0.15rem;
   font-size: 0.62rem;
   letter-spacing: 0.2em;
   text-transform: uppercase;
@@ -713,22 +708,144 @@ body.underwater #bubbles {
   align-self: center;
 }
 
+.op-back,
 .op-close {
   border: 0;
   background: none;
   color: rgba(214, 234, 244, 0.7);
-  font-size: 1.5rem;
+  font-size: 1.35rem;
   line-height: 1;
   cursor: pointer;
   padding: 0.1rem 0.4rem;
 }
 
+.op-back:hover,
 .op-close:hover {
   color: #fff;
 }
 
+.op-back[hidden] {
+  display: none;
+}
+
+.op-screen {
+  min-height: 4rem;
+}
+
+.op-lead {
+  margin: 0 0 0.85rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: rgba(214, 234, 244, 0.55);
+}
+
+.op-aside {
+  margin: 0.85rem 0 0;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(168, 228, 242, 0.5);
+}
+
+.op-hub {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.op-hub-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.85rem 0.95rem;
+  border-radius: 12px;
+  border: 1px solid rgba(150, 220, 235, 0.22);
+  background: rgba(10, 48, 62, 0.55);
+  color: #cfeef8;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.op-hub-btn:hover {
+  background: rgba(18, 78, 98, 0.75);
+  border-color: rgba(168, 228, 242, 0.4);
+}
+
+.op-hub-btn:active {
+  transform: scale(0.98);
+}
+
+.op-hub-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.op-hub-meta {
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  color: rgba(214, 234, 244, 0.55);
+  flex-shrink: 0;
+}
+
+.op-vitals {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.op-vital {
+  display: grid;
+  grid-template-columns: 5.4rem 1fr 2.4rem;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.op-vital-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(206, 228, 240, 0.72);
+}
+
+.op-vital-track {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(6, 22, 30, 0.65);
+  overflow: hidden;
+}
+
+.op-vital-track b {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  background: rgba(190, 232, 245, 0.85);
+}
+
+.op-vital.low .op-vital-track b,
+.op-vital-track.wound b {
+  background: rgba(255, 132, 112, 0.92);
+}
+
+.op-vital-n {
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: rgba(214, 234, 244, 0.65);
+}
+
 .op-section {
   margin-top: 0.9rem;
+}
+
+.op-section-first {
+  margin-top: 0;
 }
 
 .op-section h3 {
