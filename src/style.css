@@ -39,7 +39,7 @@ body.touch-ui canvas {
   position: fixed;
   z-index: 5;
   left: 50%;
-  top: 1rem;
+  top: 3.1rem;
   transform: translateX(-50%);
   padding: 0.3rem 0.7rem;
   border: 1px solid rgba(150, 220, 235, 0.25);
@@ -51,6 +51,35 @@ body.touch-ui canvas {
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.4s ease;
+}
+
+/* The run's only scoreboard — quiet until a dawn turns it */
+#day {
+  position: absolute;
+  left: 50%;
+  top: max(1.1rem, env(safe-area-inset-top));
+  transform: translateX(-50%);
+  font-size: 0.66rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(214, 234, 244, 0.66);
+  text-shadow: 0 1px 6px rgba(3, 14, 20, 0.9);
+  white-space: nowrap;
+}
+
+#day.turn {
+  animation: day-turn 3.2s ease;
+}
+
+@keyframes day-turn {
+  0% {
+    color: rgba(255, 226, 170, 0.95);
+    text-shadow: 0 0 14px rgba(255, 200, 110, 0.6);
+  }
+  100% {
+    color: rgba(214, 234, 244, 0.66);
+    text-shadow: 0 1px 6px rgba(3, 14, 20, 0.9);
+  }
 }
 
 #crosshair {
@@ -672,6 +701,16 @@ body.underwater #bubbles {
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: #a8e4f2;
+  flex: 1;
+}
+
+.op-day {
+  margin-right: 0.6rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255, 214, 150, 0.8);
+  align-self: center;
 }
 
 .op-close {

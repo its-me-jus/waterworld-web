@@ -19,6 +19,10 @@ export type SavedBuild = {
   x: number
   z: number
   yaw?: number
+  /** Absolute deck height — carpentry pieces need it, terrain can't recompute it. */
+  y?: number
+  /** Carpentry piece variant (a wall hung as a door). */
+  variant?: string
   water?: number
   buoyant?: boolean
   mast?: boolean
@@ -29,6 +33,7 @@ export type SavedBuild = {
   expands?: number
   marked?: boolean
   beached?: boolean
+  anchored?: boolean
   torn?: boolean
   flooded?: boolean
   sides?: number
@@ -75,6 +80,8 @@ export type SavedRun = {
   spear: boolean
   suit: boolean
   climateElapsed: number
+  /** World seconds this run has lasted — the days-alive score derives from it. */
+  runElapsed?: number
   hasDived: boolean
   builds: SavedBuild[]
   harvest: SavedHarvest[]

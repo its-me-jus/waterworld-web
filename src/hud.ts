@@ -1,4 +1,5 @@
-import { formatRun, WOUND_CLOT, type Cause, type Vitals } from './survival'
+import { WOUND_CLOT, type Cause, type Vitals } from './survival'
+import { DAY_LENGTH } from './climate'
 import type { Stash, StashKind } from './salvage'
 
 /**
@@ -47,6 +48,7 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
       <circle class="breath-track" cx="40" cy="40" r="${RING_RADIUS}" />
       <circle class="breath-fill" cx="40" cy="40" r="${RING_RADIUS}" />
     </svg>
+    <div id="day"></div>
     <div id="vitals"></div>
     <div id="stash"></div>
     <div id="prompt"><kbd>F</kbd><span></span></div>
@@ -77,6 +79,7 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
   const promptBox = root.querySelector('#prompt') as HTMLElement
   const promptText = promptBox.querySelector('span') as HTMLElement
   const hurt = root.querySelector('#hurt') as HTMLElement
+  const dayChip = root.querySelector('#day') as HTMLElement
   if (opts.touch) promptBox.classList.add('no-key')
 
   const rows = ROWS.map(({ key, label, from }) => {
@@ -112,6 +115,7 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
 
   let lastPrompt = ''
   let lastStash = ''
+  let lastDay = 0
 
   const whisperQueue: string[] = []
   let whisperT = 0
@@ -221,13 +225,31 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     woundVeil.classList.toggle('bleeding', vitals.wounded)
   }
 
-  function setDead(cause: Cause | null, elapsed: number) {
+  /** The one scoreboard the game keeps: which day of the run you're on. */
+  function setDay(day: number) {
+    if (day === lastDay) return
+    const first = lastDay === 0
+    lastDay = day
+    dayChip.textContent = `Day ${day}`
+    if (!first) {
+      // Re-arm the dawn pulse
+      dayChip.classList.remove('turn')
+      void dayChip.offsetWidth
+      dayChip.classList.add('turn')
+    }
+  }
+
+  function setDead(cause: Cause | null, elapsed: number, day?: number) {
     deathTitle.textContent = cause ? DEATH_TITLE[cause] : 'You died'
-    let line = `Survived ${formatRun(elapsed)} · no save, no shortcut back`
+    const days = day ?? Math.floor(elapsed / DAY_LENGTH) + 1
+    let line = `Survived ${days} ${days === 1 ? 'day' : 'days'} · no save, no shortcut back`
     try {
       const best = Math.max(elapsed, Number(localStorage.getItem('ww.best') ?? 0))
       localStorage.setItem('ww.best', String(best))
-      if (best > elapsed + 1) line += ` · longest drift ${formatRun(best)}`
+      if (best > elapsed + 1) {
+        const bestDays = Math.floor(best / DAY_LENGTH) + 1
+        line += ` · longest drift ${bestDays} ${bestDays === 1 ? 'day' : 'days'}`
+      }
     } catch {
       // Private-mode storage is a nice-to-have, never a reason to lose the ending
     }
@@ -241,6 +263,7 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     root.classList.remove('dim')
     whisperQueue.length = 0
     whisperT = 0
+    lastDay = 0
   }
 
   return {
@@ -248,6 +271,7 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     whisper,
     setPrompt,
     setStash,
+    setDay,
     setDead,
     clearDead,
     get promptShowing() {
