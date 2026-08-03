@@ -113,6 +113,8 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
   let open = false
   let screen: Screen = 'hub'
   let liveTimer = 0
+  /** Skip innerHTML writes that would detach buttons mid-tap. */
+  let lastPaint = ''
 
   const GEAR: { key: 'knife' | 'spear'; label: string; has: () => boolean }[] = [
     { key: 'knife', label: 'Galley knife', has: () => deps.loot.hasKnife },
@@ -137,11 +139,17 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     return 'Steady'
   }
 
+  function paint(html: string) {
+    if (html === lastPaint) return
+    lastPaint = html
+    screenBox.innerHTML = html
+  }
+
   function renderHub() {
     const recipes = deps.campRecipes().length
     const carried = stashCount(deps.salvage.stash)
     const hint = bodyHint(deps.vitals)
-    screenBox.innerHTML = `
+    paint(`
       <p class="op-lead">Open a screen — the map stays for acting.</p>
       <div class="op-hub">
         <button type="button" class="op-hub-btn" data-go="body">
@@ -160,7 +168,7 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
           <span class="op-hub-name">Field kit</span>
           <span class="op-hub-meta">Places · restart</span>
         </button>
-      </div>`
+      </div>`)
   }
 
   function renderBody() {
@@ -168,10 +176,12 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     const rows = BODY_ROWS.map(({ key, label }) => {
       const value = v[key] as number
       const low = value < 0.25
+      // Quantize the bar so live refresh doesn't thrash the DOM every tick
+      const bar = Math.round(Math.max(0, Math.min(1, value)) * 40) / 40
       return (
         `<div class="op-vital${low ? ' low' : ''}">` +
         `<span class="op-vital-label">${label}</span>` +
-        `<i class="op-vital-track"><b style="transform:scaleX(${Math.max(0, Math.min(1, value))})"></b></i>` +
+        `<i class="op-vital-track"><b style="transform:scaleX(${bar})"></b></i>` +
         `<span class="op-vital-n">${Math.round(value * 100)}</span>` +
         `</div>`
       )
@@ -186,10 +196,10 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
       )
     }
     const suited = v.suited ? 'Immersion suit on' : 'No suit'
-    screenBox.innerHTML = `
+    paint(`
       <p class="op-lead">How the body is holding — read it here, feel it out there.</p>
       <div class="op-vitals">${rows.join('')}</div>
-      <p class="op-aside">${suited}</p>`
+      <p class="op-aside">${suited}</p>`)
   }
 
   function renderStash(stash: Stash, labels: Salvage['labels']) {
@@ -210,7 +220,7 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
       (g) =>
         `<div class="op-gear-item${g.has() ? '' : ' missing'}"><span class="dot"></span>${g.label}</div>`,
     ).join('')
-    screenBox.innerHTML = `
+    paint(`
       <div class="op-section op-section-first">
         <h3>Carried</h3>
         <div class="op-grid">${rows.join('')}</div>
@@ -218,14 +228,15 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
       <div class="op-section">
         <h3>Gear</h3>
         <div class="op-gear">${gear}</div>
-      </div>`
+      </div>`)
   }
 
   function renderCamp() {
     const recipes = deps.campRecipes()
     if (!recipes.length) {
-      screenBox.innerHTML =
-        '<p class="op-camp-empty">Stand where a build would work, with the materials on you — then it shows up here.</p>'
+      paint(
+        '<p class="op-camp-empty">Stand where a build would work, with the materials on you — then it shows up here.</p>',
+      )
       return
     }
 
@@ -252,11 +263,11 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
       chunks.push('</div>')
     }
     chunks.push('</div>')
-    screenBox.innerHTML = chunks.join('')
+    paint(chunks.join(''))
   }
 
   function renderKit() {
-    screenBox.innerHTML = `
+    paint(`
       <div class="op-cheats">
         <button data-tp="island" type="button">Island</button>
         <button data-tp="wreck" type="button">Wreck</button>
@@ -271,11 +282,12 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
         <button data-cheat="spear" type="button">Spear</button>`
             : ''
         }
-      </div>`
+      </div>`)
   }
 
   function setScreen(next: Screen) {
     screen = next
+    lastPaint = ''
     const onHub = next === 'hub'
     titleEl.textContent = onHub ? 'Pack' : SCREEN_TITLE[next]
     backBtn.hidden = onHub
