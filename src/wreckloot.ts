@@ -42,6 +42,9 @@ export type WreckLootDeps = {
   gearState: () => GearState
   pryGear: () => boolean
   takeSuit: () => boolean
+  lanternSpot: () => THREE.Vector3 | null
+  takeLantern: () => boolean
+  suitLeft: () => boolean
   tinSpot: () => THREE.Vector3 | null
   takeTin: () => boolean
   logSpot: () => THREE.Vector3 | null
@@ -69,7 +72,9 @@ export function createWreckLoot(
 ) {
   let hasKnife = false
   let hasSpear = false
+  let hasLantern = false
   let lunge = 0
+  let lanternClock = 0
 
   // —— the memory overlay — a warm dim, not a UI panel ————————————————
   const memoryEl = document.createElement('div')
@@ -92,6 +97,66 @@ export function createWreckLoot(
   )
   const swayQuat = new THREE.Quaternion()
   const swayAxis = new THREE.Vector3(0, 0, 1)
+
+  // —— the diving lantern viewmodel ————————————————————————————————
+  // It rides low on the left, opposite the spear. The lamp is sealed ship's
+  // gear: brass cage, clouded glass, and no separate fuel economy.
+  const lantern = new THREE.Group()
+  const lanternBasePos = new THREE.Vector3(-0.33, -0.34, -0.67)
+  const lanternBaseRot = new THREE.Euler(0.08, -0.18, -0.12)
+  lantern.position.copy(lanternBasePos)
+  lantern.rotation.copy(lanternBaseRot)
+  lantern.visible = false
+  camera.add(lantern)
+
+  const lanternBrass = new THREE.MeshStandardMaterial({
+    color: 0x9b7135,
+    roughness: 0.42,
+    metalness: 0.72,
+    emissive: 0x2a1806,
+    emissiveIntensity: 0.3,
+  })
+  const lanternGlass = new THREE.MeshStandardMaterial({
+    color: 0xffd9a0,
+    roughness: 0.24,
+    transparent: true,
+    opacity: 0.72,
+    emissive: 0xffb850,
+    emissiveIntensity: 0.08,
+  })
+  const glass = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 9), lanternGlass)
+  lantern.add(glass)
+
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.12, 0.045, 10), lanternBrass)
+  cap.position.y = 0.1
+  lantern.add(cap)
+  const base = cap.clone()
+  base.position.y = -0.1
+  base.rotation.z = Math.PI
+  lantern.add(base)
+
+  const cageBarGeometry = new THREE.CylinderGeometry(0.009, 0.009, 0.2, 6)
+  for (let i = 0; i < 4; i++) {
+    const angle = (i / 4) * Math.PI * 2
+    const bar = new THREE.Mesh(cageBarGeometry, lanternBrass)
+    bar.position.set(Math.cos(angle) * 0.095, 0, Math.sin(angle) * 0.095)
+    lantern.add(bar)
+  }
+  const handle = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.012, 6, 14, Math.PI), lanternBrass)
+  handle.position.y = 0.125
+  handle.rotation.z = Math.PI
+  lantern.add(handle)
+
+  const lanternTarget = new THREE.Object3D()
+  lanternTarget.position.set(0, -0.08, -8)
+  camera.add(lanternTarget)
+  const lanternSpotlight = new THREE.SpotLight(0xffd090, 0, 9, 0.42, 0.55, 1.6)
+  lanternSpotlight.position.set(0, 0.01, -0.02)
+  lanternSpotlight.target = lanternTarget
+  lantern.add(lanternSpotlight)
+  const lanternFill = new THREE.PointLight(0xffc878, 0, 1.8, 1.5)
+  lanternFill.position.set(0, 0, -0.08)
+  lantern.add(lanternFill)
 
   /** The pouch and the spear — and one piece of who you were. */
   function remember() {
@@ -196,12 +261,27 @@ export function createWreckLoot(
     verb: 'Take',
     label: 'the immersion suit',
     radius: GEAR_RANGE,
-    available: () => gearNear() && deps.gearState() === 'open',
+    available: () => gearNear() && deps.gearState() !== 'shut' && deps.suitLeft(),
     use: () => {
       if (!deps.takeSuit()) return
       wearSuit(vitals, hud.whisper)
       deps.onSuit()
       hud.whisper('Ship’s issue, never worn. The sea will have to work harder.')
+    },
+  })
+
+  const lanternPos = new THREE.Vector3()
+  deps.interactions.add({
+    position: lanternPos,
+    verb: 'Take',
+    label: 'the diving lantern',
+    radius: GEAR_RANGE,
+    available: () => vitals.alive && deps.lanternSpot() !== null,
+    use: () => {
+      if (!deps.takeLantern()) return
+      hasLantern = true
+      lantern.visible = true
+      hud.whisper('A diving lantern, sealed and dark. Night will need it.')
     },
   })
 
@@ -268,8 +348,15 @@ export function createWreckLoot(
     deps.thump(vitals.alive ? 0.85 : 1.2)
   }
 
-  /** URL tuning: ?knife=1, ?spear=1 fully armed, ?suit=1 already dressed. */
-  function grant(what: 'knife' | 'spear' | 'suit') {
+  /** URL tuning: ?knife=1, ?spear=1, ?suit=1, ?lantern=1. */
+  function grant(what: 'knife' | 'spear' | 'suit' | 'lantern') {
+    if (what === 'lantern') {
+      if (deps.gearState() === 'shut') deps.pryGear()
+      deps.takeLantern()
+      hasLantern = true
+      lantern.visible = true
+      return
+    }
     if (what === 'suit') {
       deps.pryGear()
       deps.takeSuit()
@@ -287,7 +374,7 @@ export function createWreckLoot(
     deps.takeKnife()
   }
 
-  function update(dt: number, view: PlayerFrame) {
+  function update(dt: number, view: PlayerFrame, daylight = 1) {
     // Registry positions that live in world space, refreshed each frame
     const knife = deps.knifeSpot()
     if (knife) knifePos.copy(knife)
@@ -297,6 +384,8 @@ export function createWreckLoot(
     if (tin) tinPos.copy(tin)
     const log = deps.logSpot()
     if (log) logPos.copy(log)
+    const lanternFind = deps.lanternSpot()
+    if (lanternFind) lanternPos.copy(lanternFind)
     if (deps.shark.active) jabPos.copy(deps.shark.position)
 
     // Carried spear: stroke sway, plus the thrust when you answer a run
@@ -309,14 +398,50 @@ export function createWreckLoot(
       spear.position.copy(spearBasePos)
       spear.position.z -= thrust
     }
+
+    lanternClock += dt
+    if (hasLantern) {
+      const strokeSway = Math.sin(view.stroke * Math.PI * 2) * 0.018
+      lantern.position.copy(lanternBasePos)
+      lantern.position.y += Math.sin(lanternClock * 1.5) * 0.008
+      lantern.rotation.copy(lanternBaseRot)
+      lantern.rotation.z += strokeSway + Math.sin(lanternClock * 1.1) * 0.012
+
+      const darkness = THREE.MathUtils.clamp((0.55 - daylight) / 0.55, 0, 1)
+      const on = view.underwater && darkness > 0.05
+      lanternSpotlight.intensity = on ? 2.2 * darkness : 0
+      lanternFill.intensity = on ? 0.35 * darkness : 0
+      lanternGlass.emissiveIntensity = on ? 0.35 + darkness * 1.45 : 0.08
+    }
   }
 
   /** A new run: the wreck is restocked elsewhere; the swimmer starts bare. */
   function reset() {
     hasKnife = false
     hasSpear = false
+    hasLantern = false
     spear.visible = false
+    lantern.visible = false
+    lanternSpotlight.intensity = 0
+    lanternFill.intensity = 0
+    lanternGlass.emissiveIntensity = 0.08
     lunge = 0
+    lanternClock = 0
+  }
+
+  function snapshot() {
+    return { knife: hasKnife, spear: hasSpear, lantern: hasLantern }
+  }
+
+  function restore(saved?: { knife?: boolean; spear?: boolean; lantern?: boolean }) {
+    reset()
+    if (!saved) return
+    if (saved.knife) hasKnife = true
+    if (saved.spear) grantSpear()
+    if (saved.lantern) {
+      hasLantern = true
+      lantern.visible = true
+    }
   }
 
   return {
@@ -324,11 +449,16 @@ export function createWreckLoot(
     onBite,
     grant,
     reset,
+    snapshot,
+    restore,
     get hasKnife() {
       return hasKnife
     },
     get hasSpear() {
       return hasSpear
+    },
+    get hasLantern() {
+      return hasLantern
     },
   }
 }

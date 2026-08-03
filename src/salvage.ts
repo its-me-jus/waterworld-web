@@ -604,6 +604,29 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     }
   }
 
+  function snapshot() {
+    return {
+      fixedTaken: finds.filter((f) => !f.drift).map((f) => f.taken),
+      poolFull: pools.map((p) => p.full),
+    }
+  }
+
+  function restore(
+    saved: { fixedTaken: boolean[]; poolFull: number[] } | undefined,
+    viewer: THREE.Vector3,
+  ) {
+    reset(viewer)
+    if (!saved) return
+    const fixed = finds.filter((f) => !f.drift)
+    fixed.forEach((find, i) => {
+      find.taken = !!saved.fixedTaken[i]
+      find.object.visible = !find.taken
+    })
+    pools.forEach((pool, i) => {
+      pool.full = Math.min(1, Math.max(0, saved.poolFull[i] ?? 1))
+    })
+  }
+
   function setStash(next: Stash) {
     for (const key of Object.keys(stash) as StashKind[]) {
       stash[key] = Math.max(0, Math.floor(next[key] ?? 0))
@@ -621,6 +644,8 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     spend,
     update,
     reset,
+    snapshot,
+    restore,
     setStash,
     jettison,
     drawFromPool,

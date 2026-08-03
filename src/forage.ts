@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import type { Hud } from './hud'
 import type { Interactions } from './interact'
 import type { PlayerFrame } from './player'
+import { buildNet, buildRod, setRodLine } from './fishinggear'
 import { eat, type Vitals } from './survival'
 
 /**
@@ -19,6 +20,9 @@ import { eat, type Vitals } from './survival'
 
 export type ForageDeps = {
   interactions: Interactions
+  camera: THREE.PerspectiveCamera
+  scene: THREE.Scene
+  sfx?: (kind: string, intensity?: number) => void
   /** Bobbing world position of the crate, or null once it's been stripped. */
   provisionSpot: () => THREE.Vector3 | null
   takeProvision: () => boolean
@@ -46,6 +50,20 @@ const SPEAR_RANGE = 3.4
 const ROD_RANGE = 14
 /** Wading scoop in the wash. */
 const NET_RANGE = 5.2
+const SPLASH_BEAT = 0.45
+const CATCH_BEAT = 0.72
+const ACTION_DURATION = 1
+const UP = new THREE.Vector3(0, 1, 0)
+
+type FishingTool = 'rod' | 'net'
+type FishingAction = {
+  tool: FishingTool
+  age: number
+  fishIndex: number
+  success: boolean
+  bonus: number
+  target: THREE.Vector3
+}
 
 export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
   const cratePos = new THREE.Vector3()
@@ -73,8 +91,52 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
   let smokedFish = 0
   let hasRod = false
   let hasNet = false
+  let equipped: FishingTool | null = null
+  let action: FishingAction | null = null
   let rodCool = 0
   let netCool = 0
+
+  // Camera-carried fishing gear, posed in the same viewmodel space as the
+  // mate's spear. Only the equipped tool appears when it has a target.
+  const rod = buildRod()
+  const net = buildNet()
+  rod.scale.setScalar(0.82)
+  net.scale.setScalar(0.76)
+  rod.visible = false
+  net.visible = false
+  deps.camera.add(rod)
+  deps.camera.add(net)
+
+  const rodBasePos = new THREE.Vector3(0.42, -0.42, -0.82)
+  const netBasePos = new THREE.Vector3(0.03, -0.43, -0.72)
+  const rodBaseQuat = new THREE.Quaternion().setFromUnitVectors(
+    UP,
+    new THREE.Vector3(-0.18, 0.82, -0.55).normalize(),
+  )
+  const netBaseQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.28, 0, -0.08))
+  const swayQuat = new THREE.Quaternion()
+  const actionQuat = new THREE.Quaternion()
+  const swayAxis = new THREE.Vector3(0, 0, 1)
+  const castAxis = new THREE.Vector3(1, 0, 0)
+  const lineTarget = new THREE.Vector3()
+  const lineTip = new THREE.Vector3(0, 1.32, 0)
+  const netOpen = net.getObjectByName('open') as THREE.Mesh | undefined
+
+  // One world-space ripple is reused for every cast instead of allocating
+  // effects in the interaction callback.
+  const splashMaterial = new THREE.MeshBasicMaterial({
+    color: 0xd7f4f2,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  })
+  const splash = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.025, 5, 24), splashMaterial)
+  splash.rotation.x = Math.PI / 2
+  splash.visible = false
+  splash.renderOrder = 4
+  deps.scene.add(splash)
+  let splashAge = Number.POSITIVE_INFINITY
+
   const fishPos = new THREE.Vector3()
   const spearFishPos = new THREE.Vector3()
   const rodFishPos = new THREE.Vector3()
@@ -134,22 +196,29 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     verb: 'Cast',
     label: 'Rod',
     radius: ROD_RANGE,
-    available: () => rodCurrent >= 0 && vitals.alive && hasRod && rodCool <= 0,
+    available: () =>
+      rodCurrent >= 0 &&
+      vitals.alive &&
+      hasRod &&
+      rodCool <= 0 &&
+      !action &&
+      equipped === 'rod',
     use: () => {
       const index = rodCurrent
       if (index < 0) return
       rodCool = 7.5
-      if (Math.random() < 0.62) {
-        deps.fish.fling(index, true)
-        rawFish += 1
-        hud.whisper(
-          rawFish > 1 ? 'Another on the line. The rod earns its keep.' : 'A tug, then weight. Fish on the line.',
-        )
-      } else {
-        deps.fish.fling(index, false)
-        hud.whisper('A nibble, then nothing. The line comes back empty.')
+      action = {
+        tool: 'rod',
+        age: 0,
+        fishIndex: index,
+        success: Math.random() < 0.62,
+        bonus: 0,
+        target: deps.fish.positionAt(index, new THREE.Vector3()).clone(),
       }
+      current = -1
+      spearCurrent = -1
       rodCurrent = -1
+      netCurrent = -1
     },
   })
 
@@ -159,24 +228,29 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     verb: 'Scoop',
     label: 'Net',
     radius: NET_RANGE,
-    available: () => netCurrent >= 0 && vitals.alive && hasNet && netCool <= 0,
+    available: () =>
+      netCurrent >= 0 &&
+      vitals.alive &&
+      hasNet &&
+      netCool <= 0 &&
+      !action &&
+      equipped === 'net',
     use: () => {
       const index = netCurrent
       if (index < 0) return
       netCool = 5.5
-      if (Math.random() < 0.58) {
-        deps.fish.fling(index, true)
-        const bonus = Math.random() < 0.28 ? 1 : 0
-        rawFish += 1 + bonus
-        hud.whisper(
-          bonus
-            ? 'Two in the mesh. The wash was thick with them.'
-            : 'One in the net. Silver and thrashing.',
-        )
-      } else {
-        deps.fish.fling(index, false)
-        hud.whisper('The mesh comes up empty. They saw the shadow.')
+      const success = Math.random() < 0.58
+      action = {
+        tool: 'net',
+        age: 0,
+        fishIndex: index,
+        success,
+        bonus: success && Math.random() < 0.28 ? 1 : 0,
+        target: deps.fish.positionAt(index, new THREE.Vector3()).clone(),
       }
+      current = -1
+      spearCurrent = -1
+      rodCurrent = -1
       netCurrent = -1
     },
   })
@@ -209,11 +283,66 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
       netCool = Math.max(0, netCool - dt)
     }
 
+    if (splash.visible) {
+      splashAge += dt
+      const life = Math.min(1, splashAge / 0.55)
+      splash.scale.setScalar(0.55 + life * 2.2)
+      splashMaterial.opacity = (1 - life) * 0.68
+      if (life >= 1) splash.visible = false
+    }
+
+    if (action) {
+      const active = action
+      const previousAge = active.age
+      active.age += Math.max(0, dt)
+
+      if (previousAge < SPLASH_BEAT && active.age >= SPLASH_BEAT) {
+        splash.position.copy(active.target)
+        splash.position.y += 0.025
+        splash.scale.setScalar(0.55)
+        splashMaterial.opacity = 0.68
+        splashAge = 0
+        splash.visible = true
+        deps.sfx?.('splash', 0.45)
+      }
+
+      if (previousAge < CATCH_BEAT && active.age >= CATCH_BEAT) {
+        deps.fish.fling(active.fishIndex, active.success)
+        if (active.tool === 'rod') {
+          if (active.success) {
+            rawFish += 1
+            hud.whisper(
+              rawFish > 1
+                ? 'Another on the line. The rod earns its keep.'
+                : 'A tug, then weight. Fish on the line.',
+            )
+          } else {
+            hud.whisper('A nibble, then nothing. The line comes back empty.')
+          }
+        } else if (active.success) {
+          rawFish += 1 + active.bonus
+          hud.whisper(
+            active.bonus
+              ? 'Two in the mesh. The wash was thick with them.'
+              : 'One in the net. Silver and thrashing.',
+          )
+        } else {
+          hud.whisper('The mesh comes up empty. They saw the shadow.')
+        }
+      }
+
+      if (active.age >= ACTION_DURATION) {
+        action = null
+        setRodLine(rod, null)
+        if (netOpen) netOpen.visible = false
+      }
+    }
+
     const spot = deps.provisionSpot()
     if (spot) cratePos.copy(spot)
 
     current = -1
-    if (view.underwater && view.effort < 0.3 && vitals.alive) {
+    if (!action && view.underwater && view.effort < 0.3 && vitals.alive) {
       const hit = deps.fish.nearest(camera.position, GRAB_RANGE)
       if (hit) {
         current = hit.index
@@ -223,7 +352,13 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
 
     // The spear forgives a little more motion — reach buys you that
     spearCurrent = -1
-    if (view.underwater && view.effort < 0.55 && vitals.alive && (deps.hasSpear?.() ?? false)) {
+    if (
+      !action &&
+      view.underwater &&
+      view.effort < 0.55 &&
+      vitals.alive &&
+      (deps.hasSpear?.() ?? false)
+    ) {
       const hit = deps.fish.nearest(camera.position, SPEAR_RANGE)
       if (hit) {
         spearCurrent = hit.index
@@ -233,7 +368,7 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
 
     // Rod: from shore (walking) or near the surface — not deep diving
     rodCurrent = -1
-    if (hasRod && vitals.alive && rodCool <= 0) {
+    if (!action && hasRod && vitals.alive && rodCool <= 0) {
       const nearSurface = view.walking || (!view.underwater && view.depth < 1.2)
       if (nearSurface) {
         const hit = deps.fish.nearest(camera.position, ROD_RANGE)
@@ -246,7 +381,7 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
 
     // Net: wading the wash — feet on ground, water still around you
     netCurrent = -1
-    if (hasNet && vitals.alive && netCool <= 0) {
+    if (!action && hasNet && vitals.alive && netCool <= 0) {
       const wading =
         view.walking && view.groundY > -0.9 && view.groundY < 1.15 && view.depth > -0.1
       const inWash = !view.walking && !view.underwater && view.depth < 1.4
@@ -267,6 +402,67 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
         deps.crabs.positionAt(hit.index, crabPos)
       }
     }
+
+    // Both tools carry a small stroke sway. Their action poses are applied on
+    // top, keeping the idle placement stable while casting and hauling.
+    const sway = Math.sin(view.stroke * Math.PI * 2) * 0.026
+    swayQuat.setFromAxisAngle(swayAxis, sway)
+    rod.position.copy(rodBasePos)
+    rod.quaternion.copy(rodBaseQuat).multiply(swayQuat)
+    net.position.copy(netBasePos)
+    net.quaternion.copy(netBaseQuat).multiply(swayQuat)
+
+    if (action?.tool === 'rod') {
+      const age = action.age
+      const draw = Math.min(1, age / 0.2)
+      const snap = THREE.MathUtils.smoothstep(age, 0.2, 0.55)
+      const settle = THREE.MathUtils.smoothstep(age, CATCH_BEAT, ACTION_DURATION)
+      const castBend = THREE.MathUtils.lerp(-0.45 * draw, 0.52, snap) * (1 - settle)
+      actionQuat.setFromAxisAngle(castAxis, castBend)
+      rod.quaternion.multiply(actionQuat)
+      rod.position.z += draw * 0.12 - snap * 0.28 + settle * 0.16
+      rod.position.y += Math.sin(Math.min(1, age / 0.55) * Math.PI) * 0.08
+
+      const extend = THREE.MathUtils.smoothstep(age, 0.2, SPLASH_BEAT)
+      const retract = 1 - THREE.MathUtils.smoothstep(age, CATCH_BEAT, ACTION_DURATION)
+      const reach = extend * retract
+      if (reach > 0.01) {
+        rod.updateWorldMatrix(true, false)
+        lineTarget.copy(action.target)
+        rod.worldToLocal(lineTarget)
+        lineTarget.lerpVectors(lineTip, lineTarget, reach)
+        setRodLine(rod, lineTarget)
+      } else {
+        setRodLine(rod, null)
+      }
+    } else {
+      setRodLine(rod, null)
+    }
+
+    if (action?.tool === 'net') {
+      const age = action.age
+      const lift = THREE.MathUtils.smoothstep(age, 0, 0.18)
+      const thrown = THREE.MathUtils.smoothstep(age, 0.18, 0.5)
+      const pulled = THREE.MathUtils.smoothstep(age, 0.6, ACTION_DURATION)
+      net.position.y += lift * 0.22 - pulled * 0.18
+      net.position.z -= thrown * 0.65 - pulled * 0.58
+      actionQuat.setFromAxisAngle(castAxis, -0.8 * thrown + 0.65 * pulled)
+      net.quaternion.multiply(actionQuat)
+      if (netOpen) {
+        netOpen.visible = age >= 0.2 && age < ACTION_DURATION
+        const openScale =
+          0.15 +
+          THREE.MathUtils.smoothstep(age, 0.2, SPLASH_BEAT) * 1.2 -
+          THREE.MathUtils.smoothstep(age, CATCH_BEAT, ACTION_DURATION) * 1.05
+        netOpen.scale.setScalar(openScale)
+      }
+    } else if (netOpen) {
+      netOpen.visible = false
+      netOpen.scale.setScalar(0.15)
+    }
+
+    rod.visible = equipped === 'rod' && (rodCurrent >= 0 || action?.tool === 'rod')
+    net.visible = equipped === 'net' && (netCurrent >= 0 || action?.tool === 'net')
   }
 
   function eatRaw() {
@@ -308,8 +504,16 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     smokedFish = 0
     hasRod = false
     hasNet = false
+    equipped = null
+    action = null
     rodCool = 0
     netCool = 0
+    rod.visible = false
+    net.visible = false
+    setRodLine(rod, null)
+    if (netOpen) netOpen.visible = false
+    splash.visible = false
+    splashAge = Number.POSITIVE_INFINITY
   }
 
   /** Dev / tests — put fish in hand without diving. */
@@ -325,18 +529,35 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
   function fashionRod() {
     if (hasRod) return false
     hasRod = true
+    equip('rod')
     return true
   }
 
   function fashionNet() {
     if (hasNet) return false
     hasNet = true
+    equip('net')
     return true
   }
 
-  function setGear(rod: boolean, net: boolean) {
-    hasRod = !!rod
-    hasNet = !!net
+  function equip(tool: FishingTool | null) {
+    equipped =
+      tool === 'rod' && hasRod ? 'rod' : tool === 'net' && hasNet ? 'net' : null
+    rod.visible = equipped === 'rod'
+    net.visible = equipped === 'net'
+  }
+
+  function setGear(ownsRod: boolean, ownsNet: boolean, fishingTool?: FishingTool | null) {
+    hasRod = !!ownsRod
+    hasNet = !!ownsNet
+    action = null
+    setRodLine(rod, null)
+    if (netOpen) netOpen.visible = false
+    let preferred: FishingTool | null = hasRod ? 'rod' : hasNet ? 'net' : null
+    if (fishingTool === null) preferred = null
+    else if (fishingTool === 'rod' && hasRod) preferred = 'rod'
+    else if (fishingTool === 'net' && hasNet) preferred = 'net'
+    equip(preferred)
   }
 
   return {
@@ -345,6 +566,7 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     grant,
     setFish,
     setGear,
+    equip,
     fashionRod,
     fashionNet,
     get rawFish() {
@@ -358,6 +580,9 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     },
     get hasNet() {
       return hasNet
+    },
+    get equipped() {
+      return equipped
     },
     eatRaw,
     cook,

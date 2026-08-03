@@ -13,7 +13,7 @@ import { createIsland } from './island'
 import { createLittoral } from './littoral'
 import { createOcean } from './ocean'
 import { createOpMenu, type TeleportSpot } from './opmenu'
-import { applyVitals, clearSave, readSave, writeSave, type SavedRun } from './persist'
+import { applyVitals, clearSave, legacyWreck, readSave, writeSave, type SavedRun } from './persist'
 import { bindKeyboardMouse, createPlayer, updatePlayer } from './player'
 import { createPostChain } from './post'
 import { createSalvage } from './salvage'
@@ -342,6 +342,9 @@ loot = createWreckLoot(app, camera, hud, vitals, {
   gearState: () => wreck.gearLockerState,
   pryGear: wreck.pryGear,
   takeSuit: wreck.takeSuit,
+  lanternSpot: wreck.lanternSpot,
+  takeLantern: wreck.takeLantern,
+  suitLeft: () => wreck.suitLeft,
   tinSpot: wreck.tinSpot,
   takeTin: wreck.takeTin,
   logSpot: wreck.logSpot,
@@ -350,13 +353,19 @@ loot = createWreckLoot(app, camera, hud, vitals, {
   shark,
   thump: (i) => oceanAudio.impact(i),
 })
-// ?knife=1 skips the deck dive, ?spear=1 starts armed, ?suit=1 already dressed
+// ?knife=1 skips the deck dive; ?spear=1, ?suit=1, and ?lantern=1 grant wreck gear
 if (params.has('knife')) loot.grant('knife')
 if (params.has('spear')) loot.grant('spear')
 if (params.has('suit')) loot.grant('suit')
+if (params.has('lantern')) loot.grant('lantern')
 
 const forage = createForage(hud, vitals, {
   interactions,
+  camera,
+  scene,
+  sfx: (kind, intensity) => {
+    if (kind === 'splash') oceanAudio.sfx(kind, intensity)
+  },
   provisionSpot: wreck.provisionSpot,
   takeProvision: wreck.takeProvision,
   fish: underwaterWorld.fish,
@@ -425,6 +434,7 @@ function restart() {
   forage.reset()
   littoral.reset()
   harvest.reset()
+  island.crabs.reset()
   improvise.reset()
   swimmer.setSurvivalSuit(false)
   hud.clearDead()
@@ -475,12 +485,22 @@ function captureSave(): SavedRun {
     spear: loot.hasSpear,
     rod: forage.hasRod,
     net: forage.hasNet,
+    fishingTool: forage.equipped ?? undefined,
     suit: vitals.suited,
+    lantern: loot.hasLantern,
     climateElapsed: climate.getElapsed(),
     runElapsed: runElapsed(),
     hasDived,
     builds: improvise.snapshot(),
     harvest: harvest.snapshot(),
+    washMeter: improvise.getWashMeter(),
+    salvage: salvage.snapshot(),
+    littoral: littoral.snapshot(),
+    wreck: wreck.snapshot(),
+    loot: loot.snapshot(),
+    crabs: island.crabs.snapshot(),
+    climate: climate.snapshot(),
+    sea: sea.snapshot(),
   }
 }
 
@@ -499,24 +519,42 @@ function loadRun(data: SavedRun) {
   player.vy = 0
   player.speed = 0
   applyVitals(vitals, data.vitals)
+
+  // Weather and ocean first — later visual restores read tide / sea height
+  climate.restore(data.climate, data.climateElapsed)
+  sea.setFair(climate.state.fair)
+  sea.setStorm(climate.state.storm)
+  sea.restore(data.sea)
+  oceanState.tide = climate.state.tide
+  sea.update(0, climate.getElapsed())
+
+  // reset() clears stash, so restore world salvage before inventory
+  salvage.restore(data.salvage, camera.position)
   salvage.setStash(data.stash)
+
+  island.crabs.restore(data.crabs)
+  littoral.restore(data.littoral)
+  harvest.restore(data.harvest ?? [])
+
+  wreck.restore(data.wreck ?? legacyWreck(data))
+  loot.restore(
+    data.loot ?? {
+      knife: !!data.knife,
+      spear: !!data.spear,
+      lantern: !!data.lantern,
+    },
+  )
+
   forage.setFish(data.rawFish, data.smokedFish)
-  forage.setGear(!!data.rod, !!data.net)
-  harvest.restore(data.harvest)
-  improvise.restore(data.builds)
-  climate.setElapsed(data.climateElapsed)
+  forage.setGear(!!data.rod, !!data.net, data.fishingTool)
+
+  improvise.restore(data.builds ?? [])
+  improvise.setWashMeter(data.washMeter ?? 0)
+
   runStart = climate.getElapsed() - (data.runElapsed ?? data.vitals.elapsed)
   lastDay = dayAlive()
   hasDived = !!data.hasDived
-  loot.reset()
-  if (data.spear) loot.grant('spear')
-  else if (data.knife) loot.grant('knife')
-  if (data.suit || data.vitals.suited) {
-    loot.grant('suit')
-    swimmer.setSurvivalSuit(true)
-  } else {
-    swimmer.setSurvivalSuit(false)
-  }
+  swimmer.setSurvivalSuit(!!(data.suit || data.vitals.suited))
   collide(player)
   dead = false
   deathT = 0
@@ -561,6 +599,8 @@ const opMenu = createOpMenu(app, {
   grantFish: (n) => forage.grant(n),
   hasRod: () => forage.hasRod,
   hasNet: () => forage.hasNet,
+  equippedTool: () => forage.equipped,
+  equipTool: (tool) => forage.equip(tool),
   campRecipes: () => improvise.campRecipes(),
   day: dayAlive,
   teleport,
@@ -620,6 +660,8 @@ if (import.meta.env.DEV) {
       shark,
       loot,
       forage,
+      littoral,
+      harvest,
       improvise,
       opMenu,
       underwater: underwaterWorld,
@@ -750,7 +792,7 @@ function frame() {
   // they only come while the sky is settled. Storm raises the set.
   sea.setFair(weather.fair)
   sea.setStorm(weather.storm)
-  sea.update(dt, t)
+  sea.update(dt, climate.getElapsed())
   oceanState.tide = weather.tide
   oceanAudio.setSeaWeight(sea.weight)
 
@@ -1088,6 +1130,7 @@ function frame() {
     underwater,
     pixelRatio: renderer.getPixelRatio(),
     biolum: weather.biolum,
+    daylight: weather.daylight,
     effort: view.effort,
   })
 
@@ -1095,7 +1138,7 @@ function frame() {
   island.update(camera, underwater, t)
   shore.update(t, camera, underwater)
   salvage.update(t, camera.position, weather.storm)
-  loot.update(dt, view)
+  loot.update(dt, view, weather.daylight)
   forage.update(camera, view, dt)
   littoral.update(dt, player, { biolum: weather.biolum, rain: weather.rain })
   underwaterWorld.fish.setAttractors(littoral.fishAttractors())
@@ -1179,7 +1222,7 @@ function frame() {
   const weather = climate.update(0)
   applyStormToWaves(weather.storm)
   syncWaves()
-  sea.update(0, 0)
+  sea.update(0, climate.getElapsed())
   oceanState.tide = weather.tide
   skyRig.update(0, weather)
   skyRig.focusShadow(player.x, 0, player.z)

@@ -14,6 +14,7 @@
     "smoke": "node scripts/smoke.mjs",
     "test:base": "node scripts/test-base.mjs",
     "test:camp": "node scripts/test-camp.mjs",
+    "test:save": "node scripts/test-save.mjs",
     "shot:camp": "node scripts/shot-camp.mjs",
     "sim:starts": "node scripts/sim-starts.mjs",
     "shot:shelter": "node scripts/shot-shelter.mjs",

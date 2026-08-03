@@ -983,6 +983,44 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   suitHood.scale.set(1, 0.85, 0.8)
   suitHanging.add(suitHood)
 
+  // Ship-issued diving lantern — sealed brass cage, clouded lens. Hangs beside
+  // the suit; knife opens the door, then looking finds it. No fuel chain —
+  // the economy is the dive itself.
+  const lanternProp = new THREE.Group()
+  lanternProp.position.set(-0.22, 0.28, 0.05)
+  lanternProp.rotation.set(0.08, 0.35, 0.12)
+  gear.add(lanternProp)
+  {
+    const brass = new THREE.MeshStandardMaterial({
+      color: 0x8a6a38,
+      roughness: 0.45,
+      metalness: 0.72,
+      emissive: 0x2a1a08,
+      emissiveIntensity: 0.35,
+    })
+    const glass = new THREE.MeshStandardMaterial({
+      color: 0xd8c898,
+      roughness: 0.35,
+      metalness: 0.05,
+      emissive: 0xffcc66,
+      emissiveIntensity: 0.55,
+      transparent: true,
+      opacity: 0.85,
+    })
+    const cage = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.1, 0.22, 8), brass)
+    lanternProp.add(cage)
+    const lens = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), glass)
+    lens.position.y = 0.02
+    lanternProp.add(lens)
+    const handle = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.012, 5, 12), brass)
+    handle.rotation.x = Math.PI / 2
+    handle.position.y = 0.14
+    lanternProp.add(handle)
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.12, 0.04, 8), brass)
+    base.position.y = -0.12
+    lanternProp.add(base)
+  }
+
   // A bread tin from the galley, rolled into the corner of the hold when she
   // went over. Soldered shut, which is the only reason it's still food.
   const tin = new THREE.Group()
@@ -1221,6 +1259,7 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   let gearState: 'shut' | 'open' | 'stripped' = 'shut'
   let tinTaken = false
   let logTaken = false
+  let lanternTaken = false
   /** Time the lashing was cut, so the lid can swing open over a beat. */
   let lidFrom = -1
   /** Time the gear door was pried, so it swings rather than snaps. */
@@ -1230,6 +1269,7 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   const gearWorld = new THREE.Vector3()
   const tinWorld = new THREE.Vector3()
   const logWorld = new THREE.Vector3()
+  const lanternWorld = new THREE.Vector3()
 
   // —— per-frame ————————————————————————————————————————————
   const centre = new THREE.Vector3(opts.x, -12, opts.z)
@@ -1357,11 +1397,26 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     return true
   }
 
-  /** Take the immersion suit off its hook — the locker keeps nothing else. */
+  /** Take the immersion suit off its hook — lantern can still hang beside it. */
   function takeSuit() {
-    if (gearState !== 'open') return false
-    gearState = 'stripped'
+    if (gearState === 'shut') return false
+    if (!suitHanging.visible) return false
     suitHanging.visible = false
+    gearState = lanternTaken ? 'stripped' : 'open'
+    return true
+  }
+
+  /** Diving lantern hanging beside the suit — independent take. */
+  function lanternSpot() {
+    if (gearState === 'shut' || lanternTaken) return null
+    return lanternProp.getWorldPosition(lanternWorld)
+  }
+
+  function takeLantern() {
+    if (gearState === 'shut' || lanternTaken) return false
+    lanternTaken = true
+    lanternProp.visible = false
+    gearState = suitHanging.visible ? 'open' : 'stripped'
     return true
   }
 
@@ -1401,6 +1456,8 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     gearFrom = -1
     gearDoor.rotation.y = 0
     suitHanging.visible = true
+    lanternTaken = false
+    lanternProp.visible = true
     tinTaken = false
     tin.visible = true
     logTaken = false
@@ -1410,6 +1467,81 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     if (provisionItem) {
       provisionItem.taken = false
       provisionItem.object.visible = true
+    }
+  }
+
+  function snapshot() {
+    return {
+      provisionTaken: !!provisionItem?.taken,
+      knifeTaken,
+      locker,
+      gearLocker: gearState,
+      tinTaken,
+      logTaken,
+      lanternTaken,
+      suitTaken: !suitHanging.visible,
+    }
+  }
+
+  function restore(
+    saved:
+      | {
+          provisionTaken: boolean
+          knifeTaken: boolean
+          locker: 'sealed' | 'cut' | 'stripped'
+          gearLocker: 'shut' | 'open' | 'stripped'
+          tinTaken: boolean
+          logTaken: boolean
+          lanternTaken?: boolean
+          suitTaken?: boolean
+        }
+      | undefined,
+  ) {
+    reset()
+    if (!saved) return
+
+    knifeTaken = !!saved.knifeTaken
+    knife.visible = !knifeTaken
+    tinTaken = !!saved.tinTaken
+    tin.visible = !tinTaken
+    logTaken = !!saved.logTaken
+    logBook.visible = !logTaken
+
+    if (provisionItem) {
+      provisionItem.taken = !!saved.provisionTaken
+      provisionItem.object.visible = !provisionItem.taken
+    }
+
+    locker = saved.locker
+    if (locker !== 'sealed') {
+      lidFrom = 0
+      lid.rotation.x = -1.78
+      if (lashing.parent) lashing.parent.remove(lashing)
+      contents.visible = locker !== 'stripped'
+    }
+
+    gearState = saved.gearLocker
+    const suitTaken = saved.suitTaken ?? gearState === 'stripped'
+    // Legacy stripped saves: suit was taken; lantern didn't exist yet → treat as taken
+    lanternTaken =
+      saved.lanternTaken ?? (gearState === 'stripped' && saved.suitTaken === undefined)
+
+    if (gearState === 'shut') {
+      gearFrom = -1
+      gearDoor.rotation.y = 0
+      suitHanging.visible = true
+      lanternProp.visible = true
+      lanternTaken = false
+    } else {
+      gearFrom = 0
+      gearDoor.rotation.y = 1.42
+      const suitGone = gearState === 'stripped' || !!suitTaken
+      suitHanging.visible = !suitGone
+      lanternProp.visible = !lanternTaken
+      if (!suitHanging.visible && lanternTaken) gearState = 'stripped'
+      else if (gearState === 'stripped' && (!suitGone || !lanternTaken)) {
+        gearState = 'open'
+      }
     }
   }
 
@@ -1440,16 +1572,26 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     gearSpot,
     pryGear,
     takeSuit,
+    lanternSpot,
+    takeLantern,
     tinSpot,
     takeTin,
     logSpot,
     takeLog,
     reset,
+    snapshot,
+    restore,
     get lockerState() {
       return locker
     },
     get gearLockerState() {
       return gearState
+    },
+    get suitLeft() {
+      return suitHanging.visible
+    },
+    get lanternLeft() {
+      return !lanternTaken && gearState !== 'shut'
     },
   }
 }

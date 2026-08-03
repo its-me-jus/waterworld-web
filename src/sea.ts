@@ -111,6 +111,36 @@ export function createSeaState(events: SeaEvents = {}) {
     drift.strength = strength
   }
 
+  function snapshot() {
+    return {
+      amp,
+      glassy,
+      glassLeft,
+      glassLength,
+      nextGlassIn,
+    }
+  }
+
+  function restore(
+    saved:
+      | {
+          amp: number
+          glassy: boolean
+          glassLeft: number
+          glassLength: number
+          nextGlassIn: number
+        }
+      | undefined,
+  ) {
+    if (!saved) return
+    amp = Math.max(0.4, saved.amp)
+    glassy = !!saved.glassy
+    glassLeft = saved.glassLeft
+    glassLength = Math.max(1e-3, saved.glassLength)
+    nextGlassIn = Math.max(0, saved.nextGlassIn)
+    oceanState.amp = amp
+  }
+
   return {
     update,
     /** Feed the climate's fair-weather share in; glass-offs follow the sky. */
@@ -132,6 +162,8 @@ export function createSeaState(events: SeaEvents = {}) {
     get current(): SeaCurrent {
       return drift
     },
+    snapshot,
+    restore,
     /** Debug/tuning: pin the sea glass-calm (?calm=1). */
     pinCalm() {
       glassy = true

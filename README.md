@@ -42,8 +42,9 @@ leaves. Until it doesn't.
 
 The Wanderer gives up her past in dives. A galley knife lies on the bow deck at
 ~13 m — it cuts rope. One deck below that a hold door has swelled shut on the
-ship's immersion suit; force it with the knife and the cold stops being the
-thing that ends every run. A soldered bread tin rolled into the same corner is
+ship's immersion suit and a sealed diving lantern; force it with the knife and
+the cold stops being the thing that ends every run. Take the lantern for night
+dives — a local beam in the murk, not a free pass on warmth or breath. A soldered bread tin rolled into the same corner is
 a meal. The mate's chest sits roped shut on the sand by the torn
 stern at ~24 m, where the light gives up. Inside: an oilskin pouch that gives
 back the first memory of who you were, and the mate's spear. The master's log
@@ -180,6 +181,8 @@ npm run dev
 - `npm run test:camp` — camp life coverage: shelter growth (frame → ridge →
   rooms, across a reload), the tired timer (drain, sleep, HUD), and fishing
   (trap set/stock/check, the spear prompt). Needs `npm run dev`.
+- `npm run test:save` — living-world save fidelity: littoral, salvage, wreck,
+  weather/sea, smoking timers, wash meter, fishing equip. Needs `npm run dev`.
 - `npm run shot:camp` — beauty shots of the three-room hut inside and out,
   the trap riding the wash, and the tired HUD into `shots/`. Needs
   `npm run dev`.
@@ -195,7 +198,7 @@ npm run dev
 - `?hour=22` starts at night · `?storm=1` locks a squall · `?calm=1` pins a
   glass-off · `?breath=0.3` / `?food=0.2` / `?energy=0.3` / `?wound=1` pre-set
   vitals · `?shark=8` summons a pass · `?knife=1` / `?spear=1` start armed ·
-  `?suit=1` starts in the immersion suit · `?commit=1` every armed pass runs at you.
+  `?suit=1` starts in the immersion suit · `?lantern=1` starts with the diving lantern · `?commit=1` every armed pass runs at you.
 - In dev, `window.ww` exposes player, vitals, salvage, climate, shark and the
   interaction registry; `__spots` marks the loot spots.
 
