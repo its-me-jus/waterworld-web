@@ -10,6 +10,7 @@ import { createImprovise } from './improvise'
 import { createInputState, isLowPowerDevice, preferTouchUI } from './input'
 import { createInteractions } from './interact'
 import { createIsland } from './island'
+import { createLittoral } from './littoral'
 import { createOcean } from './ocean'
 import { createOpMenu, type TeleportSpot } from './opmenu'
 import { applyVitals, clearSave, readSave, writeSave, type SavedRun } from './persist'
@@ -141,12 +142,14 @@ setShelter(island.centre.x, island.centre.z, 430, 800)
   430,
   800,
 )
-// Shallows: ankle-deep over the inner beach (~240 m), opaque blue again past ~400 m
+// Shallows: ankle-deep over the inner beach (~180 m), opaque deep blue again
+// by ~300 m — so the wreck→island abyss past the shelf doesn't read as a
+// turquoise bathtub from above.
 ;(oceanMat.uniforms.uShelf.value as THREE.Vector4).set(
   island.centre.x,
   island.centre.z,
-  240,
-  400,
+  180,
+  300,
 )
 
 const shore = createShoreSurf(scene, {
@@ -361,6 +364,19 @@ const forage = createForage(hud, vitals, {
   hasSpear: () => loot.hasSpear,
 })
 
+const beach = island.shore.length > 0 ? island.shore[0] : island.centre
+const littoral = createLittoral(scene, {
+  interactions,
+  vitals,
+  hud,
+  heightAt: island.heightAt,
+  origin: { x: island.centre.x, z: island.centre.z },
+  cove: { x: beach.x, z: beach.z },
+  reefResolve: wreck.resolve,
+  wreckOrigin: { x: wreck.group.position.x, z: wreck.group.position.z },
+  lowPower,
+})
+
 const harvest = createHarvest(scene, {
   interactions,
   salvage,
@@ -385,6 +401,10 @@ const improvise = createImprovise(scene, camera, {
   takeRawForSmoke: () => forage.takeRawForSmoke(),
   addSmoked: (n) => forage.addSmoked(n),
   grantFish: (n) => forage.grant(n),
+  fashionRod: () => forage.fashionRod(),
+  fashionNet: () => forage.fashionNet(),
+  hasRod: () => forage.hasRod,
+  hasNet: () => forage.hasNet,
   daylight: () => climate.state.daylight,
   skipTime: (seconds) => climate.skip(seconds),
   secondsUntilDawn: () => climate.secondsUntilDawn(),
@@ -403,6 +423,7 @@ function restart() {
   wreck.reset()
   loot.reset()
   forage.reset()
+  littoral.reset()
   harvest.reset()
   improvise.reset()
   swimmer.setSurvivalSuit(false)
@@ -452,6 +473,8 @@ function captureSave(): SavedRun {
     smokedFish: forage.smokedFish,
     knife: loot.hasKnife,
     spear: loot.hasSpear,
+    rod: forage.hasRod,
+    net: forage.hasNet,
     suit: vitals.suited,
     climateElapsed: climate.getElapsed(),
     runElapsed: runElapsed(),
@@ -478,6 +501,7 @@ function loadRun(data: SavedRun) {
   applyVitals(vitals, data.vitals)
   salvage.setStash(data.stash)
   forage.setFish(data.rawFish, data.smokedFish)
+  forage.setGear(!!data.rod, !!data.net)
   harvest.restore(data.harvest)
   improvise.restore(data.builds)
   climate.setElapsed(data.climateElapsed)
@@ -518,7 +542,6 @@ function teleport(spot: TeleportSpot) {
   collide(player)
 }
 
-const beach = island.shore.length > 0 ? island.shore[0] : island.centre
 const opMenu = createOpMenu(app, {
   salvage,
   loot,
@@ -536,6 +559,8 @@ const opMenu = createOpMenu(app, {
     return true
   },
   grantFish: (n) => forage.grant(n),
+  hasRod: () => forage.hasRod,
+  hasNet: () => forage.hasNet,
   campRecipes: () => improvise.campRecipes(),
   day: dayAlive,
   teleport,
@@ -726,6 +751,7 @@ function frame() {
   sea.setFair(weather.fair)
   sea.setStorm(weather.storm)
   sea.update(dt, t)
+  oceanState.tide = weather.tide
   oceanAudio.setSeaWeight(sea.weight)
 
   input.interact = false
@@ -950,6 +976,7 @@ function frame() {
 
   oceanMat.uniforms.uTime.value = t
   oceanMat.uniforms.uAmp.value = oceanState.amp
+  oceanMat.uniforms.uTide.value = oceanState.tide
   oceanMat.uniforms.uCameraPos.value.copy(camera.position)
   oceanMat.uniforms.uSunDir.value.copy(skyRig.sunDir)
   oceanMat.uniforms.uHorizonColor.value.copy(skyRig.horizonColor)
@@ -958,8 +985,19 @@ function frame() {
 
   // The deeper you go, the tighter and darker the water closes in.
   // Glass-offs clear the murk a touch — the dive window you can see as well as feel.
-  const murk = Math.min(1, depth / 24) * (sea.glassy ? 0.7 : 1)
-  underFog.density = 0.026 + murk * 0.032 + (1 - weather.daylight) * 0.012
+  // Over the wreck→island abyss the column itself darkens the water when you
+  // look down, even before you've descended the full twenty-odd metres.
+  const diveMurk = Math.min(1, depth / 24) * (sea.glassy ? 0.7 : 1)
+  const seabed = island.heightAt(player.x, player.z)
+  const column = Math.max(0, oceanState.tide - seabed)
+  const abyssMurk = Math.min(1, Math.max(0, (column - 22) / 30))
+  const lookDown = THREE.MathUtils.clamp((-player.pitch - 0.12) / 0.75, 0, 1)
+  const murk = Math.min(
+    1,
+    Math.max(diveMurk, underwater ? abyssMurk * (0.35 + lookDown * 0.65) : 0),
+  )
+  underFog.density =
+    0.026 + murk * 0.032 + abyssMurk * lookDown * 0.022 + (1 - weather.daylight) * 0.012
   waterTint.copy(shallowTint).lerp(deepTint, murk)
   waterTint.lerp(nightWater, (1 - weather.daylight) * 0.55)
   // Fog has to track the tint or distant geometry fades to the wrong colour and
@@ -1058,7 +1096,9 @@ function frame() {
   shore.update(t, camera, underwater)
   salvage.update(t, camera.position, weather.storm)
   loot.update(dt, view)
-  forage.update(camera, view)
+  forage.update(camera, view, dt)
+  littoral.update(dt, player, { biolum: weather.biolum, rain: weather.rain })
+  underwaterWorld.fish.setAttractors(littoral.fishAttractors())
   harvest.update(t)
   improvise.update(dt, t, player, view, player.yaw, { dive: input.dive })
   shark.update(dt, t, camera, hasDived)
@@ -1140,6 +1180,7 @@ function frame() {
   applyStormToWaves(weather.storm)
   syncWaves()
   sea.update(0, 0)
+  oceanState.tide = weather.tide
   skyRig.update(0, weather)
   skyRig.focusShadow(player.x, 0, player.z)
   island.setHaze(skyRig.horizonColor)

@@ -5,21 +5,16 @@ import type { PlayerFrame } from './player'
 import { eat, type Vitals } from './survival'
 
 /**
- * Forage — food in three registers:
+ * Forage — catching food across the map.
  *
- *  - The provision crate (once per run): lashed shut, still floating by the
- *    wreck. Pry it open for hardtack and dried beans — the tutorial meal that
- *    proves the world can feed you.
- *  - Hand-fishing (forever): hang still underwater and the schools drift back
- *    in. Grab at one and it's a coin toss — raw fish in hand, or empty
- *    fingers. Eat it raw, cook it at a fire for a meal now, or smoke it to
- *    keep for later.
- *  - Smoked fish: portable, better than raw, sits in the Pack until you eat it.
- *  - Shore crabs (ashore): scuttle the wet sand. Grab one and eat it — thin
- *    eating, and the shell comes back later.
+ *  - Provision crate (once): Pry open by the wreck for hardtack.
+ *  - Hand grab / spear: hang still underwater near the schools.
+ *  - Fishing rod (crafted): cast from shore or the surface into nearby schools.
+ *  - Cast net (crafted): scoop the wash while wading the shallows.
+ *  - Shore crabs: Grab on wet sand.
  *
- * Catching lives here. Cooking / smoking live in improvise; this module only
- * holds the counts and applies the bite.
+ * Cooking / smoking live in improvise; this module holds the counts, the
+ * crafted gear flags, and applies the bite.
  */
 
 export type ForageDeps = {
@@ -47,6 +42,10 @@ const CRATE_RANGE = 2.9
 const CRAB_RANGE = 2.8
 /** A spear's honest reach — longer than an arm, surer than fingers. */
 const SPEAR_RANGE = 3.4
+/** Shore / surface cast into the school. */
+const ROD_RANGE = 14
+/** Wading scoop in the wash. */
+const NET_RANGE = 5.2
 
 export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
   const cratePos = new THREE.Vector3()
@@ -68,10 +67,19 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
   // spear retires bare hands — reach and a point beat fingers.
   let current = -1
   let spearCurrent = -1
+  let rodCurrent = -1
+  let netCurrent = -1
   let rawFish = 0
   let smokedFish = 0
+  let hasRod = false
+  let hasNet = false
+  let rodCool = 0
+  let netCool = 0
   const fishPos = new THREE.Vector3()
   const spearFishPos = new THREE.Vector3()
+  const rodFishPos = new THREE.Vector3()
+  const netFishPos = new THREE.Vector3()
+
   deps.interactions.add({
     position: fishPos,
     verb: 'Grab',
@@ -120,6 +128,59 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     },
   })
 
+  // Fishing rod — cast from shore or the surface into a school you can see
+  deps.interactions.add({
+    position: rodFishPos,
+    verb: 'Cast',
+    label: 'Rod',
+    radius: ROD_RANGE,
+    available: () => rodCurrent >= 0 && vitals.alive && hasRod && rodCool <= 0,
+    use: () => {
+      const index = rodCurrent
+      if (index < 0) return
+      rodCool = 7.5
+      if (Math.random() < 0.62) {
+        deps.fish.fling(index, true)
+        rawFish += 1
+        hud.whisper(
+          rawFish > 1 ? 'Another on the line. The rod earns its keep.' : 'A tug, then weight. Fish on the line.',
+        )
+      } else {
+        deps.fish.fling(index, false)
+        hud.whisper('A nibble, then nothing. The line comes back empty.')
+      }
+      rodCurrent = -1
+    },
+  })
+
+  // Cast net — scoop the wash while wading; sometimes two fish at once
+  deps.interactions.add({
+    position: netFishPos,
+    verb: 'Scoop',
+    label: 'Net',
+    radius: NET_RANGE,
+    available: () => netCurrent >= 0 && vitals.alive && hasNet && netCool <= 0,
+    use: () => {
+      const index = netCurrent
+      if (index < 0) return
+      netCool = 5.5
+      if (Math.random() < 0.58) {
+        deps.fish.fling(index, true)
+        const bonus = Math.random() < 0.28 ? 1 : 0
+        rawFish += 1 + bonus
+        hud.whisper(
+          bonus
+            ? 'Two in the mesh. The wash was thick with them.'
+            : 'One in the net. Silver and thrashing.',
+        )
+      } else {
+        deps.fish.fling(index, false)
+        hud.whisper('The mesh comes up empty. They saw the shadow.')
+      }
+      netCurrent = -1
+    },
+  })
+
   // Shore crabs — ride the nearest live crab while you're ashore
   let crabCurrent = -1
   const crabPos = new THREE.Vector3()
@@ -142,7 +203,12 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     })
   }
 
-  function update(camera: THREE.PerspectiveCamera, view: PlayerFrame) {
+  function update(camera: THREE.PerspectiveCamera, view: PlayerFrame, dt = 0) {
+    if (dt > 0) {
+      rodCool = Math.max(0, rodCool - dt)
+      netCool = Math.max(0, netCool - dt)
+    }
+
     const spot = deps.provisionSpot()
     if (spot) cratePos.copy(spot)
 
@@ -162,6 +228,34 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
       if (hit) {
         spearCurrent = hit.index
         deps.fish.positionAt(hit.index, spearFishPos)
+      }
+    }
+
+    // Rod: from shore (walking) or near the surface — not deep diving
+    rodCurrent = -1
+    if (hasRod && vitals.alive && rodCool <= 0) {
+      const nearSurface = view.walking || (!view.underwater && view.depth < 1.2)
+      if (nearSurface) {
+        const hit = deps.fish.nearest(camera.position, ROD_RANGE)
+        if (hit && hit.dist > 2.5) {
+          rodCurrent = hit.index
+          deps.fish.positionAt(hit.index, rodFishPos)
+        }
+      }
+    }
+
+    // Net: wading the wash — feet on ground, water still around you
+    netCurrent = -1
+    if (hasNet && vitals.alive && netCool <= 0) {
+      const wading =
+        view.walking && view.groundY > -0.9 && view.groundY < 1.15 && view.depth > -0.1
+      const inWash = !view.walking && !view.underwater && view.depth < 1.4
+      if (wading || inWash) {
+        const hit = deps.fish.nearest(camera.position, NET_RANGE)
+        if (hit) {
+          netCurrent = hit.index
+          deps.fish.positionAt(hit.index, netFishPos)
+        }
       }
     }
 
@@ -212,6 +306,10 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
   function reset() {
     rawFish = 0
     smokedFish = 0
+    hasRod = false
+    hasNet = false
+    rodCool = 0
+    netCool = 0
   }
 
   /** Dev / tests — put fish in hand without diving. */
@@ -224,16 +322,42 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     smokedFish = Math.max(0, Math.floor(smoked))
   }
 
+  function fashionRod() {
+    if (hasRod) return false
+    hasRod = true
+    return true
+  }
+
+  function fashionNet() {
+    if (hasNet) return false
+    hasNet = true
+    return true
+  }
+
+  function setGear(rod: boolean, net: boolean) {
+    hasRod = !!rod
+    hasNet = !!net
+  }
+
   return {
     update,
     reset,
     grant,
     setFish,
+    setGear,
+    fashionRod,
+    fashionNet,
     get rawFish() {
       return rawFish
     },
     get smokedFish() {
       return smokedFish
+    },
+    get hasRod() {
+      return hasRod
+    },
+    get hasNet() {
+      return hasNet
     },
     eatRaw,
     cook,
@@ -242,3 +366,5 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     eatSmoked,
   }
 }
+
+export type Forage = ReturnType<typeof createForage>

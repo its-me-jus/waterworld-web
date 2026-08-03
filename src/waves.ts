@@ -49,11 +49,18 @@ export function applyStormToWaves(storm: number) {
 }
 
 /**
- * Shared sea state, written once per frame by main (see sea.ts). Every CPU
- * consumer of the swell — player, flotsam, splash — samples through this so
- * calm spells flatten the whole world at once, not just the shader.
+ * Shared sea state, written once per frame by main (see sea.ts / climate).
+ * Every CPU consumer of the swell — player, flotsam, splash — samples through
+ * this so calm spells flatten the whole world at once, not just the shader.
+ *
+ * `tide` is mean sea level in metres (high positive, low negative). Wave
+ * displacement rides on top of it, so foreshore rocks expose and drown on a
+ * real schedule instead of a painted wet band.
  */
-export const oceanState = { amp: 1 }
+export const oceanState = { amp: 1, tide: 0 }
+
+/** Peak tide height above / below mean — enough to bare the foreshore. */
+export const TIDE_AMP = 0.72
 
 /**
  * The island's lee. Inside `inner` the swell is down to a lap; by `outer` the
@@ -163,6 +170,8 @@ export function sampleOcean(x: number, z: number, time: number, amp = oceanState
     amp *
     (1 - 0.65 * lee)
   y += chop
+  // Mean sea level — high tide lifts the whole surface, low tide lays rock bare
+  y += oceanState.tide
 
   const nx = binormalY * tangentZ - binormalZ * tangentY
   const ny = binormalZ * tangentX - binormalX * tangentZ

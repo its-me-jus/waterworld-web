@@ -120,6 +120,13 @@ function relief(lx: number, lz: number) {
 const COVE_X = -205
 const COVE_Z = 148
 
+/**
+ * Bearing from island centre toward the wreck (island-local). The crossing
+ * runs this lobe — where we cut the abyss so the approach isn't a shallow
+ * turquoise bath all the way from spar to beach.
+ */
+const TO_WRECK = Math.atan2(576, -1018)
+
 /** Height above mean sea level, in island-local coordinates. */
 function ground(lx: number, lz: number) {
   let h =
@@ -148,9 +155,9 @@ function ground(lx: number, lz: number) {
   // Landing cove: pull the spawn-facing shore onto a wadable shelf so landfall
   // is a beach with palms, not a cliff that rejects every plant.
   // (smoothstep needs min < max — an inverted range silently returns 1.)
+  const coveDist = Math.hypot(lx - COVE_X, lz - COVE_Z)
   {
-    const d = Math.hypot(lx - COVE_X, lz - COVE_Z)
-    const cove = 1 - THREE.MathUtils.smoothstep(d, 20, 175)
+    const cove = 1 - THREE.MathUtils.smoothstep(coveDist, 20, 175)
     if (cove > 0) {
       // Keep the shelf low enough that sand still reads as sand underfoot
       const beach = 2.4 + relief(lx, lz) * 1.6
@@ -158,8 +165,44 @@ function ground(lx: number, lz: number) {
       else if (h < 0.4) h = THREE.MathUtils.lerp(h, Math.min(beach * 0.55, 1.6), cove * 0.65)
     }
   }
+  const r = Math.hypot(lx, lz)
+  const bearing = Math.atan2(lz, lx)
+  // How much this sample faces the wreck crossing (1 on the approach, 0 opposite)
+  let approach = Math.cos(bearing - TO_WRECK)
+  approach = Math.max(0, approach)
+  approach *= approach
+  // Protect the landing beach — trench starts seaward of the cove disk
+  const coveMask = 1 - THREE.MathUtils.smoothstep(coveDist, 155, 225)
+
+  // Reef drop-off wall: past the wadable shelf a steep face drops over a short
+  // swim — a wall you can follow. On the wreck approach it plunges harder so
+  // the crossing reads as a lip over darkness, not a bathtub slope.
+  {
+    const face = THREE.MathUtils.smoothstep(r, 242, 285)
+    const apron = THREE.MathUtils.smoothstep(r, 285, 350)
+    const wallDrop = 8.5 + approach * (1 - coveMask) * 7
+    const apronDrop = 4.5 + approach * (1 - coveMask) * 5
+    h -= face * wallDrop + apron * apronDrop
+    if (face > 0.02) {
+      h += (noise2(bearing * 3.2 + 2.1, r * 0.02) - 0.5) * face * 1.8
+    }
+  }
+
+  // Abyss between wreck and island — past the wall lip the approach falls into
+  // real depth (blue → black). Spar-to-shelf water stops reading as a shallows.
+  {
+    const throat =
+      THREE.MathUtils.smoothstep(r, 295, 360) * (1 - THREE.MathUtils.smoothstep(r, 470, 575))
+    const trench = throat * approach * (1 - coveMask * 0.92)
+    h -= trench * 26
+    // Soft scallop along the canyon so the floor isn't a perfect dish
+    if (trench > 0.02) {
+      h += (noise2(bearing * 2.4 - 1.1, r * 0.015) - 0.5) * trench * 3.2
+    }
+  }
+
   // Then fall away into deep water so the patch edge isn't a bathtub rim
-  h -= THREE.MathUtils.smoothstep(Math.hypot(lx, lz), 330, 620) * 30
+  h -= THREE.MathUtils.smoothstep(r, 330, 620) * 30
   return h
 }
 
@@ -1823,10 +1866,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   let wildlifeTime = 0
 
   function update(camera: THREE.Camera, underwater: boolean, time = 0) {
-    // Nothing is visible 700 m through water. Close in it's the shelf you dive,
-    // so keep it once the island is the thing you're swimming around.
+    // Nothing is visible 700 m through water. Close in it's the shelf and the
+    // abyss wall on the wreck approach — keep the terrain once you're diving it.
     const range = Math.hypot(camera.position.x - centre.x, camera.position.z - centre.z)
-    group.visible = !underwater || range < 420
+    group.visible = !underwater || range < 540
 
     // Drop the undergrowth once it's too far away to resolve. Measured from
     // the island's centre rather than the nearest ground, so the switch happens

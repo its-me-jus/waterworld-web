@@ -456,6 +456,16 @@ function createFishSchools(count: number, schoolCount: number, waterColor: THREE
   let seeded = false
   const dummy = new THREE.Object3D()
   const pos = new THREE.Vector3()
+  /** World XZ spots that pull schools in (e.g. swimming seals). */
+  const attractors: { x: number; z: number; strength: number }[] = []
+
+  function setAttractors(next: { x: number; z: number; strength?: number }[]) {
+    attractors.length = 0
+    for (const a of next) {
+      if ((a.strength ?? 1) <= 0.01) continue
+      attractors.push({ x: a.x, z: a.z, strength: a.strength ?? 1 })
+    }
+  }
 
   function update(dt: number, time: number, camera: THREE.Camera, surfaceY: number, effort = 0) {
     // Anchor trails the swimmer so schools stay nearby without snapping to them
@@ -466,18 +476,31 @@ function createFishSchools(count: number, schoolCount: number, waterColor: THREE
     anchor.x += (camera.position.x - anchor.x) * Math.min(1, dt * 0.25)
     anchor.z += (camera.position.z - anchor.z) * Math.min(1, dt * 0.25)
 
-    for (const s of schools) {
+    for (let si = 0; si < schools.length; si++) {
+      const s = schools[si]
       // Hanging still draws the schools back in over half a minute; working
       // hard sends them out to the murk line. This is the drift the whole
       // fishing loop — bare hands or spear — actually answers.
       const target = 2.6 + Math.min(1, effort * 2.2) * 17
       s.radius += (target - s.radius) * Math.min(1, dt * 0.08)
       const a = time * s.speed + s.phase
-      s.centre.set(
-        anchor.x + Math.cos(a) * s.radius,
-        surfaceY + s.yOffset + Math.sin(a * 1.7) * 2.5,
-        anchor.z + Math.sin(a * 1.15) * s.radius,
-      )
+      let cx = anchor.x + Math.cos(a) * s.radius
+      let cz = anchor.z + Math.sin(a * 1.15) * s.radius
+
+      // Seals (and anything else) pull a share of schools toward their water —
+      // a hunting ground you can read by looking.
+      if (attractors.length > 0) {
+        const attr = attractors[si % attractors.length]
+        const pull = 0.35 + attr.strength * 0.45
+        cx += (attr.x - cx) * pull
+        cz += (attr.z - cz) * pull
+        // Tighter orbit near a working seal — denser school, easier fishing
+        if (attr.strength > 0.5) {
+          s.radius += (Math.min(s.radius, 5.5) - s.radius) * Math.min(1, dt * 0.12)
+        }
+      }
+
+      s.centre.set(cx, surfaceY + s.yOffset + Math.sin(a * 1.7) * 2.5, cz)
     }
 
     material.uniforms.uTime.value = time
@@ -578,7 +601,7 @@ function createFishSchools(count: number, schoolCount: number, waterColor: THREE
     return true
   }
 
-  return { mesh, material, update, nearest, fling, positionAt, debugDraw }
+  return { mesh, material, update, nearest, fling, positionAt, debugDraw, setAttractors }
 }
 
 // —— jellyfish ————————————————————————————————————————————

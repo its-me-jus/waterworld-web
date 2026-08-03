@@ -6,7 +6,7 @@ import type { PlayerFrame } from './player'
 import type { Salvage, StashKind } from './salvage'
 import type { SavedBuild, SavedHold, SavedRoof } from './persist'
 import { eat, rest, type Vitals } from './survival'
-import { sampleOcean } from './waves'
+import { sampleOcean, oceanState } from './waves'
 import { barrelObject, crateObject, plankObject } from './wreck'
 
 /**
@@ -48,6 +48,13 @@ export type ImproviseDeps = {
   addSmoked: (n?: number) => void
   /** Trap-caught fish land in the hand the same way grabbed ones do. */
   grantFish: (n?: number) => void
+  /** Fashion a fishing rod from plank + rope. */
+  fashionRod?: () => boolean
+  /** Lash a cast net from rope + fronds. */
+  fashionNet?: () => boolean
+  /** Already carrying crafted fishing gear. */
+  hasRod?: () => boolean
+  hasNet?: () => boolean
   /** 0 at night … 1 at noon — rest under a lean-to skips to dawn when dark. */
   daylight: () => number
   /** Jump the climate clock (seconds of day-cycle time). */
@@ -167,6 +174,8 @@ const MAT_COST: Cost = { leaf: 2, rope: 1 }
 const RIDGE_COST: Cost = { plank: 3, rope: 1 }
 const ROOM_COST: Cost = { plank: 2, rope: 1, leaf: 1 }
 const TRAP_COST: Cost = { plastic: 1, rope: 1 }
+const ROD_COST: Cost = { plank: 1, rope: 1 }
+const NET_COST: Cost = { rope: 1, leaf: 2 }
 const CAMP_LOCKER_COST: Cost = { crate: 1 }
 const FIRE_COST: Cost = { plank: 1 }
 const CATCH_COST: Cost = { canvas: 1, rope: 1 }
@@ -2401,6 +2410,55 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       attachTrapCheck(build)
       tap('splash', 0.4)
       deps.hud.whisper('The trap rides the wash. Check it when the tide has worked.')
+    },
+  })
+
+  // Fashion a rod — plank + rope. Cast from shore into schools you can see.
+  addCamp('camp', {
+    position: leanPos,
+    verb: 'Fashion',
+    label: 'Fishing rod',
+    cost: ROD_COST,
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      onLand &&
+      !(deps.hasRod?.() ?? false) &&
+      deps.salvage.has(ROD_COST),
+    use: () => {
+      if (!deps.salvage.spend(ROD_COST)) return
+      if (!deps.fashionRod?.()) {
+        // Refund if already fashioned somehow
+        deps.salvage.stash.plank += ROD_COST.plank ?? 0
+        deps.salvage.stash.rope += ROD_COST.rope ?? 0
+        return
+      }
+      tap('wood', 0.45)
+      deps.hud.whisper('A crooked rod and a length of line. Cast from the shore.')
+    },
+  })
+
+  // Lash a cast net — rope + fronds. Scoop the wash while wading.
+  addCamp('camp', {
+    position: leanPos,
+    verb: 'Lash',
+    label: 'Cast net',
+    cost: NET_COST,
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      onLand &&
+      !(deps.hasNet?.() ?? false) &&
+      deps.salvage.has(NET_COST),
+    use: () => {
+      if (!deps.salvage.spend(NET_COST)) return
+      if (!deps.fashionNet?.()) {
+        deps.salvage.stash.rope += NET_COST.rope ?? 0
+        deps.salvage.stash.leaf += NET_COST.leaf ?? 0
+        return
+      }
+      tap('lash', 0.45)
+      deps.hud.whisper('Fronds lashed into a mesh. Scoop the wash while you wade.')
     },
   })
 
@@ -4802,11 +4860,13 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
   /** The tide stocks the traps — quick first fish, slower after, up to the bottle's fit. */
   function stockTraps(dt: number) {
+    // Rising / falling water works the bottle harder than slack high water
+    const rush = 1 + Math.abs(oceanState.tide) * 0.15 + (oceanState.tide < 0 ? 0.35 : 0)
     for (const b of builds) {
       if (b.kind !== 'trap') continue
       const stock = b.fish ?? 0
       if (stock >= TRAP_MAX) continue
-      b.water = (b.water ?? 0) + dt
+      b.water = (b.water ?? 0) + dt * rush
       const need = stock === 0 ? TRAP_FIRST : TRAP_NEXT
       if ((b.water ?? 0) < need) continue
       b.water = 0
@@ -5199,6 +5259,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       ridge: RIDGE_COST,
       room: ROOM_COST,
       trap: TRAP_COST,
+      rod: ROD_COST,
+      net: NET_COST,
       campLocker: CAMP_LOCKER_COST,
       fire: FIRE_COST,
       catch: CATCH_COST,
