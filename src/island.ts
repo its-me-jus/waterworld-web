@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { bakePlant, createFoliage, plantTint, type PlantBake } from './foliage'
 import { fbm, noise2 } from './waves'
 
@@ -346,34 +346,91 @@ function grassTuft(seed: number) {
   return mergeGeometries(blades, false) as THREE.BufferGeometry
 }
 
-/** A weathered beach rock — lumpy icosahedron, never quite round. */
 /**
- * Beach rock — displaced icosahedron (same idea as the reef lumps, cheaper
- * detail). Detail 1 keeps the island batch under control; the squash + sit
- * sink still sells them as half-buried stones.
+ * A weathered stone. The old version was a gently-wobbled icosahedron and it
+ * read as dough: smooth, pale, and perched on the sand. Three things make a
+ * rock read as rock — creases (ridged noise, baked dark in the seams), a
+ * cleavage plane or two (broken faces where the stone sheared), and a sit
+ * that buries the bottom curve instead of showing it.
+ *
+ * `detail` trades vertices for nearness: beach stones get 2 (you stand over
+ * them), hillside boulders stay at 1 since they're read at thirty metres.
+ * The baked `aCrease` attribute survives `bakePlant` — shadeStone folds it
+ * into the vertex colours after the tint is written.
  */
-function rockChunk(seed: number) {
-  const radius = 1.1 + fbm(seed * 9.1, seed * 5.3) * 1.6
-  const geo = new THREE.IcosahedronGeometry(radius, 1)
+function stoneGeometry(seed: number, radius: number, detail: number) {
+  const rand = (n: number) => fbm(seed * 12.7 + n * 3.9, seed * 6.3 - n * 2.2)
+  // Welded before displacement so normals come out smooth — flat facets are
+  // what made the old ones read as cut gems rather than weathered stone
+  const geo = mergeVertices(new THREE.IcosahedronGeometry(radius, detail))
   const pos = geo.attributes.position
   const v = new THREE.Vector3()
+  // Cleavage planes — flat faces where the stone broke. One always, a second
+  // on about half of them, each pushed in a little past the surface.
+  const planeA = new THREE.Vector3(rand(1) - 0.5, rand(2) - 0.5, rand(3) - 0.5).normalize()
+  const planeB = new THREE.Vector3(rand(4) - 0.5, rand(5) - 0.5, rand(6) - 0.5).normalize()
+  const cutA = (rand(7) - 0.3) * radius * 0.85
+  const cutB = (rand(8) - 0.35) * radius * 0.85
+  const hasB = rand(9) > 0.45
+  const squash = 0.52 + rand(10) * 0.3
+  const crease = new Float32Array(pos.count)
   for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i)
     const ux = v.x / radius
     const uy = v.y / radius
     const uz = v.z / radius
-    const coarse = fbm(ux * 1.9 + seed, uz * 1.9 - seed)
-    const mid = fbm(uy * 4.2 + seed * 3, ux * 4.0)
-    const fine = fbm(ux * 5.2 + seed * 7, uz * 5.2)
-    v.multiplyScalar(0.88 + coarse * 0.18 + mid * 0.1 + fine * 0.12)
-    // Flatten a little so they read as stones, not floating orbs
-    v.y *= 0.55 + fbm(seed + i * 0.17, seed * 0.4) * 0.35
+    const coarse = fbm(ux * 1.8 + seed, uz * 1.8 - seed)
+    const mid = fbm(uy * 3.6 + seed * 3, ux * 3.4)
+    // Ridged noise folds back on itself — the creases are the cracks
+    const fold = 1 - Math.abs(2 * fbm(ux * 3.1 + seed * 5, uz * 3.1 + uy * 2.6) - 1)
+    const fine = fbm(ux * 6.4 + seed * 7, uz * 6.4)
+    v.multiplyScalar(0.84 + coarse * 0.22 + mid * 0.12 + fold * 0.17 + fine * 0.08)
+    const dA = v.dot(planeA) - cutA
+    if (dA > 0) v.addScaledVector(planeA, -dA * 0.9)
+    if (hasB) {
+      const dB = v.dot(planeB) - cutB
+      if (dB > 0) v.addScaledVector(planeB, -dB * 0.85)
+    }
+    v.y *= squash
     pos.setXYZ(i, v.x, v.y, v.z)
+    // Creases and undersides darken, exposed crowns keep the light
+    crease[i] = THREE.MathUtils.clamp(
+      0.66 + fold * 0.42 + fine * 0.28 - coarse * 0.22 + (uy > 0 ? 0.06 : -0.12),
+      0.48,
+      1.14,
+    )
   }
+  geo.setAttribute('aCrease', new THREE.BufferAttribute(crease, 1))
   geo.computeVertexNormals()
-  geo.rotateY(fbm(seed * 2.1, seed * 0.7) * Math.PI * 2)
-  geo.rotateX((fbm(seed * 3.3, seed * 1.1) - 0.5) * 0.55)
-  return geo
+  geo.rotateY(rand(11) * Math.PI * 2)
+  geo.rotateX((rand(12) - 0.5) * 0.5)
+  geo.computeBoundingBox()
+  const box = geo.boundingBox as THREE.Box3
+  const height = Math.max(box.max.y - box.min.y, 0.1)
+  // Bury the bottom curve. A stone that shows its whole underside floats;
+  // anywhere from a settled perch to nearly swallowed by the sand is right.
+  const sink = box.min.y + height * (0.14 + rand(13) * 0.3)
+  return { geo, sink }
+}
+
+/**
+ * Fold the baked creases into the plant tint and give each stone its own
+ * tone, wet basalt through sun-bleached sandstone, so a beach of them stops
+ * reading as one object copied fifty times.
+ */
+function shadeStone(geo: THREE.BufferGeometry, seed: number) {
+  const crease = geo.getAttribute('aCrease') as THREE.BufferAttribute
+  const color = geo.getAttribute('color') as THREE.BufferAttribute
+  if (!crease || !color) return
+  const tone = fbm(seed * 3.3, seed * 8.1)
+  const r = THREE.MathUtils.lerp(0.5, 1.14, tone)
+  const g = THREE.MathUtils.lerp(0.54, 1.05, tone)
+  const b = THREE.MathUtils.lerp(0.62, 0.88, tone)
+  for (let i = 0; i < color.count; i++) {
+    const c = crease.getX(i)
+    color.setXYZ(i, color.getX(i) * c * r, color.getY(i) * c * g, color.getZ(i) * c * b)
+  }
+  geo.deleteAttribute('aCrease')
 }
 
 /** A bleached plank or log washed up on the sand. */
@@ -461,26 +518,7 @@ function fallenLog(seed: number) {
 
 /** A larger boulder — breaks the smooth green slopes into something geological. */
 function boulder(seed: number) {
-  const radius = 1.8 + fbm(seed * 10.2, seed * 6.6) * 2.8
-  const geo = new THREE.IcosahedronGeometry(radius, 1)
-  const pos = geo.attributes.position
-  const v = new THREE.Vector3()
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i)
-    const ux = v.x / radius
-    const uy = v.y / radius
-    const uz = v.z / radius
-    const coarse = fbm(ux * 1.7 + seed, uz * 1.7 - seed)
-    const mid = fbm(uy * 3.8 + seed * 2.4, ux * 3.6)
-    const fine = fbm(ux * 4.8 + seed * 6, uz * 4.8)
-    v.multiplyScalar(0.86 + coarse * 0.2 + mid * 0.12 + fine * 0.14)
-    v.y *= 0.42 + fbm(seed + i * 0.13, seed * 0.55) * 0.4
-    pos.setXYZ(i, v.x, v.y, v.z)
-  }
-  geo.computeVertexNormals()
-  geo.rotateY(fbm(seed * 2.4, seed * 0.9) * Math.PI * 2)
-  geo.rotateX((fbm(seed * 3.1, seed * 1.4) - 0.5) * 0.45)
-  return geo
+  return stoneGeometry(seed, 1.8 + fbm(seed * 10.2, seed * 6.6) * 2.8, 1)
 }
 
 /** Tide wrack — a low mat of washed-up weed on the wet sand. */
@@ -926,6 +964,20 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     list.push(placeAt(bakeFor(geo, seed, species), lx, h, lz, sink))
   }
 
+  /** A stone sits by its own measure — the sink comes out of the geometry. */
+  const plantStone = (
+    list: THREE.BufferGeometry[],
+    stone: { geo: THREE.BufferGeometry; sink: number },
+    seed: number,
+    lx: number,
+    h: number,
+    lz: number,
+  ) => {
+    const baked = bakeFor(stone.geo, seed, SPECIES.rock)
+    shadeStone(baked, seed)
+    list.push(placeAt(baked, lx, h, lz, stone.sink))
+  }
+
   /** Trunk, crown and nuts share one placement and one whole-plant height, so
    *  the crown rides the trunk's lean instead of drifting off the top of it. */
   const plantPalm = (tree: ReturnType<typeof palm>, seed: number, place: THREE.Matrix4) => {
@@ -1076,7 +1128,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (slope > 4) continue
     // Skip if buried under a palm trunk
     if (shore.some((s) => Math.hypot(s.x - opts.x - lx, s.z - opts.z - lz) < 3.2)) continue
-    plant(rocks, rockChunk(i + 40), i + 40, SPECIES.rock, lx, h, lz, 0.35 + (i % 5) * 0.05)
+    const stone = stoneGeometry(i + 40, 0.75 + fbm((i + 40) * 9.1, (i + 40) * 5.3) * 1.5, 2)
+    plantStone(rocks, stone, i + 40, lx, h, lz)
   }
 
   // Mid-slope boulders — the thing that stops a green cone reading as a cone
@@ -1090,7 +1143,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
     // Prefer a bit of pitch — boulders collect where the ground tips
     if (slope < 1.2 || slope > 11) continue
-    plant(boulderParts, boulder(i + 1500), i + 1500, SPECIES.rock, lx, h, lz, 0.55 + (i % 4) * 0.1)
+    plantStone(boulderParts, boulder(i + 1500), i + 1500, lx, h, lz)
   }
 
   // Driftwood — mid-beach, sparse, sells the wash-up

@@ -13,6 +13,8 @@
     "shot:salvage": "node scripts/shot-salvage.mjs",
     "smoke": "node scripts/smoke.mjs",
     "test:base": "node scripts/test-base.mjs",
+    "test:camp": "node scripts/test-camp.mjs",
+    "shot:camp": "node scripts/shot-camp.mjs",
     "sim:starts": "node scripts/sim-starts.mjs",
     "shot:shelter": "node scripts/shot-shelter.mjs",
     "shot:base": "node scripts/shot-base.mjs",

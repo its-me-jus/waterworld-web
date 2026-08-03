@@ -40,6 +40,12 @@ export type SavedBuild = {
   roof?: SavedRoof
   hasBarrel?: boolean
   hasMat?: boolean
+  /** Shelter raised to walk-in height. */
+  tall?: boolean
+  /** Shelter footprint in bays — one room each. */
+  rooms?: number
+  /** Fish waiting in a trap. */
+  fish?: number
   hold?: SavedHold
 }
 
@@ -67,6 +73,7 @@ export type SavedRun = {
     warmth: number
     water: number
     food: number
+    energy?: number
     health: number
     elapsed: number
     wounded: boolean
@@ -122,6 +129,8 @@ export function applyVitals(vitals: Vitals, saved: SavedRun['vitals']) {
   vitals.warmth = saved.warmth
   vitals.water = saved.water
   vitals.food = saved.food
+  // Older saves predate the tired timer — wake rested rather than exhausted
+  vitals.energy = saved.energy ?? 1
   vitals.health = saved.health
   vitals.elapsed = saved.elapsed
   vitals.wounded = saved.wounded
