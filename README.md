@@ -104,6 +104,8 @@ barrel as a cistern — a camp you made, not one the world planted for you.
 - **Desktop:** WASD · click for mouse-look · Space/E up · Shift/Q dive · **F**
   to take, eat, drink, open, pry, cut, jab, lash, dig, kindle or cook · **Tab**
   opens the Pack (stash, field kit: Island / Wreck / Start again)
+- **Raft:** walk the gunwale and look down (or hold dive on a phone) to pole and
+  steer · **Shove** clears a beached hull · **Haul** grounds her on purpose
 
 ## Live
 

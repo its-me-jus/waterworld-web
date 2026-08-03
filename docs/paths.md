@@ -136,14 +136,14 @@ markers in-world, no "correct" build order.
 | **Sit thwart** | — | On the raft | Built-in stern seat. Stamina back. |
 | **Rest under sail** | sail rigged | On the raft | A nap under canvas — lighter than a lean-to, finishes deck smoke |
 | **Haul ashore** | — | Shallows / beach | Ground the hull on sand. Walk off onto the island. |
-| **Shove off** | — | Beached raft | Push her back into deep water |
+| **Shove off** | — | Beached raft | Push her clear of the shelf into deep water — then pole |
 | **Seat** | 1 plank | Dry ground | Driftwood seat. **Sit** to get stamina (and a little warmth) back |
 | **Drying rack** | 1 plank + 1 rope | Dry ground | Hang fish without a fire — ~48s per fish, up to 3. **Hang** / **Take** |
 | **Signal** | 1 plank + 1 canvas | Higher dry ground | Smoke column on the ridge — readable from the water. One per ~40 m |
 | **Dig hollow** | hands (look down) | Soft sand | A rain-holding pit. Slow refill; brackish but drinkable |
 | **Tin drip** | 1 can + 1 rope | Dry ground | A can on a stake that catches rain by the mouthful |
 
-Fall off and **Climb** the raft from the water (F when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft. An empty raft keeps her heading — she won't spin to chase leftover pole speed. Walk the centre to work; **look down** (or hold dive on a phone) at the gunwale to pole. **Haul** her onto sand and **Shove** off again. A gale can tear the sail — **Mend** it.
+Fall off and **Climb** the raft from the water (F when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft. An empty raft keeps her heading — she won't spin to chase leftover pole speed. Walk the centre to work; **look down** (or hold dive on a phone) at the gunwale to pole and steer. On sand she sits still — **Shove** clear of the shelf, then pole again. **Haul** her up the beach when you mean to camp. A gale can tear the sail — **Mend** it.
 
 Island harvest sits on top of the scenery: **Pull** palm fronds for thatch,
 **Break** driftwood into a plank, **Fell** a stripped palm once you have the

@@ -193,6 +193,14 @@ const POLE_FLOAT_BONUS = 0.28
 const POLE_GUNWALE = 0.48
 /** Past this fraction of radius you're over the gunwale. */
 const DECK_LIP = 0.9
+/** After Shove, ignore auto-beach so the wash doesn't pin her again. */
+const SHOVE_GRACE = 2.8
+/** Ground height that counts as "still aground" after a shove. */
+const SHOVE_CLEAR_GROUND = 0.08
+/** Hard shelf — auto-beach even while moving. */
+const BEACH_HARD = 0.55
+/** Soft wash — auto-beach only when nearly stopped. */
+const BEACH_SOFT = 0.18
 /** Passive sail drift (m/s) once the mast is rigged. */
 const SAIL_SPEED = 0.95
 const SAIL_SPEED_BARREL = 1.35
@@ -1041,11 +1049,12 @@ function fitLocker(raft: THREE.Group, m: ReturnType<typeof mats>) {
   }
   const box = crateObject(m.wood)
   box.rotation.set(0, 0.15, 0)
-  box.position.set(0.85, 0.42, -0.35)
+  // Starboard of the centreline so bow↔stern stays a clear walk
+  box.position.set(0.7, 0.42, -0.62)
   box.scale.setScalar(0.85)
   slot.add(box)
   const lash = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.03, 4, 8), m.rope)
-  lash.position.set(0.85, 0.55, -0.35)
+  lash.position.set(0.7, 0.55, -0.62)
   lash.rotation.x = Math.PI / 2
   slot.add(lash)
   slot.visible = true
@@ -1230,6 +1239,15 @@ function raftLocal(b: Build, lx: number, lz: number) {
   }
 }
 
+/**
+ * Beached hull sits on sand. Waves may wet the planks but must not lift the
+ * whole craft — that was the hover-over-beach glitch.
+ */
+function beachedDeckY(ground: number, seaY: number) {
+  const wash = Math.max(0, seaY - ground)
+  return ground + 0.1 + Math.min(0.06, wash * 0.12)
+}
+
 export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: ImproviseDeps) {
   const m = mats()
   const builds: Build[] = []
@@ -1311,6 +1329,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let boardGrace = 0
   /** After a wash-off, stay swimming briefly so the deck skirt can't reclaim you. */
   let washGrace = 0
+  /** After Shove — don't snap beached again while she clears the shelf. */
+  let shoveGrace = 0
   /** 0..1 — fills in foul weather on an open deck; rail buys you time. */
   let washMeter = 0
   /** Live player ref — Climb mutates this to seat you on the deck. */
@@ -2289,7 +2309,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       raft.vx = 0
       raft.vz = 0
       raft.beached = true
-      raft.deckY = Math.max(deps.groundAt(raft.x, raft.z), sampleOcean(raft.x, raft.z, time).y) + 0.12
+      const sand = deps.groundAt(raft.x, raft.z)
+      raft.deckY = beachedDeckY(sand, sampleOcean(raft.x, raft.z, time).y)
       raft.object.position.set(raft.x, raft.deckY, raft.z)
       raft.object.rotation.x = 0
       raft.object.rotation.z = 0
@@ -2301,7 +2322,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         live.submersion = 0
         boardGrace = 0.8
       }
-      deps.hud.whisper('Hull on sand. She rests.')
+      deps.hud.whisper('Hull on sand. She rests. Shove when you want the sea again.')
       tap('haul', 0.85)
       tap('wood', 0.5)
     },
@@ -2320,31 +2341,61 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     use: () => {
       const raft = nearestOfKind(px, pz, 'raft', 4.2)
       if (!raft || !raft.beached) return
-      // Push toward deeper water
+      // Hunt deeper water — not just the nearest downhill sample
       let bestX = raft.x
       let bestZ = raft.z
-      let bestH = deps.groundAt(raft.x, raft.z)
-      for (let i = 0; i < 12; i++) {
-        const a = (i / 12) * Math.PI * 2
-        const hx = raft.x + Math.cos(a) * 3.2
-        const hz = raft.z + Math.sin(a) * 3.2
-        const h = deps.groundAt(hx, hz)
-        if (h < bestH) {
-          bestH = h
-          bestX = hx
-          bestZ = hz
+      let bestScore = Infinity
+      for (let r = 2.2; r <= 9.5; r += 1.15) {
+        for (let i = 0; i < 16; i++) {
+          const a = (i / 16) * Math.PI * 2
+          const hx = raft.x + Math.cos(a) * r
+          const hz = raft.z + Math.sin(a) * r
+          const h = deps.groundAt(hx, hz)
+          // Low ground wins; a little preference for distance so we clear the shelf
+          const score = h * 5 - r * 0.12
+          if (score < bestScore) {
+            bestScore = score
+            bestX = hx
+            bestZ = hz
+          }
         }
       }
-      const dx = bestX - raft.x
-      const dz = bestZ - raft.z
-      const len = Math.hypot(dx, dz) || 1
+      let dx = bestX - raft.x
+      let dz = bestZ - raft.z
+      let len = Math.hypot(dx, dz) || 1
       const wasAboard =
         !!live && Math.hypot(live.x - raft.x, live.z - raft.z) <= raft.radius * DECK_LIP + 0.4
-      raft.x += (dx / len) * 2.8
-      raft.z += (dz / len) * 2.8
-      raft.vx = (dx / len) * 0.9
-      raft.vz = (dz / len) * 0.9
+      // Step seaward until the shelf drops, or we've pushed far enough
+      for (let step = 0; step < 6; step++) {
+        raft.x += (dx / len) * 1.55
+        raft.z += (dz / len) * 1.55
+        if (deps.groundAt(raft.x, raft.z) < SHOVE_CLEAR_GROUND) break
+        // Retarget if the first bearing climbs again
+        if (step === 2 || step === 4) {
+          let redoX = raft.x
+          let redoZ = raft.z
+          let redoH = deps.groundAt(raft.x, raft.z)
+          for (let i = 0; i < 12; i++) {
+            const a = (i / 12) * Math.PI * 2
+            const hx = raft.x + Math.cos(a) * 3.4
+            const hz = raft.z + Math.sin(a) * 3.4
+            const h = deps.groundAt(hx, hz)
+            if (h < redoH) {
+              redoH = h
+              redoX = hx
+              redoZ = hz
+            }
+          }
+          dx = redoX - raft.x
+          dz = redoZ - raft.z
+          len = Math.hypot(dx, dz) || 1
+        }
+      }
+      raft.vx = (dx / len) * 1.35
+      raft.vz = (dz / len) * 1.35
       raft.beached = false
+      shoveGrace = SHOVE_GRACE
+      saidBeach = false
       const sea = sampleOcean(raft.x, raft.z, time)
       raft.deckY = sea.y + 0.22
       raft.object.position.set(raft.x, raft.deckY, raft.z)
@@ -2357,7 +2408,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         boardGrace = 0.6
         onRaftDeck = true
       }
-      deps.hud.whisper('Off the sand. Water under her again.')
+      deps.hud.whisper('Off the sand. Look down at the gunwale to pole her out.')
       tap('haul', 0.7)
       tap('splash', 0.55)
     },
@@ -2968,6 +3019,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     poleIntent = lookPitch <= POLE_LOOK_DOWN || !!intent?.dive
     onLand = view.walking && view.groundY > 0.3
     groundY = view.groundY
+    if (shoveGrace > 0) shoveGrace = Math.max(0, shoveGrace - dt)
     {
       const raftNear = nearestOfKind(player.x, player.z, 'raft', 3.4)
       onRaftDeck =
@@ -3070,7 +3122,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     if (nearRaft) {
       climbPos.set(nearRaft.x, nearRaft.deckY + 0.4, nearRaft.z)
       raftFitPos.set(nearRaft.x, nearRaft.deckY + 0.55, nearRaft.z)
-      stowPos.set(nearRaft.x + 0.7, nearRaft.deckY + 0.5, nearRaft.z - 0.3)
+      stowPos.set(nearRaft.x + 0.55, nearRaft.deckY + 0.5, nearRaft.z - 0.55)
       markPos.set(nearRaft.x + 1.2, nearRaft.deckY + 0.5, nearRaft.z)
       const thwart = raftLocal(nearRaft, 1.25, 0)
       thwartPos.set(thwart.x, nearRaft.deckY + 0.45, thwart.z)
@@ -3166,17 +3218,37 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           deps.hud.whisper('Look down to pole — or hold dive on a phone.')
         }
 
-        // Ran aground — auto-beach when the hull finds sand
-        if (!b.beached) {
+        // Ran aground — hard shelf sticks; soft wash only when nearly stopped.
+        // Shove grace keeps a freshly pushed hull from snapping back to sand.
+        if (!b.beached && shoveGrace <= 0) {
           const ground = deps.groundAt(b.x, b.z)
           const speed = Math.hypot(b.vx ?? 0, b.vz ?? 0)
-          if (ground > 0.2 || (ground > 0.06 && speed < 0.35 && aboard)) {
+          if (ground > BEACH_HARD || (ground > BEACH_SOFT && speed < 0.28 && aboard)) {
             b.beached = true
             b.vx = 0
             b.vz = 0
+            // Ease onto higher sand so she doesn't sit half in the wash
+            let bestX = b.x
+            let bestZ = b.z
+            let bestH = ground
+            for (let i = 0; i < 8; i++) {
+              const a = (i / 8) * Math.PI * 2
+              const hx = b.x + Math.cos(a) * 1.8
+              const hz = b.z + Math.sin(a) * 1.8
+              const h = deps.groundAt(hx, hz)
+              if (h > bestH) {
+                bestH = h
+                bestX = hx
+                bestZ = hz
+              }
+            }
+            if (bestH > ground + 0.12) {
+              b.x = bestX
+              b.z = bestZ
+            }
             if (!saidBeach) {
               saidBeach = true
-              deps.hud.whisper('Sand under the planks. Haul her up, or Shove off.')
+              deps.hud.whisper('Sand under the planks. Shove off when you want deep water.')
             }
           }
         }
@@ -3225,6 +3297,17 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         vx *= waterDrag
         vz *= waterDrag
 
+        // Shallow shelf drag while still free — wash fights you, but you can
+        // still pole back out (auto-beach only sticks when nearly stopped).
+        if (!b.beached) {
+          const shelf = deps.groundAt(b.x, b.z)
+          if (shelf > 0.06 && shelf <= BEACH_HARD) {
+            const shelfDrag = Math.exp(-(0.55 + shelf * 2.2) * dt)
+            vx *= shelfDrag
+            vz *= shelfDrag
+          }
+        }
+
         // Current carries the deck. Poling fights it; an empty raft goes with
         // the set. Beached hull ignores the set entirely.
         const set = deps.current?.()
@@ -3247,7 +3330,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         const sea = sampleOcean(b.x, b.z, t)
         const groundHere = deps.groundAt(b.x, b.z)
         if (b.beached) {
-          b.deckY = Math.max(groundHere, sea.y) + 0.12
+          b.deckY = beachedDeckY(groundHere, sea.y)
           b.object.position.set(b.x, b.deckY, b.z)
         } else {
           b.deckY = sea.y + 0.22
@@ -3353,6 +3436,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
                   player.submersion = 0
                   onRaftDeck = false
                   swimming = false
+                } else if (b.beached) {
+                  // Bow over water — stay on the planks. Don't dump you for
+                  // walking the length of a grounded hull.
+                  const s = lip / d
+                  player.x = b.x + (player.x - b.x) * s
+                  player.z = b.z + (player.z - b.z) * s
                 } else {
                   washGrace = 0.85
                   live = player
@@ -3395,6 +3484,17 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
             player.vy = 0
             player.submersion = 0
             onRaftDeck = false
+            swimming = false
+          } else if (b.beached) {
+            // Soft skirt past a beached bow — pull back onto the deck
+            const back = b.radius * DECK_LIP * 0.92
+            player.x = b.x + Math.cos(ang) * back
+            player.z = b.z + Math.sin(ang) * back
+            player.y = b.deckY + WALK_EYE
+            player.vy = 0
+            player.submersion = 0
+            player.mode = 'walk'
+            onRaftDeck = true
             swimming = false
           } else {
             // Soft skirt was holding a walker past the gunwale — put them in the sea
@@ -3598,6 +3698,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     washMeter = 0
     boardGrace = 0
     washGrace = 0
+    shoveGrace = 0
   }
 
   function fillHold(src?: SavedHold): Hold {
@@ -3766,7 +3867,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         }
         if (s.torn) animateSail(build.object, 0, true)
         if (s.beached) {
-          build.deckY = Math.max(deps.groundAt(x, z), sampleOcean(x, z, 0).y) + 0.12
+          build.deckY = beachedDeckY(deps.groundAt(x, z), sampleOcean(x, z, 0).y)
           build.object.position.set(x, build.deckY, z)
         }
       }
