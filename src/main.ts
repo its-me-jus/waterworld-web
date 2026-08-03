@@ -1084,7 +1084,7 @@ function frame() {
   salvage.update(t, camera.position, weather.storm)
   loot.update(dt, view)
   forage.update(camera, view, dt)
-  littoral.update(dt, player)
+  littoral.update(dt, player, { biolum: weather.biolum, rain: weather.rain })
   underwaterWorld.fish.setAttractors(littoral.fishAttractors())
   harvest.update(t)
   improvise.update(dt, t, player, view, player.yaw, { dive: input.dive })

@@ -29,7 +29,7 @@ night under a roof (your own hall sleeps best) brings you back whole.
 ## The ocean
 
 The day turns (~8 real minutes). Night drains warmth faster and the jellies
-glow. Weather runs in spells rather than on a timer: long fair stretches, a
+glow — coral gardens take the same soft light. Weather runs in spells rather than on a timer: long fair stretches, a
 breezy afternoon, and now and then something that closes over you — swell
 climbs, the sky shuts, every stroke costs more. Fair weather holds about nine
 tenths of a run, fronts roll in slowly enough to read, and it never turns foul
@@ -64,8 +64,10 @@ Keep fish raw to eat, or cook them once you've kindled a fire. Fashion a
 **Lash a cast net** (rope + fronds) and Scoop the wash while wading. The sea
 itself keeps a **tide** — two per day — so limpets and mussels on the foreshore
 bare at low water and drown at high; **tide pools** trap anemones, periwinkles
-and starfish until the sea returns; urchins, oysters and coral snails want a
-dive on the drop-off and coral gardens. Seals haul out on cove rocks when the
+and starfish until the sea returns — high water flushes them, rain and a lively
+swell refill life for the next low; urchins and coral cling to a **drop-off wall**
+you can swim along past the shelf; oysters and coral snails want a dive on the
+gardens (which glow at night). Seals haul out on cove rocks when the
 tide is low and slip when it makes — while they swim, fish schools thicken
 under them. The debris that drifts
 by — planks, barrels, crates, rope, canvas, bottles, cans — goes in the stash, and from there

@@ -115,17 +115,19 @@ Nothing points at dinner. Places do:
 |-------|--------|------|
 | Wreck surface | Always | Provision crate, hatch stash, drifting kelp/shellfish |
 | Foreshore rocks | **Low tide** (exposed) or dive when covered | Limpets, mussels |
-| Tide pools | **Low tide only** (hollow exposed) | Anemones, periwinkles, starfish |
-| Island shelf drop-off | Dive | Urchins |
-| Coral gardens (wreck reef + shelf) | Dive | Oysters, coral snails; brain / stag / plate coral |
+| Tide pools | **Low tide only** (hollow exposed); life returns after high-tide flush | Anemones, periwinkles, starfish — rain + lively swell refill faster |
+| Island shelf drop-off wall | Dive — steep face ~250–340 m out | Urchins; swim-along reef wall |
+| Coral gardens (wreck reef + shelf wall) | Dive; **night biolum** | Oysters, coral snails; brain / stag / plate coral |
 | Wreck reef | Dive | Edible kelp, mussels on rock |
 | Open water schools | Hang still / spear / rod / net / trap | Fish (denser under swimming seals) |
 | Wet sand | Ashore | Crabs |
 | Cove rocks | Low tide haul-out | Seals (presence — they slip if you close in; while swimming they pull schools in) |
 
 Tide is real mean sea level (±0.72 m), two cycles per day on the climate clock.
-Bottle traps stock faster while the water is working (low / changing) than at
-slack high water.
+Tide pools flush when the sea covers the lip; rain and a lively swell settle
+life back for the next low. Bottle traps stock faster while the water is
+working (low / changing) than at slack high water. Coral gardens take the
+night bioluminescence the jellies already know.
 
 ---
 
@@ -249,7 +251,7 @@ taxes strength until it clots; a second bite while open ends the run.
 ## Backlog (nothing committed)
 
 - **Memory spine** — the log was one beat. More papers, a name, a reason.
-- **Night economy** — biolum, wreck lantern. (Glass-off dive windows shipped with the cascade.)
+- **Night economy** — wreck lantern still open. Jelly + coral biolum shipped.
 - **More soft fails** — beyond sail-tear / locker flood, only if runs feel cruel.
 
 ---

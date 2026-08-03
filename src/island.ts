@@ -158,6 +158,19 @@ function ground(lx: number, lz: number) {
       else if (h < 0.4) h = THREE.MathUtils.lerp(h, Math.min(beach * 0.55, 1.6), cove * 0.65)
     }
   }
+  // Reef drop-off wall: past the wadable shelf a steep face drops ~10 m over a
+  // short swim — a wall you can follow, not a bathtub slope into the murk.
+  // Scalloped in bearing so it reads as reef, not a drawn-compass cylinder.
+  {
+    const r = Math.hypot(lx, lz)
+    const face = THREE.MathUtils.smoothstep(r, 248, 292)
+    const apron = THREE.MathUtils.smoothstep(r, 292, 355)
+    h -= face * 8.5 + apron * 4.5
+    if (face > 0.02) {
+      const bearing = Math.atan2(lz, lx)
+      h += (noise2(bearing * 3.2 + 2.1, r * 0.02) - 0.5) * face * 1.8
+    }
+  }
   // Then fall away into deep water so the patch edge isn't a bathtub rim
   h -= THREE.MathUtils.smoothstep(Math.hypot(lx, lz), 330, 620) * 30
   return h
