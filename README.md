@@ -21,7 +21,10 @@ whatever they act on is already within reach.
 
 The body is read two ways at once: quiet meters when they're worth worrying
 about, and diegetic cues — a closing vignette on a held breath, a heartbeat,
-a growl, slower arms, whispers that only name what you already feel.
+a growl, slower arms, whispers that only name what you already feel. And it
+keeps a tired timer: a day of wakefulness spends your Energy, hard work
+spends it faster, and only sleep buys it back — a nap takes the edge off, a
+night under a roof (your own hall sleeps best) brings you back whole.
 
 ## The ocean
 
@@ -52,8 +55,11 @@ Bleeding until it clots. A second bite, while it hasn't, is the one the ocean
 keeps.
 
 The surface tells its own story: a provision crate still floating by the wreck
-is a first meal; after that, hang still underwater and grab fish by hand — keep
-them raw to eat, or cook them once you've kindled a fire. The debris that drifts
+is a first meal; after that, hang still underwater and the schools drift back
+in — grab fish by hand, or answer them properly with the mate's spear (reach
+and near-sure odds instead of a coin toss). Set a bottle **fish trap** in the
+shallows and the tide stocks it while you work; Check it when you pass again.
+Keep fish raw to eat, or cook them once you've kindled a fire. The debris that drifts
 by — planks, barrels, crates, rope, canvas, bottles, cans — goes in the stash, and from there
 you improvise: a lean-to you can rest under, a fire to cook or smoke fish (and
 carry as a brand at night), a rain-catch, a raft you Climb aboard and fit with
@@ -64,7 +70,10 @@ gale tore — and ashore a seat, drying rack,
 signal smoke, dug rain hollows and tin drips. A spar buoy stands partway to the
 island so the crossing has a shape. Shelters are fashioned in stages —
 Raise a frame, Lash walls, Roof with fronds or a canvas tarp (or scrap bottles),
-then Rest once covered. Barrels plant as cisterns or sit under the eaves;
+then Rest once covered. And a shelter grows if you keep giving it mornings:
+**Raise the ridge** turns the crawl-in frame into a hut you can stand inside,
+then **Add a room** bolts another bay on, up to three — each stage is hours of
+work on the day clock, and the body pays for the labour. Barrels plant as cisterns or sit under the eaves;
 Fill them from rock pools or a rain-catch (a can scoops cleaner). A frond mat
 warms sleep; a crate ashore stows gear like the raft locker. Island wood and
 grass are workable — Pull palm fronds, Break
@@ -157,6 +166,12 @@ npm run dev
 - `npm run test:base` — headless feature coverage for the player-freedom work:
   carpentry (lay/raise/hang/pitch/strike), sleeping in a self-built room, the
   day counter, raft helm + anchor, and save/restore. Needs `npm run dev`.
+- `npm run test:camp` — camp life coverage: shelter growth (frame → ridge →
+  rooms, across a reload), the tired timer (drain, sleep, HUD), and fishing
+  (trap set/stock/check, the spear prompt). Needs `npm run dev`.
+- `npm run shot:camp` — beauty shots of the three-room hut inside and out,
+  the trap riding the wash, and the tired HUD into `shots/`. Needs
+  `npm run dev`.
 - `npm run shot:base` — beauty shots of a walled room, a stilt deck and the
   anchored raft under sail into `shots/`. Needs `npm run dev`.
 - `npm run shot:shelter` — checks the climbable spire, the immersion suit, the
@@ -167,8 +182,8 @@ npm run dev
 - `npm run icons` — rasterises `public/favicon.svg` into the install icons.
 - `?x=&z=&yaw=&pitch=&depth=` spawns anywhere.
 - `?hour=22` starts at night · `?storm=1` locks a squall · `?calm=1` pins a
-  glass-off · `?breath=0.3` / `?food=0.2` / `?wound=1` pre-set vitals ·
-  `?shark=8` summons a pass · `?knife=1` / `?spear=1` start armed ·
+  glass-off · `?breath=0.3` / `?food=0.2` / `?energy=0.3` / `?wound=1` pre-set
+  vitals · `?shark=8` summons a pass · `?knife=1` / `?spear=1` start armed ·
   `?suit=1` starts in the immersion suit · `?commit=1` every armed pass runs at you.
 - In dev, `window.ww` exposes player, vitals, salvage, climate, shark and the
   interaction registry; `__spots` marks the loot spots.

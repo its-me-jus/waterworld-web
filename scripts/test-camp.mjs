@@ -51,7 +51,9 @@ async function beachSpot(page) {
   })
 }
 
-/** Wading-depth water off the same cove — where a trap would ride. */
+/** Wading-depth water off the same cove — where a trap would ride. The spot
+ *  ahead of it must sit comfortably inside the trap band, since the swimmer
+ *  drifts a metre or two before the prompt settles. */
 async function wadeSpot(page) {
   return page.evaluate(() => {
     const isl = window.ww.island
@@ -60,11 +62,12 @@ async function wadeSpot(page) {
     const dx = s.x - isl.centre.x
     const dz = s.z - isl.centre.z
     const len = Math.hypot(dx, dz)
-    for (let d = 0; d < 120; d += 1) {
+    for (let d = 0; d < 160; d += 1) {
       const x = s.x + (dx / len) * d
       const z = s.z + (dz / len) * d
       const h = isl.heightAt(x, z)
-      if (h < -0.5 && h > -1.2) return { x, z, h }
+      const ahead = isl.heightAt(x + (dx / len) * 3, z + (dz / len) * 3)
+      if (h < -0.5 && h > -1.2 && ahead < -0.7 && ahead > -1.3) return { x, z, h }
     }
     return null
   })
