@@ -31,6 +31,8 @@ export type OpMenuDeps = {
   grantFish?: (n?: number) => void
   /** Ready construction recipes from improvise (same use as F). */
   campRecipes: () => CampRecipe[]
+  /** Which day of the run this is — the score in the header. */
+  day?: () => number
   teleport: (spot: TeleportSpot) => void
   spots: Record<string, TeleportSpot>
   /** Full run restart — the menu's reset is the real one, not a vitals patch. */
@@ -39,11 +41,12 @@ export type OpMenuDeps = {
 
 const GROUP_TITLE: Record<CampGroup, string> = {
   shelter: 'Shelter',
+  build: 'Carpentry',
   camp: 'Camp',
   raft: 'Raft',
 }
 
-const GROUP_ORDER: CampGroup[] = ['shelter', 'camp', 'raft']
+const GROUP_ORDER: CampGroup[] = ['shelter', 'build', 'camp', 'raft']
 
 export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
   const dev = import.meta.env.DEV
@@ -70,6 +73,7 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     <div class="op-panel">
       <div class="op-head">
         <h2>Pack</h2>
+        <span id="op-day" class="op-day"></span>
         <button class="op-close" type="button" aria-label="Close">×</button>
       </div>
       <div class="op-section">
@@ -109,6 +113,7 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
   const gearBox = overlay.querySelector('#op-gear') as HTMLElement
   const campBox = overlay.querySelector('#op-camp') as HTMLElement
   const campCount = overlay.querySelector('#op-camp-count') as HTMLElement
+  const dayChip = overlay.querySelector('#op-day') as HTMLElement
 
   let open = false
   let liveTimer = 0
@@ -180,6 +185,7 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
   }
 
   function render() {
+    dayChip.textContent = deps.day ? `Day ${deps.day()}` : ''
     renderStash(deps.salvage.stash, deps.salvage.labels)
     renderGear()
     renderCamp()

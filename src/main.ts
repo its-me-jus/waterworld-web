@@ -1,7 +1,7 @@
 import './style.css'
 import * as THREE from 'three'
 import { createOceanAudio, type AudioGround } from './audio'
-import { createClimate } from './climate'
+import { createClimate, DAY_LENGTH } from './climate'
 import { createTouchControls } from './controls'
 import { createForage } from './forage'
 import { createHarvest } from './harvest'
@@ -183,6 +183,15 @@ const climate = createClimate({
   hour: num('hour', 9.5),
   storm: params.has('storm') ? Number(params.get('storm')) : undefined,
 })
+
+// The run's score is days alive. The counter turns at world midnight, so
+// waking after your first night reads Day 2 — resting skips the clock ahead
+// and the dawn you reach still counts. Measured off the climate, not vitals.
+let runStart = climate.getElapsed()
+let lastDay = 1
+const runElapsed = () => Math.max(0, climate.getElapsed() - runStart)
+const dayAlive = () =>
+  Math.floor(climate.getElapsed() / DAY_LENGTH) - Math.floor(runStart / DAY_LENGTH) + 1
 
 // The sea's slow breathing — seasons, glass-offs, and the set that carries you.
 // Whispers attach after the HUD exists (see glassWhisper below).
@@ -397,6 +406,9 @@ function restart() {
   hud.clearDead()
   hud.setPrompt(null)
   touch.setAction(null)
+  runStart = climate.getElapsed()
+  lastDay = 1
+  hud.setDay(1)
   dead = false
   deathT = 0
   hasDived = false
@@ -438,6 +450,7 @@ function captureSave(): SavedRun {
     spear: loot.hasSpear,
     suit: vitals.suited,
     climateElapsed: climate.getElapsed(),
+    runElapsed: runElapsed(),
     hasDived,
     builds: improvise.snapshot(),
     harvest: harvest.snapshot(),
@@ -464,6 +477,8 @@ function loadRun(data: SavedRun) {
   harvest.restore(data.harvest)
   improvise.restore(data.builds)
   climate.setElapsed(data.climateElapsed)
+  runStart = climate.getElapsed() - (data.runElapsed ?? data.vitals.elapsed)
+  lastDay = dayAlive()
   hasDived = !!data.hasDived
   loot.reset()
   if (data.spear) loot.grant('spear')
@@ -518,6 +533,7 @@ const opMenu = createOpMenu(app, {
   },
   grantFish: (n) => forage.grant(n),
   campRecipes: () => improvise.campRecipes(),
+  day: dayAlive,
   teleport,
   spots: {
     island: { x: beach.x, z: beach.z, y: beach.y + 1.7 },
@@ -805,11 +821,19 @@ function frame() {
     hunger: 1 - vitals.food,
   })
 
+  // The score: which dawn you're still breathing on
+  const day = dayAlive()
+  hud.setDay(day)
+  if (day > lastDay) {
+    lastDay = day
+    if (vitals.alive) hud.whisper(`Day ${day}. Still here.`)
+  }
+
   if (!vitals.alive && !dead) {
     dead = true
     clearSave()
     opMenu.setOpen(false)
-    hud.setDead(vitals.cause, vitals.elapsed)
+    hud.setDead(vitals.cause, day)
     if (document.pointerLockElement) document.exitPointerLock()
   }
   if (dead) {

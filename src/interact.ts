@@ -64,6 +64,30 @@ export function createInteractions() {
 
       return best
     },
+
+    /** Dev: every live candidate and its score, for tuning prompt contention. */
+    candidates(camera: THREE.Camera) {
+      camera.getWorldDirection(forward)
+      const out: { verb: string; label: string; distance: number; facing: number; score: number }[] = []
+      for (const item of items) {
+        let why = ''
+        if (!item.available()) why = 'unavailable'
+        toItem.copy(item.position).sub(camera.position)
+        const distance = toItem.length()
+        if (!why && distance > item.radius) why = 'far'
+        const facing = distance > 1e-3 ? toItem.divideScalar(distance).dot(forward) : 1
+        if (!why && facing < -0.4) why = 'behind'
+        out.push({
+          verb: item.verb,
+          label: item.label,
+          distance: +distance.toFixed(2),
+          facing: +facing.toFixed(2),
+          score: +(distance - facing * 1.2).toFixed(2),
+          why,
+        } as never)
+      }
+      return out
+    },
   }
 }
 

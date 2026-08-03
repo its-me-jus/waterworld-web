@@ -5,8 +5,12 @@ controls, underwater murk, and a body that keeps score. Built with Vite + Three.
 
 ## The run
 
-An open-ocean survival sandbox. There is no objective, no quest marker — you
-last as long as you can keep breath, warmth, water and food off the floor.
+An open-ocean survival sandbox. The one score it keeps is **days alive** —
+the quiet counter at the top of the screen, turning over each midnight you
+are still breathing. Sleeping through a night is how you bank one: a roof
+you raised yourself, dawn, Day 2. Death scores the run in days and keeps
+your longest drift; there is no quest marker, only the count.
+
 A living camp (stash, builds, where you stood) persists in the browser so
 closing the tab does not wipe a shelter you made; death, or **Start again**
 in the Pack, clears it and begins a new run.
@@ -54,7 +58,9 @@ by — planks, barrels, crates, rope, canvas, bottles, cans — goes in the stas
 you improvise: a lean-to you can rest under, a fire to cook or smoke fish (and
 carry as a brand at night), a rain-catch, a raft you Climb aboard and fit with
 sail, rail, locker, oar, floats and a wider deck — sit the thwart, rest under
-sail, Haul ashore and Shove off, Mend a sail a gale tore — and ashore a seat, drying rack,
+sail, take the **helm** from the stern and steer her where you look, **Drop
+anchor** when the set would take her, Haul ashore and Shove off, Mend a sail a
+gale tore — and ashore a seat, drying rack,
 signal smoke, dug rain hollows and tin drips. A spar buoy stands partway to the
 island so the crossing has a shape. Shelters are fashioned in stages —
 Raise a frame, Lash walls, Roof with fronds or a canvas tarp (or scrap bottles),
@@ -69,6 +75,26 @@ sheds the heaviest piece when nothing else is in reach. The sea itself carries
 you on a swell-set current — glass-offs are dive windows, and a foul deck can
 wash you over the side. Nothing is the "right" path; see [`docs/paths.md`](docs/paths.md).
 Opening-run math: `npm run sim:starts`.
+
+## Your own two hands
+
+Past the fixed recipes there is carpentry — freeform pieces that snap to a
+grid so you can architect your own base instead of inheriting one:
+
+- **Lay platform** — a stilt deck tile. On dry sand, in the wash, or piled
+  over the shallows. Walkable, climbable from the water, and tiles chain
+  flush into docks, piers and stilt houses.
+- **Raise wall** — hangs on the edge of the tile you're on (or facing), or
+  stands free as a windbreak. Solid: it stops the wind and it stops you.
+- **Hang door** — the wall you walk through. It blocks its cheeks and lets
+  the middle pass, and still counts toward a closed-in room.
+- **Pitch roof** — plank-and-frond lid over a tile. A roofed, walled tile is
+  a bedroom: **Sleep** there and the night skips to dawn like any lean-to —
+  which is how the day counter turns.
+- **Strike** — every piece dismantles for a full refund. Rethink freely.
+
+Fires burn on platform decks, rain gear and lockers work the same ashore, and
+the whole base persists with the rest of the camp.
 
 ## Dry ground
 
@@ -103,9 +129,11 @@ barrel as a cistern — a camp you made, not one the world planted for you.
   dig, chop, cook, take/plant fire — same verbs as desktop **F**)
 - **Desktop:** WASD · click for mouse-look · Space/E up · Shift/Q dive · **F**
   to take, eat, drink, open, pry, cut, jab, lash, dig, kindle or cook · **Tab**
-  opens the Pack (stash, field kit: Island / Wreck / Start again)
-- **Raft:** walk the gunwale and look down (or hold dive on a phone) to pole and
-  steer · **Shove** clears a beached hull · **Haul** grounds her on purpose
+  opens the Pack (stash, carpentry recipes, field kit: Island / Wreck / Start again)
+- **Raft:** walk the gunwale and look down (or hold dive on a phone) to pole ·
+  with canvas rigged, stand at the stern and do the same to **helm** her — the
+  tiller steers where you look · **Drop/Weigh anchor** holds her against the
+  set · **Shove** clears a beached hull · **Haul** grounds her on purpose
 
 ## Live
 
@@ -126,6 +154,11 @@ npm run dev
   `SHOT_BASE=http://localhost:5174` follows the dev server if it moved port;
   `SHOT_ONLY=storm,night` re-shoots matching views (comma-separated).
   `scripts/shot-survival.mjs` / `shot-salvage.mjs` cover the shark and loot arcs.
+- `npm run test:base` — headless feature coverage for the player-freedom work:
+  carpentry (lay/raise/hang/pitch/strike), sleeping in a self-built room, the
+  day counter, raft helm + anchor, and save/restore. Needs `npm run dev`.
+- `npm run shot:base` — beauty shots of a walled room, a stilt deck and the
+  anchored raft under sail into `shots/`. Needs `npm run dev`.
 - `npm run shot:shelter` — checks the climbable spire, the immersion suit, the
   hold's deep finds and that a weather spell holds. Needs `npm run dev`.
 - `npm run sim:starts` — Monte Carlo over opening paths (wreck loot, suited

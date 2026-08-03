@@ -1,10 +1,14 @@
 # Survival paths
 
 What a run can *become*. Nothing here is signposted in-game — these are arcs a
-player discovers by looking.
+player discovers by looking. The one scoreboard is **days alive**: the counter
+at the top of the screen turns at world midnight (sleeping through the night
+banks a day), the death screen scores the run in days, and the Pack header
+shows the current day.
 
 Re-run the numbers anytime: `npm run sim:starts`.
 Smoke-test the shelter arcs: `npm run shot:shelter` (needs `npm run dev`).
+Feature-test carpentry, raft helm/anchor and the day count: `npm run test:base`.
 
 ---
 
@@ -135,6 +139,9 @@ markers in-world, no "correct" build order.
 | **Scratch stern** | Mate's spear (memory) | On the raft | The Wanderer's mark — your watch, your deck |
 | **Sit thwart** | — | On the raft | Built-in stern seat. Stamina back. |
 | **Rest under sail** | sail rigged | On the raft | A nap under canvas — lighter than a lean-to, finishes deck smoke |
+| **Take the helm** | sail rigged | Stern of the raft | Look down (or hold dive) and push — the tiller steers her where you look, faster than the pole |
+| **Drop anchor** | — | Afloat raft | Stone over the side, line made fast — the set can't take her. Ignores current and auto-beach until weighed |
+| **Weigh anchor** | — | Anchored raft | Stone up. The sea has her again |
 | **Haul ashore** | — | Shallows / beach | Ground the hull on sand. Walk off onto the island. |
 | **Shove off** | — | Beached raft | Push her clear of the shelf into deep water — then pole |
 | **Seat** | 1 plank | Dry ground | Driftwood seat. **Sit** to get stamina (and a little warmth) back |
@@ -142,6 +149,25 @@ markers in-world, no "correct" build order.
 | **Signal** | 1 plank + 1 canvas | Higher dry ground | Smoke column on the ridge — readable from the water. One per ~40 m |
 | **Dig hollow** | hands (look down) | Soft sand | A rain-holding pit. Slow refill; brackish but drinkable |
 | **Tin drip** | 1 can + 1 rope | Dry ground | A can on a stake that catches rain by the mouthful |
+
+### Carpentry (freeform)
+
+The architect-your-own-base layer. Tiles snap to a 2.4 m world grid so pieces
+always meet flush; every piece **Strike**s down for a full refund.
+
+| Recipe | Cost | Where | What it does |
+|--------|------|-------|--------------|
+| **Lay platform** | 2 plank | Land, wash, or shallows (to ~2 m) | Stilt deck tile. Walkable; skirts to a ramp on land; **Climb** aboard from the water |
+| **Raise wall** | 1 plank | Tile edge (or free-standing) | Solid panel — blocks wind and body. Free walls are windbreaks (0.5 shelter) |
+| **Hang door** | 1 plank | Tile edge | Wall with a walk-through gap; blocks its cheeks, passes the middle, counts toward the room |
+| **Pitch roof** | 1 plank + 1 frond | Over a tile | Shed lid. Roofed + walled (shelter ≥ 0.7) makes a bedroom: **Sleep** skips to dawn like the lean-to |
+| **Strike** | hands | Any piece | Dismantle for a full refund |
+
+A tile's shelter sums what's hung on it: 0.18 base, +0.11 per wall, +0.08 per
+door, +0.26 for the roof — a closed room with a lid reads 0.88, better than
+any lean-to. Fires burn on deck tiles; the day counter turns at world
+midnight, so sleeping the night away in your own room is how a day gets
+banked.
 
 Fall off and **Climb** the raft from the water (F when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft. An empty raft keeps her heading — she won't spin to chase leftover pole speed. Walk the centre to work; **look down** (or hold dive on a phone) at the gunwale to pole and steer. On sand she sits still — **Shove** clear of the shelf, then pole again. **Haul** her up the beach when you mean to camp. A gale can tear the sail — **Mend** it.
 
@@ -176,11 +202,15 @@ tanks are nearly dry.
 A raft at the wreck is one path — **Climb** aboard from the water, **pole** (or
 **oar**) it from the deck, then **Rig** a sail, **Lash** rail, locker, deck and
 floats, **Scratch** the stern once the mate's spear has given you a name to cut.
-Stow gear you cannot swim with. A camp on the island is another — seat, drying
+Take the **helm** from the stern to steer under canvas, and **Drop anchor** when
+the set would carry her off. Stow gear you cannot swim with. A camp on the
+island is another — seat, drying
 rack, signal smoke, dug hollows, tin drips, rain pools, shore crabs on the wash,
 palms you can fell, grass you can twist, and one inland cairn with rope left
-under the stones. Working the spire with a lean-to and a fire is a third. The
-sandbox is the point.
+under the stones. Working the spire with a lean-to and a fire is a third. And
+past all three there is the architect's path: platform tiles over the shallows,
+walls and a door of your own placing, a roof you pitched, and a bed that is
+simply the floor of the room you made. The sandbox is the point.
 
 ### Shark
 
