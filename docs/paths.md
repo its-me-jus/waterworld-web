@@ -115,11 +115,13 @@ Nothing points at dinner. Places do:
 |-------|--------|------|
 | Wreck surface | Always | Provision crate, hatch stash, drifting kelp/shellfish |
 | Foreshore rocks | **Low tide** (exposed) or dive when covered | Limpets, mussels |
+| Tide pools | **Low tide only** (hollow exposed) | Anemones, periwinkles, starfish |
 | Island shelf drop-off | Dive | Urchins |
+| Coral gardens (wreck reef + shelf) | Dive | Oysters, coral snails; brain / stag / plate coral |
 | Wreck reef | Dive | Edible kelp, mussels on rock |
-| Open water schools | Hang still / spear / rod / net / trap | Fish |
+| Open water schools | Hang still / spear / rod / net / trap | Fish (denser under swimming seals) |
 | Wet sand | Ashore | Crabs |
-| Cove rocks | Low tide haul-out | Seals (presence — they slip if you close in) |
+| Cove rocks | Low tide haul-out | Seals (presence — they slip if you close in; while swimming they pull schools in) |
 
 Tide is real mean sea level (±0.72 m), two cycles per day on the climate clock.
 Bottle traps stock faster while the water is working (low / changing) than at

@@ -1085,6 +1085,7 @@ function frame() {
   loot.update(dt, view)
   forage.update(camera, view, dt)
   littoral.update(dt, player)
+  underwaterWorld.fish.setAttractors(littoral.fishAttractors())
   harvest.update(t)
   improvise.update(dt, t, player, view, player.yaw, { dive: input.dive })
   shark.update(dt, t, camera, hasDived)
@@ -1166,6 +1167,7 @@ function frame() {
   applyStormToWaves(weather.storm)
   syncWaves()
   sea.update(0, 0)
+  oceanState.tide = weather.tide
   skyRig.update(0, weather)
   skyRig.focusShadow(player.x, 0, player.z)
   island.setHaze(skyRig.horizonColor)

@@ -63,9 +63,11 @@ Keep fish raw to eat, or cook them once you've kindled a fire. Fashion a
 **fishing rod** (plank + rope) to Cast from shore into schools you can see, or
 **Lash a cast net** (rope + fronds) and Scoop the wash while wading. The sea
 itself keeps a **tide** — two per day — so limpets and mussels on the foreshore
-bare at low water and drown at high; urchins and reef kelp want a dive on the
-drop-off. Seals haul out on cove rocks when the tide is low and slip when it
-makes (or when you get too close). The debris that drifts
+bare at low water and drown at high; **tide pools** trap anemones, periwinkles
+and starfish until the sea returns; urchins, oysters and coral snails want a
+dive on the drop-off and coral gardens. Seals haul out on cove rocks when the
+tide is low and slip when it makes — while they swim, fish schools thicken
+under them. The debris that drifts
 by — planks, barrels, crates, rope, canvas, bottles, cans — goes in the stash, and from there
 you improvise: a lean-to you can rest under, a fire to cook or smoke fish (and
 carry as a brand at night), a rain-catch, a raft you Climb aboard and fit with

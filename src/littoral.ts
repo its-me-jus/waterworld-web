@@ -7,11 +7,11 @@ import { oceanState } from './waves'
 /**
  * Littoral life — food and wildlife that answer the tide.
  *
- *  - Limpets & mussels on the foreshore: pry them at low water when the rock
- *    is bare; dive for them when the tide covers. Same clusters, two windows.
- *  - Urchins a little deeper on the drop-off: always a dive, richer eating.
- *  - Seals haul out on cove rocks at low tide and slip when the water rises
- *    (or when you get too close). Atmosphere and a tell — not a hunt.
+ *  - Limpets & mussels on the foreshore: pry at low water, dive when covered.
+ *  - Tidal pools: hollows that hold their own biota only while the tide is out.
+ *  - Urchins on the drop-off; coral gardens with oysters & snails to pry.
+ *  - Seals haul out at low tide, slip when it makes — and while swimming they
+ *    draw fish schools in (a hunting ground, not a hunt of the seal).
  *
  * Nothing here is signposted. Tide phase decides what's reachable.
  */
@@ -31,14 +31,35 @@ export type LittoralDeps = {
   lowPower?: boolean
 }
 
+type PickKind =
+  | 'limpet'
+  | 'mussel'
+  | 'urchin'
+  | 'kelp'
+  | 'anemone'
+  | 'periwinkle'
+  | 'starfish'
+  | 'oyster'
+  | 'coral-snail'
+
 type Pick = {
   object: THREE.Object3D
-  kind: 'limpet' | 'mussel' | 'urchin' | 'kelp'
+  kind: PickKind
   taken: boolean
-  /** Ground / rock height — exposed when this clears the tide. */
   rockY: number
-  /** How deep underwater you may still pry (m below surface). */
   diveReach: number
+  /** Only reachable while the tide is below this height (tidal-pool biota). */
+  poolOnly?: boolean
+  poolLip?: number
+}
+
+type TidePool = {
+  x: number
+  z: number
+  lip: number
+  size: number
+  water: THREE.Mesh
+  rim: THREE.Mesh
 }
 
 type Seal = {
@@ -83,6 +104,50 @@ const mats = () => ({
   belly: new THREE.MeshStandardMaterial({
     color: '#8a9098',
     roughness: 0.85,
+    flatShading: true,
+  }),
+  rock: new THREE.MeshStandardMaterial({
+    color: '#6a6358',
+    roughness: 0.95,
+    flatShading: true,
+  }),
+  pool: new THREE.MeshStandardMaterial({
+    color: 0x3f757b,
+    roughness: 0.28,
+    metalness: 0.05,
+    emissive: 0x27505a,
+    emissiveIntensity: 0.7,
+    transparent: true,
+    opacity: 0.88,
+  }),
+  anemone: new THREE.MeshStandardMaterial({
+    color: '#c45a6a',
+    roughness: 0.7,
+    flatShading: true,
+  }),
+  periwinkle: new THREE.MeshStandardMaterial({
+    color: '#5a6a78',
+    roughness: 0.6,
+    flatShading: true,
+  }),
+  starfish: new THREE.MeshStandardMaterial({
+    color: '#c4783a',
+    roughness: 0.8,
+    flatShading: true,
+  }),
+  coral: new THREE.MeshStandardMaterial({
+    color: '#c87888',
+    roughness: 0.75,
+    flatShading: true,
+  }),
+  coralDeep: new THREE.MeshStandardMaterial({
+    color: '#6a4a78',
+    roughness: 0.8,
+    flatShading: true,
+  }),
+  oyster: new THREE.MeshStandardMaterial({
+    color: '#9a8a70',
+    roughness: 0.7,
     flatShading: true,
   }),
 })
@@ -140,6 +205,119 @@ function kelpClump(m: ReturnType<typeof mats>) {
   return g
 }
 
+function anemoneMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.08, 7), m.anemone)
+  base.position.y = 0.04
+  g.add(base)
+  for (let i = 0; i < 8; i++) {
+    const tent = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.006, 0.16, 4), m.anemone)
+    const a = (i / 8) * Math.PI * 2
+    tent.position.set(Math.cos(a) * 0.04, 0.14, Math.sin(a) * 0.04)
+    tent.rotation.z = Math.cos(a) * 0.35
+    tent.rotation.x = Math.sin(a) * 0.35
+    g.add(tent)
+  }
+  return g
+}
+
+function periwinkleMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  for (let i = 0; i < 3; i++) {
+    const shell = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 5), m.periwinkle)
+    shell.scale.set(1, 0.85, 1.15)
+    shell.position.set(Math.cos(i * 2.1) * 0.05, 0.03, Math.sin(i * 2.1) * 0.05)
+    g.add(shell)
+  }
+  return g
+}
+
+function starfishMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  const hub = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 4), m.starfish)
+  hub.scale.set(1, 0.35, 1)
+  g.add(hub)
+  for (let i = 0; i < 5; i++) {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.02, 0.16), m.starfish)
+    const a = (i / 5) * Math.PI * 2
+    arm.position.set(Math.cos(a) * 0.08, 0.01, Math.sin(a) * 0.08)
+    arm.rotation.y = -a
+    g.add(arm)
+  }
+  return g
+}
+
+function oysterMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  for (let i = 0; i < 3; i++) {
+    const shell = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 4), m.oyster)
+    shell.scale.set(1.2, 0.35, 0.9)
+    shell.rotation.set(0.2, i * 1.1, 0.15)
+    shell.position.set(Math.cos(i * 2) * 0.06, 0.02, Math.sin(i * 2) * 0.06)
+    g.add(shell)
+  }
+  return g
+}
+
+function coralSnailMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  const shell = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 5), m.periwinkle)
+  shell.scale.set(1.1, 0.9, 1.3)
+  g.add(shell)
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.06, 5), m.shell)
+  tip.rotation.z = Math.PI / 2
+  tip.position.set(0.05, 0.01, 0)
+  g.add(tip)
+  return g
+}
+
+/** Low-poly brain / boulder coral. */
+function brainCoral(m: ReturnType<typeof mats>, seed: number) {
+  const g = new THREE.Group()
+  const body = new THREE.Mesh(new THREE.IcosahedronGeometry(0.45 + (seed % 5) * 0.06, 1), m.coral)
+  body.scale.set(1.1, 0.7, 1)
+  g.add(body)
+  for (let i = 0; i < 4; i++) {
+    const bump = new THREE.Mesh(new THREE.SphereGeometry(0.18, 5, 4), m.coral)
+    bump.position.set(Math.cos(i * 1.7) * 0.28, 0.15, Math.sin(i * 1.7) * 0.28)
+    bump.scale.set(1, 0.6, 1)
+    g.add(bump)
+  }
+  return g
+}
+
+/** Staghorn-ish branching coral. */
+function stagCoral(m: ReturnType<typeof mats>, seed: number) {
+  const g = new THREE.Group()
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.1, 0.35, 5), m.coralDeep)
+  trunk.position.y = 0.18
+  g.add(trunk)
+  for (let i = 0; i < 5; i++) {
+    const branch = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.025, 0.045, 0.35 + ((seed + i) % 3) * 0.08, 4),
+      m.coral,
+    )
+    const a = (i / 5) * Math.PI * 2
+    branch.position.set(Math.cos(a) * 0.12, 0.4, Math.sin(a) * 0.12)
+    branch.rotation.z = Math.cos(a) * 0.55
+    branch.rotation.x = Math.sin(a) * 0.55
+    g.add(branch)
+  }
+  return g
+}
+
+/** Plate / table coral. */
+function plateCoral(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.08, 0.28, 5), m.coralDeep)
+  stem.position.y = 0.14
+  g.add(stem)
+  const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.5, 0.06, 8), m.coral)
+  plate.position.y = 0.32
+  g.add(plate)
+  return g
+}
+
 function sealMesh(m: ReturnType<typeof mats>) {
   const g = new THREE.Group()
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.55, 4, 8), m.seal)
@@ -169,11 +347,73 @@ function sealMesh(m: ReturnType<typeof mats>) {
   return g
 }
 
-const FOOD: Record<Pick['kind'], { food: number; water: number; whisper: string }> = {
-  limpet: { food: 0.1, water: 0.02, whisper: 'Limpets off the rock. Thin, salt, filling enough.' },
-  mussel: { food: 0.16, water: 0.03, whisper: 'Mussels. The tide left them for you.' },
-  urchin: { food: 0.22, water: 0.04, whisper: 'Urchin. Rich and strange — the drop-off keeps them.' },
-  kelp: { food: 0.12, water: 0.05, whisper: 'Fresh kelp from the reef. Chewy, wet, alive.' },
+const FOOD: Record<
+  PickKind,
+  { food: number; water: number; whisper: string; verb: string; label: string }
+> = {
+  limpet: {
+    food: 0.1,
+    water: 0.02,
+    whisper: 'Limpets off the rock. Thin, salt, filling enough.',
+    verb: 'Pry',
+    label: 'Limpets',
+  },
+  mussel: {
+    food: 0.16,
+    water: 0.03,
+    whisper: 'Mussels. The tide left them for you.',
+    verb: 'Pry',
+    label: 'Mussels',
+  },
+  urchin: {
+    food: 0.22,
+    water: 0.04,
+    whisper: 'Urchin. Rich and strange — the drop-off keeps them.',
+    verb: 'Pry',
+    label: 'Urchin',
+  },
+  kelp: {
+    food: 0.12,
+    water: 0.05,
+    whisper: 'Fresh kelp from the reef. Chewy, wet, alive.',
+    verb: 'Pull',
+    label: 'Kelp',
+  },
+  anemone: {
+    food: 0.11,
+    water: 0.04,
+    whisper: 'Anemone from the pool. Soft and salt.',
+    verb: 'Pull',
+    label: 'Anemone',
+  },
+  periwinkle: {
+    food: 0.08,
+    water: 0.02,
+    whisper: 'Periwinkles. A pocketful of the pool.',
+    verb: 'Pick',
+    label: 'Periwinkles',
+  },
+  starfish: {
+    food: 0.09,
+    water: 0.02,
+    whisper: 'A starfish. Not much meat — the pool still gave.',
+    verb: 'Take',
+    label: 'Starfish',
+  },
+  oyster: {
+    food: 0.2,
+    water: 0.05,
+    whisper: 'Oysters on the coral. Briny and cold.',
+    verb: 'Pry',
+    label: 'Oysters',
+  },
+  'coral-snail': {
+    food: 0.1,
+    water: 0.02,
+    whisper: 'A snail from the coral garden.',
+    verb: 'Pick',
+    label: 'Coral snail',
+  },
 }
 
 const scatter = (i: number, salt: number) => {
@@ -185,36 +425,50 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
   const m = mats()
   const picks: Pick[] = []
   const seals: Seal[] = []
+  const tidePools: TidePool[] = []
   const ox = deps.origin.x
   const oz = deps.origin.z
   const coveX = deps.cove?.x ?? ox
   const coveZ = deps.cove?.z ?? oz
-  const want = deps.lowPower ? { limpet: 8, mussel: 6, urchin: 4, kelp: 3, seal: 1 } : { limpet: 18, mussel: 14, urchin: 9, kelp: 6, seal: 3 }
+  const want = deps.lowPower
+    ? { limpet: 8, mussel: 6, urchin: 4, kelp: 3, seal: 1, pool: 3, coral: 3 }
+    : { limpet: 18, mussel: 14, urchin: 9, kelp: 6, seal: 3, pool: 6, coral: 7 }
 
   function addPick(
-    kind: Pick['kind'],
+    kind: PickKind,
     object: THREE.Object3D,
     x: number,
     y: number,
     z: number,
     diveReach: number,
+    pool?: { lip: number },
   ) {
     object.position.set(x, y, z)
     scene.add(object)
-    const pick: Pick = { object, kind, taken: false, rockY: y, diveReach }
+    const meta = FOOD[kind]
+    const pick: Pick = {
+      object,
+      kind,
+      taken: false,
+      rockY: y,
+      diveReach,
+      poolOnly: !!pool,
+      poolLip: pool?.lip,
+    }
     picks.push(pick)
-    const label =
-      kind === 'limpet' ? 'Limpets' : kind === 'mussel' ? 'Mussels' : kind === 'urchin' ? 'Urchin' : 'Kelp'
     deps.interactions.add({
       position: object.position,
-      verb: kind === 'kelp' ? 'Pull' : 'Pry',
-      label,
-      radius: kind === 'urchin' || kind === 'kelp' ? 2.6 : 2.4,
+      verb: meta.verb,
+      label: meta.label,
+      radius: kind === 'urchin' || kind === 'kelp' || kind === 'oyster' ? 2.6 : 2.3,
       available: () => {
         if (pick.taken || !deps.vitals.alive) return false
         const surface = oceanState.tide
+        if (pick.poolOnly && pick.poolLip !== undefined) {
+          // Pool biota only while the tide is out of the hollow
+          return surface < pick.poolLip - 0.05
+        }
         const exposed = pick.rockY > surface + 0.08
-        // Low tide: grab from shore. High tide / always-deep: dive within reach.
         if (exposed) return true
         const depth = surface - pick.rockY
         return depth > 0.15 && depth < pick.diveReach
@@ -223,9 +477,8 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
         if (pick.taken) return
         pick.taken = true
         pick.object.visible = false
-        const bite = FOOD[pick.kind]
-        eat(deps.vitals, bite.food, bite.water)
-        deps.hud.whisper(bite.whisper)
+        eat(deps.vitals, meta.food, meta.water)
+        deps.hud.whisper(meta.whisper)
       },
     })
   }
@@ -245,7 +498,6 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
     const wx = ox + lx
     const wz = oz + lz
     const h = deps.heightAt(wx, wz)
-    // Intertidal band — high tide covers, low tide bares
     if (h < 0.05 || h > 1.15) continue
     if (scatter(i, 1.1) > 0.55) continue
     addPick('limpet', limpetMesh(m), wx, h + 0.04, wz, 1.8)
@@ -272,6 +524,66 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
     mussels++
   }
 
+  // —— tidal pools (intertidal hollows, own biota at low water) ————
+  {
+    const candidates: { x: number; z: number; h: number }[] = []
+    for (let i = 0; i < 800; i++) {
+      const coveBias = i % 2 === 0
+      const angle = i * 2.399 + 0.4
+      const radius = coveBias ? 158 + ((i * 17) % 90) : 200 + ((i * 23) % 180)
+      const lx = coveBias
+        ? coveX - ox + Math.cos(angle) * (radius * 0.4)
+        : Math.cos(angle) * radius
+      const lz = coveBias
+        ? coveZ - oz + Math.sin(angle) * (radius * 0.4)
+        : Math.sin(angle) * radius
+      const wx = ox + lx
+      const wz = oz + lz
+      const h = deps.heightAt(wx, wz)
+      if (h < 0.2 || h > 0.95) continue
+      candidates.push({ x: wx, z: wz, h })
+    }
+    for (const spot of candidates) {
+      if (tidePools.length >= want.pool) break
+      if (tidePools.some((p) => Math.hypot(p.x - spot.x, p.z - spot.z) < 14)) continue
+      const size = 0.85 + (tidePools.length % 3) * 0.2
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(size, 0.22, 5, 14), m.rock)
+      rim.rotation.x = Math.PI / 2
+      rim.scale.y = 0.45
+      rim.position.set(spot.x, spot.h - 0.08, spot.z)
+      scene.add(rim)
+      const water = new THREE.Mesh(new THREE.CircleGeometry(size - 0.12, 16), m.pool)
+      water.rotation.x = -Math.PI / 2
+      water.position.set(spot.x, spot.h + 0.01, spot.z)
+      scene.add(water)
+      const pool: TidePool = { x: spot.x, z: spot.z, lip: spot.h, size, water, rim }
+      tidePools.push(pool)
+
+      const poolOpt = { lip: spot.h }
+      addPick('anemone', anemoneMesh(m), spot.x + 0.25, spot.h + 0.02, spot.z - 0.1, 1.2, poolOpt)
+      addPick(
+        'periwinkle',
+        periwinkleMesh(m),
+        spot.x - 0.3,
+        spot.h + 0.02,
+        spot.z + 0.15,
+        1.2,
+        poolOpt,
+      )
+      if (tidePools.length % 2 === 0) {
+        addPick(
+          'starfish',
+          starfishMesh(m),
+          spot.x + 0.05,
+          spot.h + 0.02,
+          spot.z + 0.28,
+          1.2,
+          poolOpt,
+        )
+      }
+    }
+  }
+
   // —— drop-off urchins (shelf edge, always dive) ————————————————
   let urchins = 0
   for (let i = 0; i < 900 && urchins < want.urchin; i++) {
@@ -280,7 +592,6 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
     const wx = ox + Math.cos(angle) * radius
     const wz = oz + Math.sin(angle) * radius
     const h = deps.heightAt(wx, wz)
-    // Just off the wadable shelf — deeper rock
     if (h > -0.2 || h < -3.2) continue
     if (scatter(i, 3.3) > 0.48) continue
     addPick('urchin', urchinMesh(m), wx, h + 0.06, wz, 4.5)
@@ -308,6 +619,66 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
         addPick('mussel', musselMesh(m), probe.x, probe.y - 0.35, probe.z, 5)
       }
       kelp++
+    }
+  }
+
+  // —— coral gardens (geometry + dive forage) ————————————————————
+  {
+    let planted = 0
+    if (deps.reefResolve && deps.wreckOrigin) {
+      const wo = deps.wreckOrigin
+      for (let i = 0; i < 40 && planted < want.coral; i++) {
+        const angle = i * 2.513 + 0.7
+        const radius = 8 + (i % 5) * 4.2
+        const probe = {
+          x: wo.x + Math.cos(angle) * radius,
+          y: -4 - (i % 4) * 2.5,
+          z: wo.z + Math.sin(angle) * radius,
+        }
+        const before = probe.y
+        deps.reefResolve(probe)
+        if (probe.y <= before + 0.05) continue
+        const kind = i % 3
+        const coral =
+          kind === 0 ? brainCoral(m, i) : kind === 1 ? stagCoral(m, i) : plateCoral(m)
+        coral.position.set(probe.x, probe.y - 0.15, probe.z)
+        coral.rotation.y = i * 0.7
+        scene.add(coral)
+        if (kind === 0) {
+          addPick('oyster', oysterMesh(m), probe.x + 0.2, probe.y + 0.15, probe.z, 5.5)
+        } else {
+          addPick(
+            'coral-snail',
+            coralSnailMesh(m),
+            probe.x - 0.15,
+            probe.y + 0.25,
+            probe.z + 0.1,
+            5.5,
+          )
+        }
+        planted++
+      }
+    }
+    // Island shelf gardens — shallow reef patches off the drop-off
+    for (let i = 0; i < 600 && planted < want.coral + (deps.lowPower ? 2 : 5); i++) {
+      const angle = i * 2.155 + 1.2
+      const radius = 255 + ((i * 29) % 140)
+      const wx = ox + Math.cos(angle) * radius
+      const wz = oz + Math.sin(angle) * radius
+      const h = deps.heightAt(wx, wz)
+      if (h > -0.8 || h < -4.5) continue
+      if (scatter(i, 4.4) > 0.35) continue
+      const kind = planted % 3
+      const coral = kind === 0 ? brainCoral(m, i) : kind === 1 ? stagCoral(m, i) : plateCoral(m)
+      coral.position.set(wx, h + 0.05, wz)
+      coral.rotation.y = i * 0.9
+      scene.add(coral)
+      if (kind !== 2) {
+        addPick('oyster', oysterMesh(m), wx + 0.15, h + 0.35, wz, 4.8)
+      } else {
+        addPick('coral-snail', coralSnailMesh(m), wx - 0.12, h + 0.4, wz + 0.1, 4.8)
+      }
+      planted++
     }
   }
 
@@ -341,8 +712,10 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
 
   let saidTide = false
   let lastLow = false
+  let saidPool = false
+  let saidSealFish = false
 
-  function update(dt: number, player: { x: number; z: number }) {
+  function update(dt: number, player: { x: number; z: number; y?: number }) {
     const tide = oceanState.tide
     const low = tide < -0.2
     if (low !== lastLow) {
@@ -352,6 +725,20 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
         deps.hud.whisper('Low water. Rock shows its teeth.')
       } else if (!low && saidTide && tide > 0.25) {
         deps.hud.whisper('The tide is making. The foreshore drowns.')
+        saidPool = false
+      }
+    }
+
+    // Tide pools: water sits in the hollow until the sea covers the lip
+    for (const pool of tidePools) {
+      const covered = tide > pool.lip - 0.02
+      pool.water.visible = !covered
+      if (!covered) {
+        pool.water.position.y = Math.min(pool.lip + 0.02, Math.max(pool.lip - 0.12, tide + 0.05))
+      }
+      if (low && !saidPool && Math.hypot(player.x - pool.x, player.z - pool.z) < 6) {
+        saidPool = true
+        deps.hud.whisper('A tide pool. Life trapped until the sea returns.')
       }
     }
 
@@ -372,11 +759,23 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
         s.object.position.set(s.swimX, tide - 0.35, s.swimZ)
         s.object.rotation.x = 0.25
       } else if (!s.hauled) {
-        // Bob in the wash just offshore
         s.object.position.y = tide - 0.3 + Math.sin(performance.now() * 0.0015 + s.haulX) * 0.08
         s.object.visible = true
+        if (!saidSealFish && dist < 14) {
+          saidSealFish = true
+          deps.hud.whisper('Fish work under the seal. The water is thick with them.')
+        }
       }
     }
+  }
+
+  /** Swim spots that pull fish schools in — strength low while hauled out. */
+  function fishAttractors() {
+    return seals.map((s) => ({
+      x: s.hauled ? s.haulX : s.swimX,
+      z: s.hauled ? s.haulZ : s.swimZ,
+      strength: s.hauled ? 0.15 : 1,
+    }))
   }
 
   function reset() {
@@ -386,6 +785,8 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
     }
     saidTide = false
     lastLow = false
+    saidPool = false
+    saidSealFish = false
     for (const s of seals) {
       s.hauled = true
       s.spook = 0
@@ -395,7 +796,7 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
     }
   }
 
-  return { update, reset }
+  return { update, reset, fishAttractors }
 }
 
 export type Littoral = ReturnType<typeof createLittoral>
