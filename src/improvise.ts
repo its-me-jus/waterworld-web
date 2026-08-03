@@ -5,7 +5,7 @@ import type { Interactable, Interactions } from './interact'
 import type { PlayerFrame } from './player'
 import type { Salvage, StashKind } from './salvage'
 import type { SavedBuild, SavedHold, SavedRoof } from './persist'
-import { eat, type Vitals } from './survival'
+import { eat, rest, type Vitals } from './survival'
 import { sampleOcean } from './waves'
 import { barrelObject, crateObject, plankObject } from './wreck'
 
@@ -46,6 +46,8 @@ export type ImproviseDeps = {
   takeRawForSmoke: () => boolean
   /** Finish a smoke cycle into the Pack. */
   addSmoked: (n?: number) => void
+  /** Trap-caught fish land in the hand the same way grabbed ones do. */
+  grantFish: (n?: number) => void
   /** 0 at night … 1 at noon — rest under a lean-to skips to dawn when dark. */
   daylight: () => number
   /** Jump the climate clock (seconds of day-cycle time). */
@@ -74,6 +76,7 @@ type BuildKind =
   | 'drip'
   | 'cistern'
   | 'camp-locker'
+  | 'trap'
   // —— carpentry: the freeform pieces you architect a base from ——
   | 'platform'
   | 'wall'
@@ -123,6 +126,12 @@ type Build = {
   sides?: number
   /** Progressive shelter: roof covering. */
   roof?: RoofKind
+  /** Shelter raised to walk-in height — you can stand inside it. */
+  tall?: boolean
+  /** Shelter footprint in bays; each Add a room is one more. */
+  rooms?: number
+  /** Fish waiting in a trap. */
+  fish?: number
   /** Barrel set under the lean-to as a cistern / windbreak. */
   hasBarrel?: boolean
   /** Frond mat under the shelter — warmer Rest. */
@@ -155,6 +164,9 @@ const ROOF_SCRAP_COST: Cost = { plastic: 3, rope: 1 }
 const SHELTER_BARREL_COST: Cost = { barrel: 1 }
 const CISTERN_COST: Cost = { barrel: 1 }
 const MAT_COST: Cost = { leaf: 2, rope: 1 }
+const RIDGE_COST: Cost = { plank: 3, rope: 1 }
+const ROOM_COST: Cost = { plank: 2, rope: 1, leaf: 1 }
+const TRAP_COST: Cost = { plastic: 1, rope: 1 }
 const CAMP_LOCKER_COST: Cost = { crate: 1 }
 const FIRE_COST: Cost = { plank: 1 }
 const CATCH_COST: Cost = { canvas: 1, rope: 1 }
@@ -177,6 +189,15 @@ const ROOF_COST: Cost = { plank: 1, leaf: 1 }
 /** Max times you can widen one raft. */
 const EXPAND_MAX = 3
 const SIDE_MAX = 2
+/** A shelter grows to three rooms — hut, then house, then hall. */
+const ROOM_MAX = 3
+/** Day-cycle hours a build stage takes: the price of a bigger shelter is time. */
+const BUILD_RIDGE_HOURS = 2.4
+const BUILD_ROOM_HOURS = 2.8
+/** A set trap's first catch comes quick; after that the tide works slower. */
+const TRAP_FIRST = 75
+const TRAP_NEXT = 115
+const TRAP_MAX = 2
 
 const REACH = 3.2
 const PLACE_AHEAD = 1.7
@@ -412,35 +433,70 @@ function mats() {
 /**
  * Progressive shelter — start with a frame, then fashion walls and a roof.
  * Rest only once something is over your head.
+ *
+ * Past the roof it grows two ways, and both cost you hours: Raise the ridge
+ * turns the crawl-in lean-to into a walk-in hut (`tall`), then Add a room
+ * bolts another bay on the side, up to three. Rooms are laid symmetric about
+ * the build origin so the Rest spot and the shelter radius stay honest.
  */
-function shelterFrameMesh(m: ReturnType<typeof mats>) {
+function shelterFrameMesh(m: ReturnType<typeof mats>, tall = false, bays = 1) {
   const g = new THREE.Group()
   g.name = 'lean-to'
-  for (const [x, z, h] of [
-    [-1.0, 0.55, 1.35],
-    [1.0, 0.55, 1.35],
-    [-0.95, -0.55, 1.05],
-    [0.95, -0.55, 1.05],
-  ] as const) {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, h, 0.1), m.wood)
-    post.position.set(x, h / 2, z)
-    g.add(post)
-  }
-  const ridge = plankObject(2.2, 0.1, m.wood)
-  ridge.position.set(0, 1.35, 0.35)
-  ridge.rotation.x = -0.35
-  g.add(ridge)
-  const cross = plankObject(1.5, 0.08, m.wood)
-  cross.rotation.y = Math.PI / 2
-  cross.position.set(0, 0.95, 0)
-  g.add(cross)
-  for (const [x, z] of [
-    [-1.0, 0.55],
-    [1.0, 0.55],
-  ] as const) {
-    const lash = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.025, 4, 8), m.rope)
-    lash.position.set(x, 1.2, z)
-    g.add(lash)
+  if (!tall) {
+    for (const [x, z, h] of [
+      [-1.0, 0.55, 1.35],
+      [1.0, 0.55, 1.35],
+      [-0.95, -0.55, 1.05],
+      [0.95, -0.55, 1.05],
+    ] as const) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, h, 0.1), m.wood)
+      post.position.set(x, h / 2, z)
+      g.add(post)
+    }
+    const ridge = plankObject(2.2, 0.1, m.wood)
+    ridge.position.set(0, 1.35, 0.35)
+    ridge.rotation.x = -0.35
+    g.add(ridge)
+    const cross = plankObject(1.5, 0.08, m.wood)
+    cross.rotation.y = Math.PI / 2
+    cross.position.set(0, 0.95, 0)
+    g.add(cross)
+    for (const [x, z] of [
+      [-1.0, 0.55],
+      [1.0, 0.55],
+    ] as const) {
+      const lash = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.025, 4, 8), m.rope)
+      lash.position.set(x, 1.2, z)
+      g.add(lash)
+    }
+  } else {
+    // Walk-in hut — head-clear ridge over stouter posts, one bay per room
+    const span = bays * 2.2
+    for (let i = 0; i <= bays; i++) {
+      const x = -span / 2 + i * 2.2
+      for (const [z, h] of [
+        [0.75, 2.05],
+        [-0.75, 1.8],
+      ] as const) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.11, h, 0.11), m.wood)
+        post.position.set(x, h / 2, z)
+        g.add(post)
+      }
+      const lash = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.026, 4, 8), m.rope)
+      lash.position.set(x, 1.84, 0.75)
+      g.add(lash)
+    }
+    for (let i = 0; i < bays; i++) {
+      const cx = -span / 2 + i * 2.2 + 1.1
+      const ridge = plankObject(2.5, 0.1, m.wood)
+      ridge.position.set(cx, 2.0, 0.42)
+      ridge.rotation.x = -0.28
+      g.add(ridge)
+      const cross = plankObject(1.7, 0.08, m.wood)
+      cross.rotation.y = Math.PI / 2
+      cross.position.set(cx, 1.62, 0)
+      g.add(cross)
+    }
   }
   const sideSlot = new THREE.Group()
   sideSlot.name = 'sideSlot'
@@ -459,69 +515,111 @@ function shelterFrameMesh(m: ReturnType<typeof mats>) {
   return g
 }
 
-function fitShelterSide(shelter: THREE.Group, m: ReturnType<typeof mats>, n: number) {
+function fitShelterSide(
+  shelter: THREE.Group,
+  m: ReturnType<typeof mats>,
+  n: number,
+  tall = false,
+  bays = 1,
+) {
   const slot = shelter.getObjectByName('sideSlot') as THREE.Group
   if (!slot) return
-  const z = n === 1 ? 0.55 : -0.55
-  for (let i = 0; i < 4; i++) {
-    const slat = plankObject(1.9, 0.07, m.wood)
-    slat.position.set(0, 0.25 + i * 0.28, z)
-    slat.rotation.x = n === 1 ? -0.08 : 0.08
-    slot.add(slat)
+  if (!tall) {
+    const z = n === 1 ? 0.55 : -0.55
+    for (let i = 0; i < 4; i++) {
+      const slat = plankObject(1.9, 0.07, m.wood)
+      slat.position.set(0, 0.25 + i * 0.28, z)
+      slat.rotation.x = n === 1 ? -0.08 : 0.08
+      slot.add(slat)
+    }
+    const lash = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.022, 4, 8), m.rope)
+    lash.position.set(-0.9, 0.7, z)
+    slot.add(lash)
+    return
   }
-  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.022, 4, 8), m.rope)
-  lash.position.set(-0.9, 0.7, z)
-  slot.add(lash)
+  // Hut walls: a course of slats per bay, full standing height
+  const z = n === 1 ? 0.75 : -0.75
+  const span = bays * 2.2
+  for (let b = 0; b < bays; b++) {
+    const cx = -span / 2 + b * 2.2 + 1.1
+    for (let i = 0; i < 6; i++) {
+      const slat = plankObject(2.3, 0.07, m.wood)
+      slat.position.set(cx, 0.24 + i * 0.3, z)
+      slat.rotation.x = n === 1 ? -0.06 : 0.06
+      slot.add(slat)
+    }
+    const lash = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.024, 4, 8), m.rope)
+    lash.position.set(cx - 1.0, 1.05, z)
+    slot.add(lash)
+  }
 }
 
 function fitShelterRoof(
   shelter: THREE.Group,
   m: ReturnType<typeof mats>,
   kind: 'leaf' | 'canvas' | 'scrap',
+  tall = false,
+  bays = 1,
 ) {
   const slot = shelter.getObjectByName('roofSlot') as THREE.Group
   if (!slot) return
   while (slot.children.length) slot.remove(slot.children[0])
+  // One run of covering per room, laid on the hut's taller ridge
+  const y = tall ? 1.95 : 1.2
+  const z = tall ? 0.08 : 0.1
+  const pitch = tall ? -0.5 : -0.55
+  const span = tall ? bays * 2.2 : 2.2
+  const centres = tall ? bays : 1
   if (kind === 'leaf') {
-    for (let i = 0; i < 10; i++) {
-      const frond = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 1.8, 1, 3), m.leaf)
-      const pos = frond.geometry.attributes.position
-      for (let v = 0; v < pos.count; v++) {
-        const t = (pos.getY(v) + 0.9) / 1.8
-        pos.setZ(v, (1 - t) * 0.25)
+    for (let b = 0; b < centres; b++) {
+      const cx = -span / 2 + b * 2.2 + 1.1
+      for (let i = 0; i < 10; i++) {
+        const frond = new THREE.Mesh(new THREE.PlaneGeometry(0.55, tall ? 2.2 : 1.8, 1, 3), m.leaf)
+        const pos = frond.geometry.attributes.position
+        const h = tall ? 2.2 : 1.8
+        for (let v = 0; v < pos.count; v++) {
+          const t = (pos.getY(v) + h / 2) / h
+          pos.setZ(v, (1 - t) * 0.25)
+        }
+        frond.geometry.computeVertexNormals()
+        frond.position.set(cx + (i - 4.5) * 0.24, y, z)
+        frond.rotation.x = pitch
+        frond.rotation.z = ((i % 3) - 1) * 0.08
+        slot.add(frond)
       }
-      frond.geometry.computeVertexNormals()
-      frond.position.set((i - 4.5) * 0.24, 1.2, 0.1)
-      frond.rotation.x = -0.55
-      frond.rotation.z = ((i % 3) - 1) * 0.08
-      slot.add(frond)
     }
   } else if (kind === 'canvas') {
-    const sheet = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 2.0, 3, 3), m.cloth)
-    const pos = sheet.geometry.attributes.position
-    for (let i = 0; i < pos.count; i++) {
-      pos.setZ(i, Math.sin(pos.getX(i) * 1.2) * 0.04)
+    for (let b = 0; b < centres; b++) {
+      const cx = -span / 2 + b * 2.2 + 1.1
+      const sheet = new THREE.Mesh(new THREE.PlaneGeometry(2.6, tall ? 2.3 : 2.0, 3, 3), m.cloth)
+      const pos = sheet.geometry.attributes.position
+      for (let i = 0; i < pos.count; i++) {
+        pos.setZ(i, Math.sin(pos.getX(i) * 1.2) * 0.04)
+      }
+      sheet.geometry.computeVertexNormals()
+      sheet.position.set(cx, y + 0.05, z + 0.02)
+      sheet.rotation.x = pitch
+      slot.add(sheet)
+      const edge = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 2.4, 4), m.rope)
+      edge.rotation.z = Math.PI / 2
+      edge.position.set(cx, y - 0.2, z + 0.73)
+      slot.add(edge)
     }
-    sheet.geometry.computeVertexNormals()
-    sheet.position.set(0, 1.25, 0.12)
-    sheet.rotation.x = -0.55
-    slot.add(sheet)
-    const edge = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 2.4, 4), m.rope)
-    edge.rotation.z = Math.PI / 2
-    edge.position.set(0, 1.05, 0.85)
-    slot.add(edge)
   } else {
     // Scrap tarp — bottles flattened under rope courses
-    for (let i = 0; i < 6; i++) {
-      const scrap = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 1.1), m.plastic)
-      scrap.position.set((i - 2.5) * 0.4, 1.22, 0.05 + (i % 2) * 0.08)
-      scrap.rotation.x = -0.55
-      slot.add(scrap)
+    for (let b = 0; b < centres; b++) {
+      const cx = -span / 2 + b * 2.2 + 1.1
+      for (let i = 0; i < 6; i++) {
+        const scrap = new THREE.Mesh(new THREE.PlaneGeometry(0.7, tall ? 1.3 : 1.1), m.plastic)
+        scrap.position.set(cx + (i - 2.5) * 0.4, y + 0.02, z - 0.05 + (i % 2) * 0.08)
+        scrap.rotation.x = pitch
+        slot.add(scrap)
+      }
+      const course = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 2.5, 4), m.rope)
+      course.rotation.z = Math.PI / 2
+      course.position.set(cx, y - 0.05, z + 0.3)
+      slot.add(course)
     }
-    const course = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 2.5, 4), m.rope)
-    course.rotation.z = Math.PI / 2
-    course.position.set(0, 1.15, 0.4)
-    slot.add(course)
   }
 }
 
@@ -607,6 +705,9 @@ function recomputeShelter(b: Build) {
   else if (b.roof === 'scrap') s += 0.32
   if (b.hasBarrel) s += 0.1
   if (b.hasMat) s += 0.06
+  // A walk-in hut holds heat like a building; every room after that a little more
+  if (b.tall) s += 0.18
+  s += Math.max(0, (b.rooms ?? 1) - 1) * 0.07
   // Height band: inland frames hold heat a touch better
   if (b.deckY > 2) s += 0.08
   b.shelter = s
@@ -845,6 +946,46 @@ function catchMesh(m: ReturnType<typeof mats>) {
   water.position.y = 0.2
   water.name = 'water'
   g.add(water)
+  return g
+}
+
+/**
+ * Bottle fish trap — a big bottle on its side, the neck cut and turned back
+ * in on itself, a rope bridle to a small float. Set it in the shallows and
+ * the tide fills it; the little dark shapes show when it has.
+ */
+function trapMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  g.name = 'trap'
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.62, 9), m.plastic)
+  body.rotation.z = Math.PI / 2
+  g.add(body)
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.13, 0.22, 9), m.plastic)
+  neck.rotation.z = -Math.PI / 2
+  neck.position.x = 0.36
+  g.add(neck)
+  const bridle = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.018, 4, 10), m.rope)
+  bridle.rotation.y = Math.PI / 2
+  bridle.position.x = -0.16
+  g.add(bridle)
+  const float = new THREE.Mesh(new THREE.SphereGeometry(0.08, 7, 6), m.plastic)
+  float.position.set(-0.42, 0.14, 0)
+  g.add(float)
+  const line = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.3, 4), m.rope)
+  line.rotation.z = 0.7
+  line.position.set(-0.32, 0.06, 0)
+  g.add(line)
+  // The catch — small dark shapes knocking about inside the bottle
+  const stock = new THREE.Group()
+  stock.name = 'trapStock'
+  for (let i = 0; i < TRAP_MAX; i++) {
+    const fish = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.24, 6), m.fish)
+    fish.rotation.z = Math.PI / 2 + (i - 0.5) * 0.5
+    fish.position.set((i - 0.5) * 0.18, 0.01 + i * 0.03, (i % 2) * 0.07 - 0.035)
+    stock.add(fish)
+  }
+  stock.visible = false
+  g.add(stock)
   return g
 }
 
@@ -1466,6 +1607,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const takeDryPos = new THREE.Vector3()
   const digPos = new THREE.Vector3()
   const dripPos = new THREE.Vector3()
+  const trapPos = new THREE.Vector3()
   const thwartPos = new THREE.Vector3()
   const sailRestPos = new THREE.Vector3()
   const beachPos = new THREE.Vector3()
@@ -1508,6 +1650,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let pz = 0
   let restReadyAt = 0
   let sitReadyAt = 0
+  /** The trap anchor is over wading-depth water on the shelf. */
+  let trapSpotValid = false
   let saidPole = false
   let saidSail = false
   let saidWash = false
@@ -1792,7 +1936,27 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   function nearestShelter(maxDist = 2.8) {
-    return nearestOfKind(px, pz, 'lean-to', maxDist)
+    // Centre-near first; anywhere inside a grown hut's footprint after
+    return nearestOfKind(px, pz, 'lean-to', maxDist) ?? leanToAt(px, pz)
+  }
+
+  /**
+   * The lean-to whose footprint you're in. A grown hut covers real ground, so
+   * its own radius says how near is near — the 2.4 m of the crawl-in frame
+   * would lose the far room of a three-bay house.
+   */
+  function leanToAt(x: number, z: number, slack = 0.5): Build | null {
+    let best: Build | null = null
+    let bestD = Infinity
+    for (const b of builds) {
+      if (b.kind !== 'lean-to') continue
+      const d = Math.hypot(b.x - x, b.z - z)
+      if (d < Math.max(2.4, b.radius - slack) && d < bestD) {
+        bestD = d
+        best = b
+      }
+    }
+    return best
   }
 
   function shelterComplete(b: Build) {
@@ -1985,6 +2149,113 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
+  /**
+   * Rebuild a lean-to's dressing in place after it grows. The Build and its
+   * registered interactions keep their identity — only the mesh is swapped.
+   */
+  function reskinShelter(b: Build) {
+    while (b.object.children.length) {
+      const child = b.object.children[0]
+      b.object.remove(child)
+      disposeBuildObject(child)
+    }
+    const tall = !!b.tall
+    const bays = Math.max(1, b.rooms ?? 1)
+    const fresh = shelterFrameMesh(m, tall, bays)
+    for (const child of [...fresh.children]) b.object.add(child)
+    const sides = b.sides ?? 0
+    for (let i = 1; i <= sides; i++) fitShelterSide(b.object, m, i, tall, bays)
+    if ((b.roof ?? 'none') !== 'none') {
+      fitShelterRoof(b.object, m, b.roof as 'leaf' | 'canvas' | 'scrap', tall, bays)
+    }
+    if (b.hasBarrel) {
+      fitShelterBarrel(b.object, m)
+      const waterMesh = b.object.getObjectByName('water')
+      if (waterMesh) waterMesh.visible = (b.water ?? 0) > 0.08
+    }
+    if (b.hasMat) fitShelterMat(b.object, m)
+  }
+
+  /**
+   * Building takes time. The hours pass on the day clock like a nap does,
+   * and the body pays for the work — you come out of it hungry, thirsty,
+   * and ready to sit down.
+   */
+  function workHours(hours: number) {
+    deps.skipTime((hours / 24) * DAY_LENGTH)
+    const v = deps.vitals
+    v.stamina = Math.max(0.05, v.stamina - hours * 0.08)
+    v.food = Math.max(0, v.food - hours * 0.035)
+    v.water = Math.max(0, v.water - hours * 0.05)
+    v.energy = Math.max(0, v.energy - hours * 0.045)
+  }
+
+  // Raise the ridge — the crawl-in lean-to becomes a hut you can stand in.
+  // The first stage of a bigger shelter, and the first one that costs hours.
+  addCamp('shelter', {
+    position: leanPos,
+    verb: 'Raise',
+    label: 'the ridge',
+    cost: RIDGE_COST,
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      return (
+        !!s &&
+        shelterComplete(s) &&
+        !s.tall &&
+        deps.vitals.alive &&
+        onLand &&
+        deps.salvage.has(RIDGE_COST)
+      )
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(RIDGE_COST)) return
+      workHours(BUILD_RIDGE_HOURS)
+      s.tall = true
+      s.rooms = Math.max(1, s.rooms ?? 1)
+      reskinShelter(s)
+      recomputeShelter(s)
+      deps.hud.whisper('Hours of lifting and lashing. You can stand inside it now.')
+    },
+  })
+
+  // Add a room — another bay on the hut, up to three. Each one is a morning
+  // of work; the shelter gets bigger because you keep giving it time.
+  addCamp('shelter', {
+    position: leanPos,
+    verb: 'Add',
+    label: 'a room',
+    cost: ROOM_COST,
+    radius: REACH,
+    available: () => {
+      const s = nearestShelter()
+      return (
+        !!s &&
+        !!s.tall &&
+        (s.rooms ?? 1) < ROOM_MAX &&
+        deps.vitals.alive &&
+        onLand &&
+        deps.salvage.has(ROOM_COST)
+      )
+    },
+    use: () => {
+      const s = nearestShelter()
+      if (!s || !deps.salvage.spend(ROOM_COST)) return
+      workHours(BUILD_ROOM_HOURS)
+      s.rooms = (s.rooms ?? 1) + 1
+      s.radius = 2.8 + (s.rooms - 1) * 1.15
+      reskinShelter(s)
+      recomputeShelter(s)
+      deps.hud.whisper(
+        s.rooms >= ROOM_MAX
+          ? 'The last bay goes up. A house, by any measure you have out here.'
+          : 'Another room framed, walled and roofed. The place is growing.',
+      )
+    },
+  })
+
   // Scoop rain-pool / catch water into a barrel — can in hand is the ladle
   // (not spent). Without a can you can still tip a catch into a nearby cask.
   function nearestFillableBarrel() {
@@ -2072,6 +2343,64 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const build = addBuild('cistern', cisternMesh(m), x, z, y, 1.5, 0.05, { water: 0.2 })
       attachBarrelDrink(build, 'Cistern')
       deps.hud.whisper('Barrel open to the sky. Patience fills it.')
+    },
+  })
+
+  /**
+   * The bottle trap — fishing that works while you don't. Set it in wading
+   * water and the tide swims the catch in; Check it when you pass again.
+   */
+  function attachTrapCheck(build: Build) {
+    const item = deps.interactions.add({
+      position: build.object.position,
+      verb: 'Check',
+      label: 'Fish trap',
+      radius: 2.7,
+      available: () => deps.vitals.alive,
+      use: () => {
+        const n = build.fish ?? 0
+        if (n <= 0) {
+          deps.hud.whisper('Nothing yet. The tide works slow.')
+          return
+        }
+        build.fish = 0
+        deps.grantFish(n)
+        const stock = build.object.getObjectByName('trapStock')
+        if (stock) stock.visible = false
+        deps.hud.whisper(
+          n > 1
+            ? 'Two fish knocking about in the bottle. Breakfast and a spare.'
+            : 'A fish in the trap. It stops being hungry work today.',
+        )
+      },
+    })
+    build.items.push(item)
+  }
+
+  addCamp('camp', {
+    position: trapPos,
+    verb: 'Set',
+    label: 'Fish trap',
+    cost: TRAP_COST,
+    radius: REACH,
+    available: () =>
+      deps.vitals.alive &&
+      // Swimming or wading the wash — anywhere the tide can reach the bottle
+      !onLand &&
+      trapSpotValid &&
+      deps.salvage.has(TRAP_COST) &&
+      clearOfBuilds(trapPos.x, trapPos.z, 1.6) &&
+      !nearestOfKind(trapPos.x, trapPos.z, 'trap', 3.2),
+    use: () => {
+      if (!deps.salvage.spend(TRAP_COST)) return
+      const x = trapPos.x
+      const z = trapPos.z
+      const y = deps.groundAt(x, z)
+      const build = addBuild('trap', trapMesh(m), x, z, y, 1.6, 0, { fish: 0 })
+      build.object.position.set(x, trapPos.y, z)
+      attachTrapCheck(build)
+      tap('splash', 0.4)
+      deps.hud.whisper('The trap rides the wash. Check it when the tide has worked.')
     },
   })
 
@@ -2577,6 +2906,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       v.food = Math.max(0, v.food - hours * 0.04)
       v.water = Math.max(0, v.water - hours * 0.05)
       if (v.wounded) v.woundClock += hours * 28
+      // A deck nap is thin sleep — it takes the edge off, no more
+      rest(v, hours, 0.7)
       restReadyAt = time + (night ? 36 : REST_COOLDOWN)
       if (live) {
         const mid = raftLocal(raft, -0.2, 0)
@@ -3519,6 +3850,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     warmthDay: number
     warmthFire: number
     warmthExtra?: number
+    /** How well the place sleeps — a walk-in hut beats a deck. */
+    restQuality?: number
   }) {
     const v = deps.vitals
     const night = deps.daylight() < 0.38
@@ -3564,6 +3897,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     v.food = Math.max(0, v.food - hours * 0.035)
     v.water = Math.max(0, v.water - hours * 0.045)
     if (v.wounded) v.woundClock += hours * 35
+    // The tired timer only unwinds here — a nap takes the edge off, a night
+    // under a real roof brings you back whole
+    rest(v, hours, opts.restQuality ?? 1)
 
     restReadyAt = time + (night ? 40 : REST_COOLDOWN)
     return { night, nearFire, smokedDone, storm }
@@ -3576,11 +3912,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     radius: 2.6,
     available: () => {
       if (!deps.vitals.alive || !onLand || time < restReadyAt) return false
-      const s = nearestOfKind(px, pz, 'lean-to', 2.4)
+      const s = leanToAt(px, pz)
       return !!s && shelterComplete(s)
     },
     use: () => {
-      const shelter = nearestOfKind(px, pz, 'lean-to', 2.4)
+      const shelter = leanToAt(px, pz)
       if (!shelter || !shelterComplete(shelter)) return
       const v = deps.vitals
       if (v.food < 0.1 || v.water < 0.1) {
@@ -3595,6 +3931,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         warmthDay: 0.22,
         warmthFire: 0.18,
         warmthExtra: shelter.hasMat ? 0.12 : 0,
+        // Standing room and a soft mat are what sleep is measured in
+        restQuality:
+          (shelter.tall ? 1.12 : 1) + (shelter.hasMat ? 0.1 : 0) + ((shelter.rooms ?? 1) - 1) * 0.06,
       })
       restPos.set(shelter.x, shelter.deckY + 0.6, shelter.z)
 
@@ -3610,14 +3949,20 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         )
       } else if (night) {
         deps.hud.whisper(
-          nearFire
-            ? 'Dawn. Embers still warm the lean-to.'
-            : 'Dawn finds you under plank and lashing.',
+          shelter.tall && (shelter.rooms ?? 1) > 1
+            ? 'Dawn comes through the far room. Your own hall around you.'
+            : shelter.tall
+              ? 'Dawn, standing height and all. The hut holds.'
+              : nearFire
+                ? 'Dawn. Embers still warm the lean-to.'
+                : 'Dawn finds you under plank and lashing.',
         )
       } else if (storm > 0.5) {
         deps.hud.whisper('You rest while the front works the roof.')
       } else {
-        deps.hud.whisper('You rest. The sun has moved.')
+        deps.hud.whisper(
+          shelter.tall ? 'A nap on your own floor. The hours turn.' : 'You rest. The sun has moved.',
+        )
       }
     },
   })
@@ -3650,6 +3995,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         warmthDay: 0.2,
         warmthFire: 0.15,
         warmthExtra: tile.shelter >= 0.85 ? 0.06 : 0,
+        restQuality: tile.shelter >= 0.85 ? 1.15 : 1,
       })
       sleepPlatPos.set(tile.x, tile.deckY + 0.6, tile.z)
 
@@ -3809,6 +4155,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     if (onLand && dripY > 0.5) setAnchor(dripPos, dripAt.x, dripAt.z, dripY + 0.45)
     else setAnchor(dripPos, player.x, player.z, player.y)
 
+    // Trap anchor — ahead in the shallows. It rides the live sea so the Set
+    // prompt only makes sense over water the tide actually moves through.
+    const trapAt = offset(player, facingYaw, 2.0, 0)
+    const trapGround = deps.groundAt(trapAt.x, trapAt.z)
+    const trapSea = sampleOcean(trapAt.x, trapAt.z, t).y
+    trapSpotValid =
+      trapGround > trapSea - 1.35 && trapGround < trapSea - 0.12 && trapGround > -3.2
+    setAnchor(trapPos, trapAt.x, trapAt.z, trapSea + 0.05)
+
     // —— carpentry anchors ———————————————————————————————————
     // Platform snaps to the world tile grid; walls hang on tile edges when a
     // tile is in reach, else stand free where you face.
@@ -3900,7 +4255,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       takeSmokePos.copy(eatPos)
     }
 
-    const lean = nearestOfKind(player.x, player.z, 'lean-to', 2.4)
+    const lean = leanToAt(player.x, player.z)
     if (lean) restPos.set(lean.x, lean.deckY + 0.6, lean.z)
     else restPos.copy(eatPos)
 
@@ -4412,6 +4767,25 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         const waterMesh = b.object.getObjectByName('water')
         if (waterMesh) waterMesh.visible = (b.water ?? 0) > 0.08
       }
+      if (b.kind === 'trap') {
+        // Ride the swell, and let the tide stock it — quick first fish,
+        // slower after, up to the bottle's fit
+        const sea = sampleOcean(b.x, b.z, t).y
+        b.object.position.set(b.x, sea + 0.05, b.z)
+        b.object.rotation.x = Math.sin(t * 1.1 + b.x * 0.7) * 0.08
+        b.object.rotation.z = Math.sin(t * 0.9 + b.z * 0.6) * 0.1
+        const stock = b.fish ?? 0
+        if (stock < TRAP_MAX) {
+          b.water = (b.water ?? 0) + dt
+          const need = stock === 0 ? TRAP_FIRST : TRAP_NEXT
+          if (b.water >= need) {
+            b.water = 0
+            b.fish = stock + 1
+            const stockMesh = b.object.getObjectByName('trapStock')
+            if (stockMesh) stockMesh.visible = true
+          }
+        }
+      }
     }
 
     // Carpentry walls are real: the body stops at a solid panel and passes a
@@ -4560,6 +4934,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       flooded: b.flooded,
       sides: b.sides,
       roof: (b.roof ?? 'none') as SavedRoof,
+      tall: b.tall,
+      rooms: b.rooms,
+      fish: b.fish,
       hasBarrel: b.hasBarrel,
       hasMat: b.hasMat,
       hold: b.hold ? { ...b.hold } : undefined,
@@ -4604,16 +4981,29 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
       if (kind === 'lean-to') {
         const y = deps.groundAt(x, z)
-        build = addBuild('lean-to', shelterFrameMesh(m), x, z, y, 2.8, 0.28, {
-          sides: s.sides ?? 0,
-          roof: (s.roof ?? 'none') as RoofKind,
-          hasBarrel: !!s.hasBarrel,
-          hasMat: !!s.hasMat,
-          water: s.water ?? 0,
-        })
+        const tall = !!s.tall
+        const bays = Math.max(1, s.rooms ?? 1)
+        build = addBuild(
+          'lean-to',
+          shelterFrameMesh(m, tall, bays),
+          x,
+          z,
+          y,
+          2.8 + (bays - 1) * 1.15,
+          0.28,
+          {
+            sides: s.sides ?? 0,
+            roof: (s.roof ?? 'none') as RoofKind,
+            tall,
+            rooms: bays,
+            hasBarrel: !!s.hasBarrel,
+            hasMat: !!s.hasMat,
+            water: s.water ?? 0,
+          },
+        )
         const sides = s.sides ?? 0
-        for (let i = 1; i <= sides; i++) fitShelterSide(build.object, m, i)
-        if (s.roof && s.roof !== 'none') fitShelterRoof(build.object, m, s.roof)
+        for (let i = 1; i <= sides; i++) fitShelterSide(build.object, m, i, tall, bays)
+        if (s.roof && s.roof !== 'none') fitShelterRoof(build.object, m, s.roof, tall, bays)
         if (s.hasBarrel) {
           fitShelterBarrel(build.object, m)
           attachBarrelDrink(build, 'Barrel')
@@ -4660,6 +5050,14 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         build = addBuild('camp-locker', campLockerMesh(m), x, z, deps.groundAt(x, z), 1.6, 0.08, {
           hold: fillHold(s.hold),
         })
+      } else if (kind === 'trap') {
+        build = addBuild('trap', trapMesh(m), x, z, deps.groundAt(x, z), 1.6, 0, {
+          fish: s.fish ?? 0,
+          water: s.water ?? 0,
+        })
+        const stockMesh = build.object.getObjectByName('trapStock')
+        if (stockMesh) stockMesh.visible = (s.fish ?? 0) > 0
+        attachTrapCheck(build)
       } else if (kind === 'platform') {
         const y = s.y ?? deps.groundAt(x, z) + PLATFORM_RISE_LAND
         build = addBuild('platform', platformMesh(m), x, z, y, 1.8, 0.18, { yaw: 0 })
@@ -4772,6 +5170,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         drip: 0,
         cistern: 0,
         'camp-locker': 0,
+        trap: 0,
         platform: 0,
         wall: 0,
         roof: 0,
@@ -4789,6 +5188,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       shelterBarrel: SHELTER_BARREL_COST,
       cistern: CISTERN_COST,
       mat: MAT_COST,
+      ridge: RIDGE_COST,
+      room: ROOM_COST,
+      trap: TRAP_COST,
       campLocker: CAMP_LOCKER_COST,
       fire: FIRE_COST,
       catch: CATCH_COST,

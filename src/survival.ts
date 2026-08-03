@@ -15,6 +15,12 @@ export type Vitals = {
   warmth: number
   water: number
   food: number
+  /**
+   * The tired timer. Wakefulness spends it slowly, hard work spends it fast,
+   * and only sleep buys it back — a nap a little, a night under a roof most
+   * of it. It never kills you; it just makes everything slower.
+   */
+  energy: number
   health: number
   alive: boolean
   cause: Cause | null
@@ -31,6 +37,8 @@ export type Vitals = {
   saidSalt: boolean
   saidLead: boolean
   saidCold: boolean
+  saidDrowsy: boolean
+  saidSpent: boolean
   /** Mid-clot reminder — re-arms when the wound closes. */
   saidBleeding: boolean
 }
@@ -45,6 +53,8 @@ const WARMTH_ON_LAND = 3000
 const WARMTH_REFILL = 420
 const THIRST = 1500
 const HUNGER = 2600
+/** A full day awake spends the tank; working hard spends it up to twice as fast. */
+const ENERGY_WAKE = 430
 
 /** Seconds from full health to dead, per failing vital. */
 const DROWNING = 11
@@ -96,6 +106,7 @@ export function createVitals(): Vitals {
     warmth: 1,
     water: 1,
     food: 1,
+    energy: 1,
     health: 1,
     alive: true,
     cause: null,
@@ -108,6 +119,8 @@ export function createVitals(): Vitals {
     saidSalt: false,
     saidLead: false,
     saidCold: false,
+    saidDrowsy: false,
+    saidSpent: false,
     saidBleeding: false,
   }
 }
@@ -134,11 +147,16 @@ export function updateVitals(v: Vitals, dt: number, ctx: VitalsContext) {
   }
 
   // Stamina — swimming spends it, floating buys it back, an empty gut doesn't.
-  // Storms make every stroke cost more.
+  // Storms make every stroke cost more. Bone-tired arms come back slowly.
   const cost = ctx.swimCost ?? 1
   const push = ctx.effort * (ctx.submerged ? 1.15 : 1) * cost
+  const wearyRefill = v.energy < 0.25 ? 0.45 : v.energy < 0.45 ? 0.7 : 1
   if (push > 0.2) v.stamina = drain(v.stamina, dt * push, STAMINA_BURN)
-  else v.stamina = fill(v.stamina, dt * (v.food > 0.05 ? 1 : 0.4), STAMINA_REFILL)
+  else v.stamina = fill(v.stamina, dt * (v.food > 0.05 ? 1 : 0.4) * wearyRefill, STAMINA_REFILL)
+
+  // Energy — the tired timer. A day of wakefulness spends it; effort spends
+  // it faster. Sleep is the only refill, so this never climbs on its own.
+  v.energy = drain(v.energy, dt * (1 + ctx.effort * 0.9), ENERGY_WAKE)
 
   // Warmth — the sea pulls heat out far faster than the air does.
   // Night and storms raise `cold`; land still refills, just slower after dark.
@@ -195,12 +213,24 @@ export function updateVitals(v: Vitals, dt: number, ctx: VitalsContext) {
     v.saidCold = true
     ctx.whisper?.('You are cold to the bone.')
   }
+  if (v.energy < 0.45 && !v.saidDrowsy) {
+    v.saidDrowsy = true
+    ctx.whisper?.('Your eyelids hang heavy.')
+  }
+  if (v.energy < 0.22 && !v.saidSpent) {
+    v.saidSpent = true
+    ctx.whisper?.('You could sleep where you stand.')
+  }
   if (v.food > 0.55) {
     v.saidKnot = false
     v.saidGnaw = false
   }
   if (v.water > 0.5) v.saidSalt = false
   if (v.warmth > 0.45) v.saidCold = false
+  if (v.energy > 0.6) {
+    v.saidDrowsy = false
+    v.saidSpent = false
+  }
 
   let harm = 0
   if (v.breath <= 0) harm += dt / DROWNING
@@ -237,7 +267,13 @@ export type SwimLoad = {
  * A heavy stash slows you; a swim aid lifts the climb out of a wave.
  */
 export function swimLimits(v: Vitals, load: SwimLoad = {}) {
-  const cap = Math.min(1, v.wounded ? 0.6 : 1, v.food < 0.3 ? 0.35 + 0.65 * (v.food / 0.3) : 1)
+  const cap = Math.min(
+    1,
+    v.wounded ? 0.6 : 1,
+    v.food < 0.3 ? 0.35 + 0.65 * (v.food / 0.3) : 1,
+    // Exhaustion caps what the body can give — the floor keeps you swimming
+    0.3 + 0.7 * v.energy,
+  )
   const strength = Math.min(v.stamina, cap)
   const breathShort = v.breath < 0.35 ? (0.35 - v.breath) / 0.35 : 0
   const spentShake = v.stamina < 0.18 ? ((0.18 - v.stamina) / 0.18) * 0.5 : 0
@@ -284,16 +320,33 @@ export function wearSuit(v: Vitals, whisper?: (text: string) => void) {
 /** Tuning hooks for the ?breath / ?food / ?wound URL params. */
 export function debugSetVitals(
   v: Vitals,
-  patch: { breath?: number; food?: number; water?: number; warmth?: number; wound?: boolean },
+  patch: {
+    breath?: number
+    food?: number
+    water?: number
+    warmth?: number
+    energy?: number
+    wound?: boolean
+  },
 ) {
   if (patch.breath !== undefined) v.breath = Math.min(1, Math.max(0, patch.breath))
   if (patch.food !== undefined) v.food = Math.min(1, Math.max(0, patch.food))
   if (patch.water !== undefined) v.water = Math.min(1, Math.max(0, patch.water))
   if (patch.warmth !== undefined) v.warmth = Math.min(1, Math.max(0, patch.warmth))
+  if (patch.energy !== undefined) v.energy = Math.min(1, Math.max(0, patch.energy))
   if (patch.wound) {
     v.wounded = true
     v.woundClock = 0
   }
+}
+
+/**
+ * Sleep — the tired timer's only refill. Hours are day-cycle hours; a full
+ * night (~8 h) brings you back whole, a nap takes the edge off. Shelter
+ * quality scales it: a roof you can stand under is worth more than a hull.
+ */
+export function rest(v: Vitals, hours: number, quality = 1) {
+  v.energy = Math.min(1, v.energy + (hours / 8) * quality)
 }
 
 export function eat(v: Vitals, food: number, water = 0) {

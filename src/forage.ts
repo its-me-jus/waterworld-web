@@ -38,11 +38,15 @@ export type ForageDeps = {
     positionAt: (index: number, out: THREE.Vector3) => THREE.Vector3
     take: (index: number) => boolean
   }
+  /** The mate's spear swaps bare hands for reach and near-certain odds. */
+  hasSpear?: () => boolean
 }
 
 const GRAB_RANGE = 2.2
 const CRATE_RANGE = 2.9
 const CRAB_RANGE = 2.8
+/** A spear's honest reach — longer than an arm, surer than fingers. */
+const SPEAR_RANGE = 3.4
 
 export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
   const cratePos = new THREE.Vector3()
@@ -60,17 +64,20 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
   })
 
   // Hand-fishing: one prompt that rides the nearest fish, and only while
-  // you're hanging still enough not to have spooked the school
+  // you're hanging still enough not to have spooked the school. The mate's
+  // spear retires bare hands — reach and a point beat fingers.
   let current = -1
+  let spearCurrent = -1
   let rawFish = 0
   let smokedFish = 0
   const fishPos = new THREE.Vector3()
+  const spearFishPos = new THREE.Vector3()
   deps.interactions.add({
     position: fishPos,
     verb: 'Grab',
     label: 'Fish',
     radius: GRAB_RANGE,
-    available: () => current >= 0 && vitals.alive,
+    available: () => current >= 0 && vitals.alive && !(deps.hasSpear?.() ?? false),
     use: () => {
       const index = current
       if (index < 0) return
@@ -85,6 +92,31 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
         hud.whisper('It slips through your fingers.')
       }
       current = -1
+    },
+  })
+
+  // Spearfishing — the same schools, answered properly. Reach past arm's
+  // length and near-sure odds; the point does what fingers couldn't.
+  deps.interactions.add({
+    position: spearFishPos,
+    verb: 'Spear',
+    label: 'Fish',
+    radius: SPEAR_RANGE,
+    available: () => spearCurrent >= 0 && vitals.alive && (deps.hasSpear?.() ?? false),
+    use: () => {
+      const index = spearCurrent
+      if (index < 0) return
+      if (Math.random() < 0.85) {
+        deps.fish.fling(index, true)
+        rawFish += 1
+        hud.whisper(
+          rawFish > 1 ? 'Another on the point. The fire will eat well.' : 'On the spear. The old skill holds.',
+        )
+      } else {
+        deps.fish.fling(index, false)
+        hud.whisper('A thrust into empty water. It saw the shadow.')
+      }
+      spearCurrent = -1
     },
   })
 
@@ -120,6 +152,16 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
       if (hit) {
         current = hit.index
         deps.fish.positionAt(hit.index, fishPos)
+      }
+    }
+
+    // The spear forgives a little more motion — reach buys you that
+    spearCurrent = -1
+    if (view.underwater && view.effort < 0.55 && vitals.alive && (deps.hasSpear?.() ?? false)) {
+      const hit = deps.fish.nearest(camera.position, SPEAR_RANGE)
+      if (hit) {
+        spearCurrent = hit.index
+        deps.fish.positionAt(hit.index, spearFishPos)
       }
     }
 

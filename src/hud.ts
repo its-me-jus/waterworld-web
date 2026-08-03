@@ -26,6 +26,7 @@ const damp = (current: number, target: number, lambda: number, dt: number) =>
 const ROWS: { key: keyof Vitals; label: string; from: number }[] = [
   { key: 'health', label: 'Condition', from: 0.99 },
   { key: 'stamina', label: 'Strength', from: 0.7 },
+  { key: 'energy', label: 'Energy', from: 0.68 },
   { key: 'warmth', label: 'Warmth', from: 0.72 },
   { key: 'water', label: 'Water', from: 0.72 },
   { key: 'food', label: 'Food', from: 0.72 },
@@ -214,7 +215,11 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     if (!submerged && vitals.breath >= 0.99) breathVeil.style.opacity = '0'
 
     const weary =
-      Math.max(vitals.food < 0.3 ? (0.3 - vitals.food) / 0.3 : 0, 1 - vitals.stamina) * 0.55
+      Math.max(
+        vitals.food < 0.3 ? (0.3 - vitals.food) / 0.3 : 0,
+        vitals.energy < 0.3 ? (0.3 - vitals.energy) / 0.3 : 0,
+        1 - vitals.stamina,
+      ) * 0.55
     veilWeary = damp(veilWeary, weary, 2.5, dt)
     wearyVeil.style.opacity = veilWeary.toFixed(3)
 

@@ -254,12 +254,13 @@ function spawn() {
 spawn()
 
 const vitals = createVitals()
-// ?breath / ?food / ?water / ?warmth / ?wound pre-set the body, for tuning
+// ?breath / ?food / ?water / ?warmth / ?energy / ?wound pre-set the body, for tuning
 debugSetVitals(vitals, {
   breath: params.has('breath') ? Number(params.get('breath')) : undefined,
   food: params.has('food') ? Number(params.get('food')) : undefined,
   water: params.has('water') ? Number(params.get('water')) : undefined,
   warmth: params.has('warmth') ? Number(params.get('warmth')) : undefined,
+  energy: params.has('energy') ? Number(params.get('energy')) : undefined,
   wound: params.has('wound') ? true : undefined,
 })
 
@@ -357,6 +358,7 @@ const forage = createForage(hud, vitals, {
   takeProvision: wreck.takeProvision,
   fish: underwaterWorld.fish,
   crabs: island.crabs,
+  hasSpear: () => loot.hasSpear,
 })
 
 const harvest = createHarvest(scene, {
@@ -382,6 +384,7 @@ const improvise = createImprovise(scene, camera, {
   cookFish: () => forage.cook(),
   takeRawForSmoke: () => forage.takeRawForSmoke(),
   addSmoked: (n) => forage.addSmoked(n),
+  grantFish: (n) => forage.grant(n),
   daylight: () => climate.state.daylight,
   skipTime: (seconds) => climate.skip(seconds),
   secondsUntilDawn: () => climate.secondsUntilDawn(),
@@ -437,6 +440,7 @@ function captureSave(): SavedRun {
       warmth: vitals.warmth,
       water: vitals.water,
       food: vitals.food,
+      energy: vitals.energy,
       health: vitals.health,
       elapsed: vitals.elapsed,
       wounded: vitals.wounded,
