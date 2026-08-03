@@ -12,13 +12,23 @@ import { barrelObject, crateObject, plankObject } from './wreck'
 /**
  * Improvise — spend what you've hauled so the world answers back.
  *
- * No craft menu, no markers. Recipes announce themselves the same way
- * everything else does: when you're standing where they'd work, with the
- * materials on you. A shelter frame on the beach (walls and roof fashioned
- * later), a fire on the spire, a raft lashed at the wreck's waterline — same
- * F-to-use verbs, different ground. The stash finally has a sink, and none of
- * the recipes is the "right" path.
+ * Recipes announce themselves when you're standing where they'd work, with the
+ * materials on you — same F-to-use verbs as salvage. Pack also lists the ones
+ * that are ready now (Camp tab), so you can Raise / Dig / Lash without hunting
+ * the prompt. No markers in-world; none of the recipes is the "right" path.
  */
+
+export type CampGroup = 'shelter' | 'camp' | 'raft'
+
+export type CampRecipe = {
+  id: string
+  group: CampGroup
+  verb: string
+  label: string
+  /** Human cost line, e.g. "2 planks, 1 rope" or "hands". */
+  cost: string
+  use: () => void
+}
 
 export type Cost = Partial<Record<StashKind, number>>
 
@@ -48,6 +58,8 @@ export type ImproviseDeps = {
   storm?: () => number
   /** Persistent sea set — rafts drift with the current. */
   current?: () => { x: number; z: number; strength: number }
+  /** Optional foley — lash / wood / splash / sail / haul. */
+  sfx?: (kind: 'lash' | 'wood' | 'splash' | 'sail' | 'haul', intensity?: number) => void
 }
 
 type BuildKind =
@@ -204,6 +216,8 @@ const WASH_STORM_GATE = 0.42
 const WASH_RAIL_GATE = 0.72
 /** Look-down pitch (radians) required to pole — accidental walk won't drive her. */
 const POLE_LOOK_DOWN = -0.32
+/** Look-down pitch required to Dig — same sign as pole (positive pitch is look up). */
+const DIG_LOOK_DOWN = -0.28
 /** Soft-fail: how fast a gale frays the sail while you're aboard. */
 const FAIL_RATE = 0.22
 const FAIL_STORM_GATE = 0.58
@@ -1219,6 +1233,8 @@ function raftLocal(b: Build, lx: number, lz: number) {
 export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: ImproviseDeps) {
   const m = mats()
   const builds: Build[] = []
+  const tap = (kind: 'lash' | 'wood' | 'splash' | 'sail' | 'haul', intensity = 0.7) =>
+    deps.sfx?.(kind, intensity)
 
   // Separate anchors so recipes don't fight for one F-prompt when materials overlap
   const leanPos = new THREE.Vector3()
@@ -1249,6 +1265,26 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const beachPos = new THREE.Vector3()
   const shovePos = new THREE.Vector3()
   const mendPos = new THREE.Vector3()
+
+  /** Construction recipes also listed in Pack → Camp (same use() as F). */
+  type CampEntry = {
+    group: CampGroup
+    cost?: Cost
+    /** Menu availability — Dig skips look-down; F still requires it. */
+    menuReady?: () => boolean
+    item: Interactable
+  }
+  const campEntries: CampEntry[] = []
+
+  function addCamp(
+    group: CampGroup,
+    spec: Parameters<Interactions['add']>[0] & { cost?: Cost; menuReady?: () => boolean },
+  ) {
+    const { cost, menuReady, ...rest } = spec
+    const item = deps.interactions.add(rest)
+    campEntries.push({ group, cost, menuReady, item })
+    return item
+  }
 
   let yaw = 0
   let lookPitch = 0
@@ -1358,11 +1394,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     return build
   }
 
-  deps.interactions.add({
+  addCamp('shelter', {
     position: leanPos,
     verb: 'Raise',
     label: 'Frame',
     radius: REACH,
+    cost: LEAN_COST,
     available: () =>
       deps.vitals.alive &&
       onLand &&
@@ -1416,10 +1453,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     build.items.push(drink)
   }
 
-  deps.interactions.add({
+  addCamp('shelter', {
     position: leanPos,
     verb: 'Lash',
     label: 'Wall',
+    cost: SIDE_COST,
     radius: REACH,
     available: () => {
       const s = nearestShelter()
@@ -1445,10 +1483,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('shelter', {
     position: leanPos,
     verb: 'Roof',
     label: 'Fronds',
+    cost: ROOF_LEAF_COST,
     radius: REACH,
     available: () => {
       const s = nearestShelter()
@@ -1470,10 +1509,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('shelter', {
     position: leanPos,
     verb: 'Roof',
     label: 'Tarp',
+    cost: ROOF_CANVAS_COST,
     radius: REACH,
     available: () => {
       const s = nearestShelter()
@@ -1498,10 +1538,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('shelter', {
     position: leanPos,
     verb: 'Roof',
     label: 'Scrap',
+    cost: ROOF_SCRAP_COST,
     radius: REACH,
     available: () => {
       const s = nearestShelter()
@@ -1520,10 +1561,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('shelter', {
     position: leanPos,
     verb: 'Set',
     label: 'Barrel',
+    cost: SHELTER_BARREL_COST,
     radius: REACH,
     available: () => {
       const s = nearestShelter()
@@ -1547,10 +1589,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('shelter', {
     position: leanPos,
     verb: 'Lay',
     label: 'Mat',
+    cost: MAT_COST,
     radius: REACH,
     available: () => {
       const s = nearestShelter()
@@ -1637,10 +1680,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   // Standalone cistern — a barrel planted open to the sky, no shelter needed
-  deps.interactions.add({
+  addCamp('camp', {
     position: leanPos,
     verb: 'Plant',
     label: 'Cistern',
+    cost: CISTERN_COST,
     radius: REACH,
     available: () =>
       deps.vitals.alive &&
@@ -1663,10 +1707,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   // Dry-ground crate locker — the island answer to the raft hold
-  deps.interactions.add({
+  addCamp('camp', {
     position: leanPos,
     verb: 'Lash',
     label: 'Crate',
+    cost: CAMP_LOCKER_COST,
     radius: REACH,
     available: () =>
       deps.vitals.alive &&
@@ -1742,10 +1787,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('camp', {
     position: firePos,
     verb: 'Kindle',
     label: 'Fire',
+    cost: FIRE_COST,
     radius: REACH,
     available: () =>
       deps.vitals.alive &&
@@ -1797,7 +1843,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('camp', {
     position: plantFirePos,
     verb: 'Plant',
     label: 'Fire',
@@ -1828,10 +1874,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('camp', {
     position: catchPos,
     verb: 'Rig',
     label: 'Rain-catch',
+    cost: CATCH_COST,
     radius: REACH,
     available: () =>
       deps.vitals.alive &&
@@ -1871,10 +1918,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   // —— island workshop ————————————————————————————————————————
-  deps.interactions.add({
+  addCamp('camp', {
     position: seatPos,
     verb: 'Lash',
     label: 'Seat',
+    cost: SEAT_COST,
     radius: REACH,
     available: () =>
       deps.vitals.alive &&
@@ -1912,10 +1960,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('camp', {
     position: rackPos,
     verb: 'Lash',
     label: 'Drying rack',
+    cost: RACK_COST,
     radius: REACH,
     available: () =>
       deps.vitals.alive &&
@@ -1979,10 +2028,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('camp', {
     position: signalPos,
     verb: 'Rig',
     label: 'Signal',
+    cost: SIGNAL_COST,
     radius: REACH,
     available: () =>
       deps.vitals.alive &&
@@ -2000,10 +2050,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('raft', {
     position: raftPos,
     verb: 'Lash',
     label: 'Raft',
+    cost: RAFT_COST,
     radius: REACH,
     available: () => {
       if (!deps.vitals.alive || !nearWaterline || carried) return false
@@ -2030,6 +2081,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           ? 'Barrels under planks. Climb aboard. Walk the deck — pole from the edge.'
           : 'Three planks and a lashing. Climb aboard — walk the deck, pole from the edge.',
       )
+      tap('lash', 0.85)
     },
   })
 
@@ -2057,6 +2109,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       live.submersion = 0
       boardGrace = 1.4
       deps.hud.whisper('Hands on the gunwale. Up.')
+      tap('wood', 0.7)
+      tap('splash', 0.35)
     },
   })
 
@@ -2169,10 +2223,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   // Mend a sail the gale tore
-  deps.interactions.add({
+  addCamp('raft', {
     position: mendPos,
     verb: 'Mend',
     label: 'Sail',
+    cost: MEND_COST,
     radius: 2.8,
     available: () => {
       const raft = nearestRaftOnDeck()
@@ -2186,6 +2241,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       saidFail = false
       animateSail(raft.object, time, false)
       deps.hud.whisper('Needle and scrap. The canvas holds again.')
+      tap('sail', 0.55)
+      tap('lash', 0.4)
     },
   })
 
@@ -2245,6 +2302,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         boardGrace = 0.8
       }
       deps.hud.whisper('Hull on sand. She rests.')
+      tap('haul', 0.85)
+      tap('wood', 0.5)
     },
   })
 
@@ -2299,14 +2358,17 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         onRaftDeck = true
       }
       deps.hud.whisper('Off the sand. Water under her again.')
+      tap('haul', 0.7)
+      tap('splash', 0.55)
     },
   })
 
   // —— deck fittings —————————————————————————————————————————
-  deps.interactions.add({
+  addCamp('raft', {
     position: raftFitPos,
     verb: 'Rig',
     label: 'Sail',
+    cost: MAST_COST,
     radius: 2.8,
     available: () => {
       const raft = nearestRaftOnDeck()
@@ -2319,13 +2381,16 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       raft.shelter = Math.max(raft.shelter, raft.buoyant ? 0.78 : 0.7)
       fitMast(raft.object, m)
       deps.hud.whisper('Canvas on a yard. The wind will do some of the work.')
+      tap('sail', 0.7)
+      tap('lash', 0.55)
     },
   })
 
-  deps.interactions.add({
+  addCamp('raft', {
     position: raftFitPos,
     verb: 'Lash',
     label: 'Rail',
+    cost: RAIL_COST,
     radius: 2.8,
     available: () => {
       const raft = nearestRaftOnDeck()
@@ -2342,10 +2407,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('raft', {
     position: raftFitPos,
     verb: 'Lash',
     label: 'Locker',
+    cost: LOCKER_COST,
     radius: 2.8,
     available: () => {
       const raft = nearestRaftOnDeck()
@@ -2436,10 +2502,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('raft', {
     position: raftFitPos,
     verb: 'Lash',
     label: 'Deck',
+    cost: EXPAND_COST,
     radius: 2.8,
     available: () => {
       const raft = nearestRaftOnDeck()
@@ -2466,10 +2533,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('raft', {
     position: raftFitPos,
     verb: 'Lash',
     label: 'Oar',
+    cost: OAR_COST,
     radius: 2.8,
     available: () => {
       const raft = nearestRaftOnDeck()
@@ -2484,10 +2552,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('raft', {
     position: raftFitPos,
     verb: 'Lash',
     label: 'Floats',
+    cost: FLOAT_COST,
     radius: 2.8,
     available: () => {
       const raft = nearestRaftOnDeck()
@@ -2505,21 +2574,24 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   // Dig a hollow in soft sand — rain fills it the way rock pools do, slower.
-  // Only when you're looking at the ground, so it doesn't steal every beach prompt.
-  deps.interactions.add({
+  // F requires looking at the ground so it doesn't steal every beach prompt;
+  // Pack → Camp skips the look-down gate (opening the menu is the intent).
+  const digReady = () =>
+    deps.vitals.alive &&
+    onLand &&
+    !carried &&
+    groundY > 0.45 &&
+    groundY < 3.2 &&
+    clearOfBuilds(digPos.x, digPos.z, 1.8) &&
+    !nearestOfKind(digPos.x, digPos.z, 'pit', 4)
+
+  addCamp('camp', {
     position: digPos,
     verb: 'Dig',
     label: 'Hollow',
     radius: REACH,
-    available: () =>
-      deps.vitals.alive &&
-      onLand &&
-      !carried &&
-      lookPitch > 0.28 &&
-      groundY > 0.45 &&
-      groundY < 3.2 &&
-      clearOfBuilds(digPos.x, digPos.z, 1.8) &&
-      !nearestOfKind(digPos.x, digPos.z, 'pit', 4),
+    menuReady: digReady,
+    available: () => digReady() && lookPitch <= DIG_LOOK_DOWN,
     use: () => {
       const x = digPos.x
       const z = digPos.z
@@ -2549,10 +2621,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('camp', {
     position: dripPos,
     verb: 'Hang',
     label: 'Tin drip',
+    cost: DRIP_COST,
     radius: REACH,
     available: () =>
       deps.vitals.alive &&
@@ -2677,6 +2750,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     if (groundY > 1.2 && deps.salvage.has(CATCH_COST) && clearOfBuilds(catchPos.x, catchPos.z, 2.4)) {
       return true
     }
+    if (digReady() && lookPitch <= DIG_LOOK_DOWN) return true
     return nearWaterline && deps.salvage.has(RAFT_COST) && clearOfBuilds(raftPos.x, raftPos.z, 3.5)
   }
 
@@ -3220,6 +3294,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
               saidFail = false
               animateSail(b.object, t, true)
               deps.hud.whisper('Canvas tears. Mend it when you can.')
+              tap('sail', 0.95)
               // Locker floods if one is lashed — light gear goes
               if (b.locker && b.hold && !b.flooded) {
                 b.flooded = true
@@ -3377,6 +3452,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
               onRaftDeck = false
               swimming = true
               deps.hud.whisper('A wave takes you over the side.')
+              tap('splash', 0.9)
             }
           } else {
             washMeter = Math.max(0, washMeter - dt * 0.45)
@@ -3714,6 +3790,19 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     reset,
     snapshot,
     restore,
+    /** Construction recipes ready right now — Pack Camp tab. */
+    campRecipes(): CampRecipe[] {
+      return campEntries
+        .filter((e) => (e.menuReady ? e.menuReady() : e.item.available()))
+        .map((e) => ({
+          id: `${e.group}:${e.item.verb}:${e.item.label}`,
+          group: e.group,
+          verb: e.item.verb,
+          label: e.item.label,
+          cost: e.cost ? costLabel(e.cost, deps.salvage.labels) : 'hands',
+          use: () => e.item.use(),
+        }))
+    },
     /** True while the player is holding a living brand. */
     get carryingFire() {
       return !!carried

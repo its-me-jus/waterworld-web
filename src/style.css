@@ -794,6 +794,70 @@ body.underwater #bubbles {
   box-shadow: none;
 }
 
+.op-camp {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.op-camp-empty {
+  margin: 0;
+  padding: 0.55rem 0.15rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: rgba(214, 234, 244, 0.55);
+}
+
+.op-camp-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.op-camp-label {
+  font-size: 0.55rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(168, 228, 242, 0.45);
+}
+
+.op-camp-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid rgba(150, 220, 235, 0.22);
+  background: rgba(10, 48, 62, 0.55);
+  color: #cfeef8;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.op-camp-btn:hover {
+  background: rgba(18, 78, 98, 0.75);
+}
+
+.op-camp-btn:active {
+  transform: scale(0.98);
+}
+
+.op-camp-verb {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.op-camp-cost {
+  font-size: 0.62rem;
+  color: rgba(214, 234, 244, 0.55);
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
 .op-cheats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

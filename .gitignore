@@ -13,6 +13,11 @@ dist-ssr
 *.local
 .vercel
 
+# Secrets — generator scripts read these; never commit
+.env
+.env.*
+!.env.example
+
 # Screenshots from scripts/shot.mjs
 shots
 

@@ -107,7 +107,9 @@ The sea moves between your inputs, and what you carry is not free.
 
 The stash is a spend currency. Recipes announce themselves the same way
 everything else does — F-to-use when you're standing where they'd work, with
-the materials on you. No craft menu, no markers, no "correct" build order.
+the materials on you. Pack → **Camp** also lists whatever is ready right now,
+so you can Raise / Dig / Lash from the bag without hunting the prompt. No
+markers in-world, no "correct" build order.
 
 | Recipe | Cost | Where | What it does |
 |--------|------|-------|--------------|

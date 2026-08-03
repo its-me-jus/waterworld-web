@@ -347,17 +347,32 @@ function grassTuft(seed: number) {
 }
 
 /** A weathered beach rock — lumpy icosahedron, never quite round. */
+/**
+ * Beach rock — displaced icosahedron (same idea as the reef lumps, cheaper
+ * detail). Detail 1 keeps the island batch under control; the squash + sit
+ * sink still sells them as half-buried stones.
+ */
 function rockChunk(seed: number) {
-  const rand = (n: number) => fbm(seed * 9.1 + n * 3.7, seed * 5.3 - n * 1.8)
-  const geo = new THREE.IcosahedronGeometry(1.1 + rand(1) * 1.6, 0)
+  const radius = 1.1 + fbm(seed * 9.1, seed * 5.3) * 1.6
+  const geo = new THREE.IcosahedronGeometry(radius, 1)
   const pos = geo.attributes.position
+  const v = new THREE.Vector3()
   for (let i = 0; i < pos.count; i++) {
-    const s = 0.7 + rand(i + 2) * 0.7
-    pos.setXYZ(i, pos.getX(i) * s, pos.getY(i) * (0.55 + rand(i + 5) * 0.5), pos.getZ(i) * s)
+    v.fromBufferAttribute(pos, i)
+    const ux = v.x / radius
+    const uy = v.y / radius
+    const uz = v.z / radius
+    const coarse = fbm(ux * 1.9 + seed, uz * 1.9 - seed)
+    const mid = fbm(uy * 4.2 + seed * 3, ux * 4.0)
+    const fine = fbm(ux * 5.2 + seed * 7, uz * 5.2)
+    v.multiplyScalar(0.88 + coarse * 0.18 + mid * 0.1 + fine * 0.12)
+    // Flatten a little so they read as stones, not floating orbs
+    v.y *= 0.55 + fbm(seed + i * 0.17, seed * 0.4) * 0.35
+    pos.setXYZ(i, v.x, v.y, v.z)
   }
   geo.computeVertexNormals()
-  geo.rotateY(rand(8) * Math.PI * 2)
-  geo.rotateX((rand(9) - 0.5) * 0.6)
+  geo.rotateY(fbm(seed * 2.1, seed * 0.7) * Math.PI * 2)
+  geo.rotateX((fbm(seed * 3.3, seed * 1.1) - 0.5) * 0.55)
   return geo
 }
 
@@ -446,16 +461,25 @@ function fallenLog(seed: number) {
 
 /** A larger boulder — breaks the smooth green slopes into something geological. */
 function boulder(seed: number) {
-  const rand = (n: number) => fbm(seed * 10.2 + n * 4.1, seed * 6.6 - n * 2.5)
-  const geo = new THREE.IcosahedronGeometry(1.8 + rand(1) * 2.8, 0)
+  const radius = 1.8 + fbm(seed * 10.2, seed * 6.6) * 2.8
+  const geo = new THREE.IcosahedronGeometry(radius, 1)
   const pos = geo.attributes.position
+  const v = new THREE.Vector3()
   for (let i = 0; i < pos.count; i++) {
-    const s = 0.65 + rand(i + 2) * 0.75
-    pos.setXYZ(i, pos.getX(i) * s, pos.getY(i) * (0.45 + rand(i + 5) * 0.45), pos.getZ(i) * s)
+    v.fromBufferAttribute(pos, i)
+    const ux = v.x / radius
+    const uy = v.y / radius
+    const uz = v.z / radius
+    const coarse = fbm(ux * 1.7 + seed, uz * 1.7 - seed)
+    const mid = fbm(uy * 3.8 + seed * 2.4, ux * 3.6)
+    const fine = fbm(ux * 4.8 + seed * 6, uz * 4.8)
+    v.multiplyScalar(0.86 + coarse * 0.2 + mid * 0.12 + fine * 0.14)
+    v.y *= 0.42 + fbm(seed + i * 0.13, seed * 0.55) * 0.4
+    pos.setXYZ(i, v.x, v.y, v.z)
   }
   geo.computeVertexNormals()
-  geo.rotateY(rand(8) * Math.PI * 2)
-  geo.rotateX((rand(9) - 0.5) * 0.5)
+  geo.rotateY(fbm(seed * 2.4, seed * 0.9) * Math.PI * 2)
+  geo.rotateX((fbm(seed * 3.1, seed * 1.4) - 0.5) * 0.45)
   return geo
 }
 
@@ -1052,7 +1076,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (slope > 4) continue
     // Skip if buried under a palm trunk
     if (shore.some((s) => Math.hypot(s.x - opts.x - lx, s.z - opts.z - lz) < 3.2)) continue
-    plant(rocks, rockChunk(i + 40), i + 40, SPECIES.rock, lx, h, lz, 0.2 + (i % 5) * 0.04)
+    plant(rocks, rockChunk(i + 40), i + 40, SPECIES.rock, lx, h, lz, 0.35 + (i % 5) * 0.05)
   }
 
   // Mid-slope boulders — the thing that stops a green cone reading as a cone
@@ -1066,7 +1090,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
     // Prefer a bit of pitch — boulders collect where the ground tips
     if (slope < 1.2 || slope > 11) continue
-    plant(boulderParts, boulder(i + 1500), i + 1500, SPECIES.rock, lx, h, lz, 0.35 + (i % 4) * 0.08)
+    plant(boulderParts, boulder(i + 1500), i + 1500, SPECIES.rock, lx, h, lz, 0.55 + (i % 4) * 0.1)
   }
 
   // Driftwood — mid-beach, sparse, sells the wash-up

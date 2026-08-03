@@ -2,16 +2,15 @@ import type { Vitals } from './survival'
 import { resetVitals } from './survival'
 import type { Salvage, Stash, StashKind } from './salvage'
 import type { WreckLoot } from './wreckloot'
+import type { CampGroup, CampRecipe } from './improvise'
 
 /**
  * The operating menu — one bag icon that opens the modal the game is run from.
  *
- * Three halves:
- *  - Stash: what you're actually carrying (salvage counts, held fish, knife /
- *    spear). A real readout, not the corner strip's sentence.
- *  - Field kit: island / wreck teleport, fill-stash, and Start again — always
- *    on, so you can keep building (or wipe a run) on a live deploy.
- *  - Dev extras (DEV only): vitals, fish, arms.
+ * - Stash: what you're carrying (salvage, fish, knife / spear)
+ * - Camp: construction recipes ready right now (Raise / Dig / Lash…)
+ * - Field kit: island / wreck teleport, fill-stash, Start again
+ * - Dev extras (DEV only): vitals, fish, arms
  */
 
 export type TeleportSpot = { x: number; z: number; y?: number; yaw?: number }
@@ -30,11 +29,21 @@ export type OpMenuDeps = {
   eatSmoked?: () => boolean
   /** Dev only — put fish in hand. */
   grantFish?: (n?: number) => void
+  /** Ready construction recipes from improvise (same use as F). */
+  campRecipes: () => CampRecipe[]
   teleport: (spot: TeleportSpot) => void
   spots: Record<string, TeleportSpot>
   /** Full run restart — the menu's reset is the real one, not a vitals patch. */
   resetRun: () => void
 }
+
+const GROUP_TITLE: Record<CampGroup, string> = {
+  shelter: 'Shelter',
+  camp: 'Camp',
+  raft: 'Raft',
+}
+
+const GROUP_ORDER: CampGroup[] = ['shelter', 'camp', 'raft']
 
 export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
   const dev = import.meta.env.DEV
@@ -71,6 +80,10 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
         <h3>Gear</h3>
         <div id="op-gear" class="op-gear"></div>
       </div>
+      <div class="op-section">
+        <h3>Camp <span id="op-camp-count">0 ready</span></h3>
+        <div id="op-camp" class="op-camp"></div>
+      </div>
       <div class="op-section op-dev">
         <h3>Field kit</h3>
         <div class="op-cheats">
@@ -94,6 +107,8 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
 
   const stashBox = overlay.querySelector('#op-stash') as HTMLElement
   const gearBox = overlay.querySelector('#op-gear') as HTMLElement
+  const campBox = overlay.querySelector('#op-camp') as HTMLElement
+  const campCount = overlay.querySelector('#op-camp-count') as HTMLElement
 
   let open = false
   let liveTimer = 0
@@ -127,9 +142,47 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     ).join('')
   }
 
+  function renderCamp() {
+    const recipes = deps.campRecipes()
+    campCount.textContent = recipes.length
+      ? `${recipes.length} ready`
+      : 'nothing ready'
+
+    if (!recipes.length) {
+      campBox.innerHTML =
+        '<p class="op-camp-empty">Stand where a build would work, with the materials on you — then it shows up here.</p>'
+      return
+    }
+
+    const byGroup = new Map<CampGroup, CampRecipe[]>()
+    for (const r of recipes) {
+      const list = byGroup.get(r.group) ?? []
+      list.push(r)
+      byGroup.set(r.group, list)
+    }
+
+    const chunks: string[] = []
+    for (const group of GROUP_ORDER) {
+      const list = byGroup.get(group)
+      if (!list?.length) continue
+      chunks.push(`<div class="op-camp-group"><div class="op-camp-label">${GROUP_TITLE[group]}</div>`)
+      for (const r of list) {
+        chunks.push(
+          `<button type="button" class="op-camp-btn" data-camp="${r.id}">` +
+            `<span class="op-camp-verb">${r.verb} ${r.label}</span>` +
+            `<span class="op-camp-cost">${r.cost}</span>` +
+            `</button>`,
+        )
+      }
+      chunks.push('</div>')
+    }
+    campBox.innerHTML = chunks.join('')
+  }
+
   function render() {
     renderStash(deps.salvage.stash, deps.salvage.labels)
     renderGear()
+    renderCamp()
   }
 
   function setOpen(next: boolean) {
@@ -165,8 +218,19 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     }
   })
 
-  // —— cheats ——————————————————————————————————————————————————————
+  // —— cheats + camp builds ——————————————————————————————————————
   overlay.addEventListener('click', (e) => {
+    const campBtn = (e.target as HTMLElement).closest<HTMLElement>('[data-camp]')
+    if (campBtn?.dataset.camp) {
+      const id = campBtn.dataset.camp
+      const recipe = deps.campRecipes().find((r) => r.id === id)
+      if (recipe) {
+        recipe.use()
+        setOpen(false)
+      }
+      return
+    }
+
     const eatFish = (e.target as HTMLElement).closest<HTMLElement>('[data-eat-fish]')
     if (eatFish && deps.rawFish() > 0) {
       if (deps.eatFish?.()) render()

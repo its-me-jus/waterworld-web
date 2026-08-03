@@ -25,6 +25,21 @@ export type Climate = {
   daylight: number
   /** 0 clear … 1 full squall. */
   storm: number
+  /**
+   * 0 dry … 1 heavy precipitation. Derived from storm — audible rain and the
+   * catch-pools fill harder once this climbs.
+   */
+  rain: number
+  /**
+   * Residual flash after a bolt (decays over ~0.4s). Sky reads this to punch
+   * the horizon and key light white for a frame or two.
+   */
+  lightning: number
+  /**
+   * One-shot thunder intensity this frame (0 most frames). Audio plays the
+   * clap when this is non-zero — delayed from the flash by distance.
+   */
+  thunder: number
   /** How hard the water is to swim through — 1 in a calm, higher in a storm. */
   swimCost: number
   /** Extra warmth drain multiplier (night + being wet in a storm). */
@@ -136,12 +151,22 @@ export function createClimate(opts?: ClimateOptions) {
   let frontLeft = 0
   let frontLength = 1
 
+  // Lightning lives on its own clock: storms charge a strike timer, the flash
+  // is instant, and thunder follows after a distance delay so close squalls
+  // crack sooner than a gale on the horizon.
+  let nextStrikeIn = 10 + rand() * 18
+  let thunderLeft = -1
+  let thunderPower = 0
+
   const state: Climate = {
     dayPhase: 0,
     sunElevation: 30,
     sunAzimuth: 155,
     daylight: 1,
     storm: target,
+    rain: 0,
+    lightning: 0,
+    thunder: 0,
     swimCost: 1,
     cold: 1,
     biolum: 0,
@@ -206,6 +231,36 @@ export function createClimate(opts?: ClimateOptions) {
     state.cold = 1 + (1 - state.daylight) * 1.6 + state.storm * 0.55
     // Jellies only bother glowing once the day has gone
     state.biolum = clamp01((1 - state.daylight) * 1.35 - 0.15)
+
+    // Rain arrives once the sky has committed — soft drizzle in unsettled,
+    // sheets in a squall. Keeps audio and catch-pools on the same curve.
+    state.rain = clamp01((state.storm - 0.32) / 0.55)
+
+    // —— lightning / thunder ————————————————————————————————
+    state.thunder = 0
+    state.lightning = Math.max(0, state.lightning - dt * 2.6)
+
+    if (thunderLeft >= 0) {
+      thunderLeft -= dt
+      if (thunderLeft <= 0) {
+        state.thunder = thunderPower
+        thunderLeft = -1
+      }
+    }
+
+    if (state.storm > 0.55) {
+      nextStrikeIn -= dt * (0.55 + state.storm * 0.9)
+      if (nextStrikeIn <= 0) {
+        const power = 0.4 + state.storm * 0.55 * (0.55 + rand() * 0.45)
+        state.lightning = Math.max(state.lightning, power)
+        // Farther / lighter storms: longer gap between flash and boom
+        thunderLeft = 0.35 + (1 - state.storm) * 2.6 + rand() * 1.4
+        thunderPower = power * (0.5 + 0.5 * state.storm)
+        nextStrikeIn = (5 + rand() * 16) / Math.max(0.4, state.storm)
+      }
+    } else {
+      nextStrikeIn = Math.max(nextStrikeIn, 8 + rand() * 14)
+    }
 
     return state
   }

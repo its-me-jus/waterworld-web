@@ -52,6 +52,16 @@ const CLIPS = [
     prompt:
       'Instrumental only, no vocals, no lyrics, no singing. A 30-second seamless deep underwater ambient drone: muffled low rumbles, dark aquatic pads, slow breathing pressure, soft filtered noise, sparse and vast. No melody, no drums, no bright instruments. Designed to loop under a swimming game when submerged.',
   },
+  {
+    file: 'storm-bed.mp3',
+    prompt:
+      'Instrumental only, no vocals, no lyrics, no singing. A 30-second seamless tense storm atmosphere over open ocean: dark low wind pads, restless swell pressure, sparse ominous texture, no melody, no drums, no brass stabs. Designed to loop quietly under rain and thunder SFX in a survival swimming game.',
+  },
+  {
+    file: 'shore-bed.mp3',
+    prompt:
+      'Instrumental only, no vocals. Soft 30-second seamless ambient loop of a quiet tropical shoreline from a few metres inland: gentle low pads suggesting distant soft surf, warm sparse airy texture, minimal and calm. No melody, no drums, no piano, no birds, no voices. Designed to loop under a beach walk in a game.',
+  },
 ]
 
 async function generate(ai, { file, prompt }) {
@@ -82,7 +92,23 @@ const key = loadKey()
 if (!key) throw new Error('GEMINI_API_KEY not found (checked env + sibling project .env files)')
 
 const ai = new GoogleGenAI({ apiKey: key })
+let failed = 0
 for (const clip of CLIPS) {
-  await generate(ai, clip)
+  const out = join(outDir, clip.file)
+  if (existsSync(out) && !process.argv.includes('--force')) {
+    console.log(`skip ${clip.file} (exists; pass --force to redo)`)
+    continue
+  }
+  try {
+    await generate(ai, clip)
+  } catch (err) {
+    failed++
+    console.error(`\nFAILED ${clip.file}:`, err instanceof Error ? err.message : err)
+  }
 }
-console.log('Done → public/audio/')
+if (failed) {
+  console.error(`Done with ${failed} failure(s) → public/audio/`)
+  process.exitCode = 1
+} else {
+  console.log('Done → public/audio/')
+}

@@ -601,11 +601,18 @@ export function createSky(
       const moonLift = night * (1 - storm * 0.75)
       const dayIntensity = THREE.MathUtils.lerp(0.3, 9.0, Math.pow(sunUp, 1.3)) * (1 - storm * 0.85)
       const nightIntensity = THREE.MathUtils.lerp(0.5, 0.72, fair) * moonLift
-      sunLight.intensity = Math.max(dayIntensity, nightIntensity)
+      // Lightning punches the key light and horizon white for a beat
+      const flash = climate.lightning
+      sunLight.intensity = Math.max(dayIntensity, nightIntensity) + flash * 4.2
 
       sunTint.setRGB(1, 0.94, 0.83).lerp(new THREE.Color('#8a9bb8'), night)
       sunTint.lerp(new THREE.Color('#c8d0d6'), storm * 0.5)
+      if (flash > 0.05) sunTint.lerp(new THREE.Color('#eef4ff'), Math.min(1, flash * 1.35))
       sunLight.color.copy(sunTint)
+
+      if (flash > 0.05) {
+        horizonColor.lerp(new THREE.Color('#d8e4f4'), Math.min(0.85, flash * 0.9))
+      }
 
       // Aim the key light at the moon once the sun is down so silhouettes read
       if (climate.sunElevation < 2) {
@@ -634,7 +641,9 @@ export function createSky(
       // light, not the least, so it gets its own bump.
       const twilight = THREE.MathUtils.clamp(1 - Math.abs(climate.sunElevation - 6) / 22, 0, 1)
       hemi.intensity =
-        THREE.MathUtils.lerp(0.28, 0.5, day) * (1 + storm * 0.85) + twilight * twilight * 2.2
+        THREE.MathUtils.lerp(0.28, 0.5, day) * (1 + storm * 0.85) +
+        twilight * twilight * 2.2 +
+        flash * 0.55
 
       // Stars fade in after dusk, wash out under a storm
       const starOp = Math.max(0, night * 0.95 - storm * 0.7)

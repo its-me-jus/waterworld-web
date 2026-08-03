@@ -1,6 +1,6 @@
 import './style.css'
 import * as THREE from 'three'
-import { createOceanAudio } from './audio'
+import { createOceanAudio, type AudioGround } from './audio'
 import { createClimate } from './climate'
 import { createTouchControls } from './controls'
 import { createForage } from './forage'
@@ -379,6 +379,7 @@ const improvise = createImprovise(scene, camera, {
   hasMark: () => loot.hasSpear,
   storm: () => climate.state.storm,
   current: () => sea.current,
+  sfx: (kind, intensity) => oceanAudio.sfx(kind, intensity),
 })
 raftAt = improvise.standAt
 
@@ -516,6 +517,7 @@ const opMenu = createOpMenu(app, {
     return true
   },
   grantFish: (n) => forage.grant(n),
+  campRecipes: () => improvise.campRecipes(),
   teleport,
   spots: {
     island: { x: beach.x, z: beach.z, y: beach.y + 1.7 },
@@ -824,7 +826,53 @@ function frame() {
   if (Number.isNaN(prevSurfaceForAudio)) prevSurfaceForAudio = surfaceY
   heave = THREE.MathUtils.damp(heave, surfaceY - prevSurfaceForAudio, 6, dt)
   prevSurfaceForAudio = surfaceY
-  oceanAudio.update(dt, view.submersion, depth, heave, weather.storm)
+
+  // Shore proximity: soft falloff from the nearest beach point so the lap
+  // lives at the waterline and dies inland / offshore.
+  let shoreNear = 0
+  if (island.shore.length > 0) {
+    let best = Infinity
+    for (const s of island.shore) {
+      const d = Math.hypot(player.x - s.x, player.z - s.z)
+      if (d < best) best = d
+    }
+    shoreNear = THREE.MathUtils.clamp(1 - best / 28, 0, 1)
+    shoreNear *= shoreNear
+  }
+  // Wading the shelf also counts even without a planted palm nearby
+  if (view.walking && view.groundY > -0.2 && view.groundY < 1.2) {
+    shoreNear = Math.max(shoreNear, THREE.MathUtils.clamp(1 - Math.abs(view.groundY - 0.15) / 1.1, 0, 1))
+  }
+
+  let groundKind: AudioGround = 'water'
+  if (onRaft) groundKind = 'wood'
+  else if (view.walking) {
+    if (onPerch) groundKind = 'rock'
+    else if (view.groundY < 0.55) groundKind = 'wet-sand'
+    else if (view.groundY < 2.6) groundKind = 'sand'
+    else if (view.groundY < 48) groundKind = 'scrub'
+    else groundKind = 'rock'
+  }
+
+  oceanAudio.update({
+    dt,
+    submersion: view.submersion,
+    depth,
+    heave,
+    storm: weather.storm,
+    rain: weather.rain,
+    shore: shoreNear,
+    onLand: dry,
+    mode: player.mode,
+    walking: view.walking,
+    moving: view.moving,
+    speed: view.speed,
+    stroke: view.stroke,
+    ground: groundKind,
+    lightning: weather.lightning,
+    thunder: weather.thunder,
+    menuOpen: opMenu.open,
+  })
   // Pointer-lock / first click also unlocks audio in case the global listeners missed it
   if (document.pointerLockElement) void oceanAudio.unlock()
 

@@ -145,4 +145,12 @@ procedural fallback), swimmer, ocean, wreck, textures. The app icon is our own
 SVG, rasterised by `npm run icons`. No third-party models or textures, so there
 are no licence restrictions on commercial use.
 
+**Audio** is mostly live Web Audio (`src/audio.ts`): surface/underwater
+crossfade, shore lap, rain/wind in storms, footsteps, lightning→thunder,
+vitals and shark drone. Optional MP3 beds/SFX under `public/audio/` layer in
+when present (`npm run audio:lyria` / `npm run audio` — see
+`public/audio/MANIFEST.md` and `docs/audio-handoff.md`). AI-generated clips
+credit Google Lyria / ElevenLabs per their terms; keys stay in `.env`, never
+in the client.
+
 Brain notes: `../agenticiallyjus/projects/waterworld.md`
