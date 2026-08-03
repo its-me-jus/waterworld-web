@@ -4976,7 +4976,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   }
 
   function snapshot(): SavedBuild[] {
-    return builds.map((b) => ({
+    const list = carried ? [...builds, carried] : builds
+    return list.map((b) => ({
       kind: b.kind,
       x: b.x,
       z: b.z,
@@ -5004,6 +5005,13 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       hasBarrel: b.hasBarrel,
       hasMat: b.hasMat,
       hold: b.hold ? { ...b.hold } : undefined,
+      vx: b.vx,
+      vz: b.vz,
+      failMeter: b.failMeter,
+      curing: b.smoking?.map((fish) => ({
+        readyIn: Math.max(0, fish.readyAt - time),
+      })),
+      carried: b === carried || undefined,
     }))
   }
 
@@ -5077,7 +5085,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       } else if (kind === 'fire') {
         const y = deps.groundAt(x, z)
         // Deck fires: if near a raft snapshot, sit on ground for restore simplicity
-        build = addBuild('fire', fireMesh(m), x, z, y, 2.4, 1.35)
+        build = addBuild('fire', fireMesh(m), x, z, y, 2.4, 1.35, { smoking: [] })
       } else if (kind === 'catch') {
         const y = deps.groundAt(x, z)
         build = addBuild('catch', catchMesh(m), x, z, y, 2.2, 0, { water: s.water ?? 0.4 })
@@ -5141,8 +5149,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         const radius = (withBarrel ? 2.35 : 2.05) + (s.rail ? 0.35 : 0) + (s.expands ?? 0) * 0.38
         build = addBuild('raft', raftMesh(m, withBarrel), x, z, sea + 0.22, radius, withBarrel ? 0.62 : 0.55, {
           buoyant: withBarrel,
-          vx: 0,
-          vz: 0,
+          vx: s.vx ?? 0,
+          vz: s.vz ?? 0,
+          failMeter: s.failMeter ?? 0,
           yaw: s.yaw ?? 0,
           hold: fillHold(s.hold),
           mast: !!s.mast,
@@ -5188,6 +5197,30 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         const waterMesh = build.object.getObjectByName('water')
         if (waterMesh) waterMesh.visible = (build.water ?? 0) > 0.05
       }
+      if (build && s.curing?.length && (build.kind === 'fire' || build.kind === 'rack')) {
+        if (!build.smoking) build.smoking = []
+        s.curing.forEach((fish, slot) => {
+          const mesh = smokedFishMesh(m)
+          if (build!.kind === 'fire') {
+            mesh.position.set((slot - 0.5) * 0.28, 0.85, 0.15)
+          } else {
+            mesh.position.set((slot - 1) * 0.32, 1.05, 0.05)
+          }
+          build!.object.add(mesh)
+          build!.smoking!.push({
+            readyAt: time + Math.max(0, fish.readyIn),
+            mesh,
+          })
+        })
+      }
+      if (build && s.carried && build.kind === 'fire') {
+        const idx = builds.indexOf(build)
+        if (idx >= 0) builds.splice(idx, 1)
+        scene.remove(build.object)
+        build.object.visible = false
+        carried = build
+        torch.visible = true
+      }
     }
 
     // Carpentry shelters depend on neighbours — recompute once everything is up
@@ -5197,6 +5230,14 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     }
   }
 
+  function getWashMeter() {
+    return washMeter
+  }
+
+  function setWashMeter(value: number) {
+    washMeter = Math.min(1, Math.max(0, value))
+  }
+
   return {
     update,
     standAt,
@@ -5204,6 +5245,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     reset,
     snapshot,
     restore,
+    getWashMeter,
+    setWashMeter,
     /** Dev/tests — fast-forward the slow camp clocks (trap stocking). */
     debugTick(seconds: number) {
       stockTraps(seconds)

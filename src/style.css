@@ -932,6 +932,12 @@ body.underwater #bubbles {
   letter-spacing: 0.04em;
 }
 
+.op-gear-item.active {
+  border-color: rgba(255, 210, 140, 0.45);
+  background: rgba(50, 36, 18, 0.55);
+  color: rgba(255, 236, 190, 0.95);
+}
+
 .op-gear-item .dot {
   width: 8px;
   height: 8px;

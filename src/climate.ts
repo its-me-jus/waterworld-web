@@ -321,7 +321,90 @@ export function createClimate(opts?: ClimateOptions) {
     return elapsed
   }
 
-  return { state, update, skip, setElapsed, getElapsed, secondsUntilDawn }
+  function snapshot() {
+    return {
+      elapsed,
+      regime: spell.name,
+      storm: state.storm,
+      target,
+      from,
+      holdLeft,
+      frontLeft,
+      frontLength,
+      nextStrikeIn,
+      thunderLeft,
+      thunderPower,
+      lightning: state.lightning,
+    }
+  }
+
+  function restore(
+    saved:
+      | {
+          elapsed: number
+          regime: Regime
+          storm: number
+          target: number
+          from: number
+          holdLeft: number
+          frontLeft: number
+          frontLength: number
+          nextStrikeIn: number
+          thunderLeft: number
+          thunderPower: number
+          lightning: number
+        }
+      | undefined,
+    elapsedFallback?: number,
+  ) {
+    if (!saved) {
+      if (elapsedFallback !== undefined) setElapsed(elapsedFallback)
+      return
+    }
+    elapsed = Math.max(0, saved.elapsed)
+    const match = SPELLS.find((s) => s.name === saved.regime) ?? SPELLS[1]
+    spell = match
+    state.regime = match.name
+    target = clamp01(saved.target)
+    from = clamp01(saved.from)
+    holdLeft = Math.max(0, saved.holdLeft)
+    frontLeft = Math.max(0, saved.frontLeft)
+    frontLength = Math.max(1e-3, saved.frontLength)
+    nextStrikeIn = Math.max(0, saved.nextStrikeIn)
+    thunderLeft = saved.thunderLeft
+    thunderPower = Math.max(0, saved.thunderPower)
+    state.lightning = Math.max(0, saved.lightning)
+    state.storm = clamp01(saved.storm)
+    // Recompute day/tide/derived without advancing the spell clock
+    if (forcedStorm !== undefined) {
+      update(0)
+      return
+    }
+    const hold = holdLeft
+    const front = frontLeft
+    const strike = nextStrikeIn
+    const thLeft = thunderLeft
+    const thPow = thunderPower
+    const flash = state.lightning
+    const stormPin = state.storm
+    update(0)
+    // update(0) still wanders storm a hair — pin the saved weather back
+    holdLeft = hold
+    frontLeft = front
+    nextStrikeIn = strike
+    thunderLeft = thLeft
+    thunderPower = thPow
+    state.lightning = flash
+    state.storm = stormPin
+    state.regime = spell.name
+    state.fair = 1 - clamp01((state.storm - 0.15) / 0.7)
+    state.swimCost = 1 + state.storm * 0.85
+    state.cold = 1 + (1 - state.daylight) * 1.6 + state.storm * 0.55
+    state.biolum = clamp01((1 - state.daylight) * 1.35 - 0.15)
+    state.rain = clamp01((state.storm - 0.32) / 0.55)
+  }
+
+  return { state, update, skip, setElapsed, getElapsed, secondsUntilDawn, snapshot, restore }
 }
 
 export type ClimateClock = ReturnType<typeof createClimate>

@@ -253,8 +253,13 @@ taxes strength until it clots; a second bite while open ends the run.
 ## Backlog (nothing committed)
 
 - **Memory spine** — the log was one beat. More papers, a name, a reason.
-- **Night economy** — wreck lantern still open. Jelly + coral biolum shipped.
 - **More soft fails** — beyond sail-tear / locker flood, only if runs feel cruel.
+
+~~Night economy / wreck lantern~~ — shipped: sealed diving lantern in the gear
+locker beside the suit; local beam underwater at night, no warmth/breath buff.
+Save fidelity now covers littoral, seals, salvage finds, wreck progression,
+weather, sea glass-offs, smoking/drying, carried fire, and raft wash/fail state.
+Rod/net carry first-person cast/scoop feedback.
 
 ---
 

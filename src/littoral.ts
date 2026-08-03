@@ -979,6 +979,9 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
       const waterMat = pool.water.material as THREE.MeshStandardMaterial
       waterMat.opacity = 0.88
       waterMat.emissiveIntensity = 0.7
+      for (const pick of pool.picks) {
+        pick.object.visible = true
+      }
     }
     m.coral.emissiveIntensity = 0
     m.coralDeep.emissiveIntensity = 0
@@ -1000,7 +1003,68 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
     }
   }
 
-  return { update, reset, fishAttractors }
+  function snapshot() {
+    return {
+      taken: picks.map((p) => p.taken),
+      pools: tidePools.map((p) => ({
+        full: p.full,
+        covered: p.covered,
+      })),
+      seals: seals.map((s) => ({
+        hauled: s.hauled,
+        spook: s.spook,
+      })),
+    }
+  }
+
+  function restore(
+    saved:
+      | {
+          taken: boolean[]
+          pools: { full: number; covered: boolean }[]
+          seals: { hauled: boolean; spook: number }[]
+        }
+      | undefined,
+  ) {
+    reset()
+    if (!saved) return
+
+    picks.forEach((p, i) => {
+      p.taken = !!saved.taken[i]
+      p.object.visible = !p.taken
+    })
+
+    tidePools.forEach((pool, i) => {
+      const state = saved.pools[i]
+      if (!state) return
+      pool.full = THREE.MathUtils.clamp(state.full, 0, 1)
+      pool.covered = !!state.covered
+      pool.water.visible = !pool.covered
+      const mat = pool.water.material as THREE.MeshStandardMaterial
+      mat.opacity = 0.55 + pool.full * 0.33
+      mat.emissiveIntensity = 0.35 + pool.full * 0.45
+      for (const pick of pool.picks) {
+        pick.object.visible = !pick.taken && pool.full >= 0.45
+      }
+    })
+
+    seals.forEach((seal, i) => {
+      const state = saved.seals[i]
+      if (!state) return
+      seal.hauled = !!state.hauled
+      seal.spook = Math.max(0, state.spook)
+      if (seal.hauled) {
+        seal.object.position.set(seal.haulX, seal.haulY, seal.haulZ)
+        seal.object.rotation.x = 0
+      } else {
+        seal.object.position.set(seal.swimX, oceanState.tide - 0.35, seal.swimZ)
+        seal.object.rotation.x = 0.25
+      }
+      seal.object.visible = true
+    })
+  }
+
+  return { update, reset, fishAttractors, snapshot, restore }
 }
 
 export type Littoral = ReturnType<typeof createLittoral>

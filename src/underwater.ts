@@ -928,6 +928,8 @@ export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOption
     underwater: boolean
     pixelRatio: number
     biolum?: number
+    /** 0..1 sun — shafts fade at night so the lantern and biolum are honest. */
+    daylight?: number
     /** 0..1 how hard the swimmer is working — drives how skittish the fish are. */
     effort?: number
   }) {
@@ -937,7 +939,9 @@ export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOption
     group.visible = fade > 0.01
     if (!group.visible) return
 
-    shafts.update(ctx.time, ctx.camera, ctx.surfaceY, fade)
+    const day = ctx.daylight ?? 1
+    const shaftFade = fade * (0.12 + day * 0.88)
+    shafts.update(ctx.time, ctx.camera, ctx.surfaceY, shaftFade)
     snow.update(ctx.time, ctx.camera, ctx.pixelRatio, fade)
     plume.update(ctx.time, ctx.camera, ctx.pixelRatio, fade * 0.85)
     fish.update(ctx.dt, ctx.time, ctx.camera, ctx.surfaceY, ctx.effort ?? 0)

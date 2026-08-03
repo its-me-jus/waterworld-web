@@ -53,6 +53,9 @@ export type Island = {
     positionAt: (index: number, out: THREE.Vector3) => THREE.Vector3
     /** Hide and eat; the shell comes back later. */
     take: (index: number) => boolean
+    reset: () => void
+    snapshot: () => { returnIn: number }[]
+    restore: (saved?: { returnIn: number }[]) => void
   }
   update: (camera: THREE.Camera, underwater: boolean, time?: number) => void
   /** Keep aerial perspective matched to the live horizon. */
@@ -1860,6 +1863,35 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       // Respawn delay set from update's clock on first hidden frame
       c.goneUntil = -1
       return true
+    },
+    reset() {
+      for (const c of crabs) {
+        c.x = c.homeX
+        c.z = c.homeZ
+        c.spook = 0
+        c.goneUntil = 0
+        c.mesh.visible = true
+      }
+    },
+    snapshot() {
+      return crabs.map((c) => ({
+        returnIn:
+          c.goneUntil < 0
+            ? 75 + c.phase * 8
+            : c.goneUntil > wildlifeTime
+              ? c.goneUntil - wildlifeTime
+              : 0,
+      }))
+    },
+    restore(saved?: { returnIn: number }[]) {
+      crabs.forEach((c, i) => {
+        const remaining = Math.max(0, saved?.[i]?.returnIn ?? 0)
+        c.x = c.homeX
+        c.z = c.homeZ
+        c.spook = 0
+        c.goneUntil = remaining > 0 ? wildlifeTime + remaining : 0
+        c.mesh.visible = remaining <= 0
+      })
     },
   }
 

@@ -37,6 +37,8 @@ export type OpMenuDeps = {
   /** Crafted fishing gear — shows in the Pack Gear list. */
   hasRod?: () => boolean
   hasNet?: () => boolean
+  equippedTool?: () => 'rod' | 'net' | null
+  equipTool?: (tool: 'rod' | 'net') => void
   /** Ready construction recipes from improvise (same use as F). */
   campRecipes: () => CampRecipe[]
   /** Which day of the run this is — the score in the header. */
@@ -119,11 +121,17 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
   /** Skip innerHTML writes that would detach buttons mid-tap. */
   let lastPaint = ''
 
-  const GEAR: { key: string; label: string; has: () => boolean }[] = [
+  const GEAR: {
+    key: string
+    label: string
+    has: () => boolean
+    equip?: 'rod' | 'net'
+  }[] = [
     { key: 'knife', label: 'Galley knife', has: () => deps.loot.hasKnife },
     { key: 'spear', label: "Mate's spear", has: () => deps.loot.hasSpear },
-    { key: 'rod', label: 'Fishing rod', has: () => deps.hasRod?.() ?? false },
-    { key: 'net', label: 'Cast net', has: () => deps.hasNet?.() ?? false },
+    { key: 'lantern', label: 'Diving lantern', has: () => deps.loot.hasLantern },
+    { key: 'rod', label: 'Fishing rod', has: () => deps.hasRod?.() ?? false, equip: 'rod' },
+    { key: 'net', label: 'Cast net', has: () => deps.hasNet?.() ?? false, equip: 'net' },
   ]
 
   function stashCount(stash: Stash) {
@@ -221,10 +229,19 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     rows.push(
       `<div class="op-cell${smoked ? '' : ' empty'}${smoked ? ' op-use' : ''}" data-eat-smoked="1"><span class="n">${smoked}</span><span class="k">Smoked fish</span></div>`,
     )
-    const gear = GEAR.map(
-      (g) =>
-        `<div class="op-gear-item${g.has() ? '' : ' missing'}"><span class="dot"></span>${g.label}</div>`,
-    ).join('')
+    const equipped = deps.equippedTool?.() ?? null
+    const gear = GEAR.map((g) => {
+      const on = g.has()
+      const active = g.equip && equipped === g.equip
+      const cls = [
+        'op-gear-item',
+        on ? '' : ' missing',
+        on && g.equip ? ' op-use' : '',
+        active ? ' active' : '',
+      ].join('')
+      const equipAttr = on && g.equip ? ` data-equip="${g.equip}"` : ''
+      return `<div class="${cls}"${equipAttr}><span class="dot"></span>${g.label}${active ? ' · ready' : ''}</div>`
+    }).join('')
     paint(`
       <div class="op-section op-section-first">
         <h3>Carried</h3>
@@ -384,6 +401,13 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     const eatSmoked = (e.target as HTMLElement).closest<HTMLElement>('[data-eat-smoked]')
     if (eatSmoked && deps.smokedFish() > 0) {
       if (deps.eatSmoked?.()) render()
+      return
+    }
+
+    const equipEl = (e.target as HTMLElement).closest<HTMLElement>('[data-equip]')
+    if (equipEl?.dataset.equip === 'rod' || equipEl?.dataset.equip === 'net') {
+      deps.equipTool?.(equipEl.dataset.equip)
+      render()
       return
     }
 
