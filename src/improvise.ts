@@ -115,6 +115,14 @@ type Build = {
   hold?: Hold
   /** Stern scratched with the mate's mark. */
   marked?: boolean
+  /** Grounded on a beach — no drift until Shove. */
+  beached?: boolean
+  /** Sail torn in a gale — Mend with canvas before it draws again. */
+  torn?: boolean
+  /** Locker took a sea — hold is wet / light items gone. */
+  flooded?: boolean
+  /** Soft-fail fill 0..1 while a foul sea works the rig. */
+  failMeter?: number
   /** Extra hotspots this build registered (drink, etc.) — cleared on reset. */
   items: Interactable[]
 }
@@ -194,6 +202,13 @@ const WASH_RAIL = 0.22
 const WASH_LOCKER = 0.08
 const WASH_STORM_GATE = 0.42
 const WASH_RAIL_GATE = 0.72
+/** Look-down pitch (radians) required to pole — accidental walk won't drive her. */
+const POLE_LOOK_DOWN = -0.32
+/** Soft-fail: how fast a gale frays the sail while you're aboard. */
+const FAIL_RATE = 0.22
+const FAIL_STORM_GATE = 0.58
+/** Mend a torn sail. */
+const MEND_COST: Cost = { canvas: 1, rope: 1 }
 
 const emptyHold = (): Hold => ({
   plank: 0,
@@ -1147,11 +1162,19 @@ function dripMesh(m: ReturnType<typeof mats>) {
   return g
 }
 
-function animateSail(raft: THREE.Object3D, t: number) {
+function animateSail(raft: THREE.Object3D, t: number, torn = false) {
   const sail = raft.getObjectByName('sail')
   if (!sail) return
-  sail.rotation.y = Math.sin(t * 0.7) * 0.06
-  sail.rotation.z = Math.sin(t * 0.45 + 1) * 0.03
+  if (torn) {
+    // Hangs slack — the gale already took the wind out of it
+    sail.rotation.y = Math.sin(t * 0.35) * 0.02
+    sail.rotation.z = -0.55 + Math.sin(t * 0.5) * 0.04
+    sail.scale.set(1, 0.72, 1)
+  } else {
+    sail.scale.set(1, 1, 1)
+    sail.rotation.y = Math.sin(t * 0.7) * 0.06
+    sail.rotation.z = Math.sin(t * 0.45 + 1) * 0.03
+  }
 }
 
 function smokedFishMesh(m: ReturnType<typeof mats>) {
@@ -1179,6 +1202,17 @@ function offset(player: { x: number; z: number }, yaw: number, ahead: number, si
   return {
     x: player.x - s * ahead - c * side,
     z: player.z - c * ahead + s * side,
+  }
+}
+
+/** Local deck offset → world XZ, using the raft's stored heading. */
+function raftLocal(b: Build, lx: number, lz: number) {
+  const heading = b.yaw ?? b.object.rotation.y
+  const s = Math.sin(heading)
+  const c = Math.cos(heading)
+  return {
+    x: b.x + lx * c + lz * s,
+    z: b.z - lx * s + lz * c,
   }
 }
 
@@ -1210,6 +1244,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const takeDryPos = new THREE.Vector3()
   const digPos = new THREE.Vector3()
   const dripPos = new THREE.Vector3()
+  const thwartPos = new THREE.Vector3()
+  const sailRestPos = new THREE.Vector3()
+  const beachPos = new THREE.Vector3()
+  const shovePos = new THREE.Vector3()
+  const mendPos = new THREE.Vector3()
 
   let yaw = 0
   let lookPitch = 0
@@ -1225,8 +1264,13 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let saidSail = false
   let saidWash = false
   let saidOar = false
+  let saidPoleHint = false
+  let saidFail = false
+  let saidBeach = false
   let swimming = false
   let onRaftDeck = false
+  /** Dive/look-down held — intentional pole when at the gunwale. */
+  let poleIntent = false
   /** Seconds of stickiness after Climb — kills leftover swim speed that throws you off. */
   let boardGrace = 0
   /** After a wash-off, stay swimming briefly so the deck skirt can't reclaim you. */
@@ -2021,6 +2065,243 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     return nearestOfKind(px, pz, 'raft', 3.2)
   }
 
+  // Sit the stern thwart — the raft's built-in seat
+  deps.interactions.add({
+    position: thwartPos,
+    verb: 'Sit',
+    label: 'Thwart',
+    radius: 2.2,
+    available: () =>
+      deps.vitals.alive &&
+      onRaftDeck &&
+      time >= sitReadyAt &&
+      !!nearestRaftOnDeck() &&
+      // Prefer a planted seat ashore when both are in reach
+      !nearestOfKind(px, pz, 'seat', 2.0),
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !live) return
+      const v = deps.vitals
+      v.stamina = Math.min(1, v.stamina + 0.38)
+      v.warmth = Math.min(1, v.warmth + 0.04)
+      sitReadyAt = time + 14
+      const seat = raftLocal(raft, 1.2, 0)
+      live.x = seat.x
+      live.z = seat.z
+      live.y = raft.deckY + WALK_EYE * 0.72
+      live.speed = 0
+      thwartPos.set(seat.x, raft.deckY + 0.45, seat.z)
+      deps.hud.whisper(
+        raft.beached
+          ? 'Thwart under you. The beach holds the hull.'
+          : "Thwart under you. The deck moves, you don't.",
+      )
+    },
+  })
+
+  // Rest under the sail — a nap on the deck, not a full lean-to sleep
+  deps.interactions.add({
+    position: sailRestPos,
+    verb: 'Rest',
+    label: 'Under sail',
+    radius: 2.6,
+    available: () => {
+      if (!deps.vitals.alive || !onRaftDeck || time < restReadyAt) return false
+      const raft = nearestRaftOnDeck()
+      return !!raft && !!raft.mast && !raft.torn
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !raft.mast || raft.torn) return
+      const v = deps.vitals
+      if (v.food < 0.08 || v.water < 0.08) {
+        deps.hud.whisper('Too empty to sleep.')
+        return
+      }
+      const night = deps.daylight() < 0.38
+      const nearFire =
+        !!nearestOfKind(raft.x, raft.z, 'fire', raft.radius + 0.5) || !!carried
+      let smokedDone = 0
+      if (nearFire) {
+        for (const b of builds) {
+          if (b.kind !== 'fire' || !b.smoking?.length) continue
+          if (Math.hypot(b.x - raft.x, b.z - raft.z) > raft.radius + 0.8) continue
+          const left = b.smoking
+          b.smoking = []
+          for (const s of left) {
+            b.object.remove(s.mesh)
+            deps.addSmoked(1)
+            smokedDone++
+          }
+        }
+      }
+      const hours = night ? 2.2 : NAP_HOURS * 0.85
+      const seconds = (hours / 24) * DAY_LENGTH
+      deps.skipTime(seconds)
+      const storm = deps.storm?.() ?? 0
+      const warmthGain =
+        (night ? 0.28 : 0.14) + (nearFire ? 0.16 : 0) + (raft.rail ? 0.06 : 0) - storm * 0.08
+      v.warmth = Math.min(1, Math.max(0, v.warmth + warmthGain))
+      v.stamina = Math.min(1, v.stamina + 0.62)
+      v.food = Math.max(0, v.food - hours * 0.04)
+      v.water = Math.max(0, v.water - hours * 0.05)
+      if (v.wounded) v.woundClock += hours * 28
+      restReadyAt = time + (night ? 36 : REST_COOLDOWN)
+      if (live) {
+        const mid = raftLocal(raft, -0.2, 0)
+        live.x = mid.x
+        live.z = mid.z
+        live.y = raft.deckY + WALK_EYE
+        live.speed = 0
+      }
+      if (smokedDone > 0) {
+        deps.hud.whisper(
+          smokedDone > 1 ? 'Smoke finished while you slept. Fish for the road.' : 'Smoked fish waits in the Pack.',
+        )
+      } else if (night) {
+        deps.hud.whisper(
+          nearFire ? 'Dawn under canvas. Embers on the deck.' : 'Dawn. Canvas over you, sea under.',
+        )
+      } else {
+        deps.hud.whisper(nearFire ? 'A nap by the deck fire.' : 'Eyes shut under the sail. Strength back.')
+      }
+    },
+  })
+
+  // Mend a sail the gale tore
+  deps.interactions.add({
+    position: mendPos,
+    verb: 'Mend',
+    label: 'Sail',
+    radius: 2.8,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      return !!raft && !!raft.torn && deps.vitals.alive && deps.salvage.has(MEND_COST)
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !raft.torn || !deps.salvage.spend(MEND_COST)) return
+      raft.torn = false
+      raft.failMeter = 0
+      saidFail = false
+      animateSail(raft.object, time, false)
+      deps.hud.whisper('Needle and scrap. The canvas holds again.')
+    },
+  })
+
+  // Haul the raft onto sand when the water shoals
+  deps.interactions.add({
+    position: beachPos,
+    verb: 'Haul',
+    label: 'Ashore',
+    radius: 3.4,
+    available: () => {
+      if (!deps.vitals.alive) return false
+      const raft = nearestOfKind(px, pz, 'raft', 4.2)
+      if (!raft || raft.beached) return false
+      // Need real ground under or beside the hull
+      const under = deps.groundAt(raft.x, raft.z)
+      if (under > 0.05) return true
+      for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+        const hx = raft.x + Math.cos(a) * (raft.radius + 1.2)
+        const hz = raft.z + Math.sin(a) * (raft.radius + 1.2)
+        if (deps.groundAt(hx, hz) > 0.45) return true
+      }
+      return false
+    },
+    use: () => {
+      const raft = nearestOfKind(px, pz, 'raft', 4.2)
+      if (!raft || raft.beached) return
+      // Pull toward the highest nearby sand
+      let bestX = raft.x
+      let bestZ = raft.z
+      let bestH = deps.groundAt(raft.x, raft.z)
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2
+        const hx = raft.x + Math.cos(a) * 2.4
+        const hz = raft.z + Math.sin(a) * 2.4
+        const h = deps.groundAt(hx, hz)
+        if (h > bestH) {
+          bestH = h
+          bestX = hx
+          bestZ = hz
+        }
+      }
+      raft.x = bestX
+      raft.z = bestZ
+      raft.vx = 0
+      raft.vz = 0
+      raft.beached = true
+      raft.deckY = Math.max(deps.groundAt(raft.x, raft.z), sampleOcean(raft.x, raft.z, time).y) + 0.12
+      raft.object.position.set(raft.x, raft.deckY, raft.z)
+      raft.object.rotation.x = 0
+      raft.object.rotation.z = 0
+      if (live && (onRaftDeck || Math.hypot(live.x - raft.x, live.z - raft.z) < 4)) {
+        live.x = raft.x
+        live.z = raft.z
+        live.y = raft.deckY + WALK_EYE
+        live.mode = 'walk'
+        live.submersion = 0
+        boardGrace = 0.8
+      }
+      deps.hud.whisper('Hull on sand. She rests.')
+    },
+  })
+
+  deps.interactions.add({
+    position: shovePos,
+    verb: 'Shove',
+    label: 'Off',
+    radius: 3.4,
+    available: () => {
+      if (!deps.vitals.alive) return false
+      const raft = nearestOfKind(px, pz, 'raft', 4.2)
+      return !!raft && !!raft.beached
+    },
+    use: () => {
+      const raft = nearestOfKind(px, pz, 'raft', 4.2)
+      if (!raft || !raft.beached) return
+      // Push toward deeper water
+      let bestX = raft.x
+      let bestZ = raft.z
+      let bestH = deps.groundAt(raft.x, raft.z)
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2
+        const hx = raft.x + Math.cos(a) * 3.2
+        const hz = raft.z + Math.sin(a) * 3.2
+        const h = deps.groundAt(hx, hz)
+        if (h < bestH) {
+          bestH = h
+          bestX = hx
+          bestZ = hz
+        }
+      }
+      const dx = bestX - raft.x
+      const dz = bestZ - raft.z
+      const len = Math.hypot(dx, dz) || 1
+      const wasAboard =
+        !!live && Math.hypot(live.x - raft.x, live.z - raft.z) <= raft.radius * DECK_LIP + 0.4
+      raft.x += (dx / len) * 2.8
+      raft.z += (dz / len) * 2.8
+      raft.vx = (dx / len) * 0.9
+      raft.vz = (dz / len) * 0.9
+      raft.beached = false
+      const sea = sampleOcean(raft.x, raft.z, time)
+      raft.deckY = sea.y + 0.22
+      raft.object.position.set(raft.x, raft.deckY, raft.z)
+      if (live && wasAboard) {
+        live.x = raft.x
+        live.z = raft.z
+        live.y = raft.deckY + WALK_EYE
+        live.mode = 'walk'
+        live.submersion = 0
+        boardGrace = 0.6
+        onRaftDeck = true
+      }
+      deps.hud.whisper('Off the sand. Water under her again.')
+    },
+  })
+
   // —— deck fittings —————————————————————————————————————————
   deps.interactions.add({
     position: raftFitPos,
@@ -2435,7 +2716,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const fire = nearestOfKind(px, pz, 'fire', 2.8)
       if (!fire || !deps.cookFish()) return
       deps.vitals.warmth = Math.min(1, deps.vitals.warmth + 0.08)
-      deps.hud.whisper('Cooked through. Heat in the hands and the gut.')
+      deps.hud.whisper(
+        onRaftDeck ? 'Cooked on the deck. Heat and grease on the planks.' : 'Cooked through. Heat in the hands and the gut.',
+      )
     },
   })
 
@@ -2598,6 +2881,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
     view: PlayerFrame,
     facingYaw: number,
+    intent?: { dive?: boolean },
   ) {
     time = t
     yaw = facingYaw
@@ -2606,6 +2890,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     pz = player.z
     live = player
     swimming = !view.walking
+    // Pole: look down at the water, or hold dive (mobile) while at the gunwale
+    poleIntent = lookPitch <= POLE_LOOK_DOWN || !!intent?.dive
     onLand = view.walking && view.groundY > 0.3
     groundY = view.groundY
     {
@@ -2712,11 +2998,23 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       raftFitPos.set(nearRaft.x, nearRaft.deckY + 0.55, nearRaft.z)
       stowPos.set(nearRaft.x + 0.7, nearRaft.deckY + 0.5, nearRaft.z - 0.3)
       markPos.set(nearRaft.x + 1.2, nearRaft.deckY + 0.5, nearRaft.z)
+      const thwart = raftLocal(nearRaft, 1.25, 0)
+      thwartPos.set(thwart.x, nearRaft.deckY + 0.45, thwart.z)
+      const underSail = raftLocal(nearRaft, -0.35, 0)
+      sailRestPos.set(underSail.x, nearRaft.deckY + 0.7, underSail.z)
+      mendPos.set(underSail.x, nearRaft.deckY + 0.65, underSail.z)
+      beachPos.set(nearRaft.x, nearRaft.deckY + 0.35, nearRaft.z)
+      shovePos.set(nearRaft.x, nearRaft.deckY + 0.35, nearRaft.z)
     } else {
       climbPos.copy(eatPos)
       raftFitPos.copy(eatPos)
       stowPos.copy(eatPos)
       markPos.copy(eatPos)
+      thwartPos.copy(eatPos)
+      sailRestPos.copy(eatPos)
+      mendPos.copy(eatPos)
+      beachPos.copy(eatPos)
+      shovePos.copy(eatPos)
     }
 
     const fire = nearestOfKind(player.x, player.z, 'fire', 2.8)
@@ -2785,16 +3083,39 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           washGrace <= 0 &&
           (boardGrace > 0 || view.walking) &&
           deckDist <= b.radius * DECK_LIP
-        // Pole from the gunwale — centre deck is for fittings and fire.
-        const atGunwale = aboard && deckDist >= b.radius * POLE_GUNWALE
-        const poling = atGunwale && view.speed > 0.35 && boardGrace <= 0
+        // Pole from the gunwale — look down (or hold dive) so walk ≠ thrust.
+        const atGunwale = aboard && !b.beached && deckDist >= b.radius * POLE_GUNWALE
+        const poling =
+          atGunwale && poleIntent && view.speed > 0.35 && boardGrace <= 0
+        if (atGunwale && view.speed > 0.4 && !poleIntent && !saidPoleHint && aboard) {
+          saidPoleHint = true
+          deps.hud.whisper('Look down to pole — or hold dive on a phone.')
+        }
+
+        // Ran aground — auto-beach when the hull finds sand
+        if (!b.beached) {
+          const ground = deps.groundAt(b.x, b.z)
+          const speed = Math.hypot(b.vx ?? 0, b.vz ?? 0)
+          if (ground > 0.2 || (ground > 0.06 && speed < 0.35 && aboard)) {
+            b.beached = true
+            b.vx = 0
+            b.vz = 0
+            if (!saidBeach) {
+              saidBeach = true
+              deps.hud.whisper('Sand under the planks. Haul her up, or Shove off.')
+            }
+          }
+        }
 
         let top = b.buoyant ? POLE_SPEED_BARREL : POLE_SPEED
         if (b.oar) top += POLE_OAR_BONUS
         if (b.floats) top += POLE_FLOAT_BONUS
         let vx = b.vx ?? 0
         let vz = b.vz ?? 0
-        if (poling) {
+        if (b.beached) {
+          vx = 0
+          vz = 0
+        } else if (poling) {
           const aimX = player.dirX
           const aimZ = player.dirZ
           // Oar bites harder into a new heading
@@ -2809,8 +3130,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
             saidOar = true
             deps.hud.whisper('Blade and shaft. She turns when you ask.')
           }
-        } else if (b.mast && aboard) {
-          // Sail draws while you're aboard — falls idle if you go overboard
+        } else if (b.mast && aboard && !b.torn) {
+          // Sail draws while you're aboard — idle if torn or overboard
           const sail = b.buoyant ? SAIL_SPEED_BARREL : SAIL_SPEED
           const draw = 1 - Math.exp(-0.55 * dt)
           vx += (WIND.x * sail - vx) * draw * 0.65
@@ -2831,26 +3152,33 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         vz *= waterDrag
 
         // Current carries the deck. Poling fights it; an empty raft goes with
-        // the set. Applied as position drift (same as the swimmer) so it doesn't
-        // fight the pole velocity integrator.
+        // the set. Beached hull ignores the set entirely.
         const set = deps.current?.()
         const carry =
-          set && set.strength > 1e-4
-            ? poling
+          b.beached || !set || set.strength <= 1e-4
+            ? 0
+            : poling
               ? 0.35
-              : aboard && b.mast
+              : aboard && b.mast && !b.torn
                 ? 0.5
                 : 0.85
-            : 0
 
         b.vx = vx
         b.vz = vz
-        b.x += vx * dt + (set ? set.x * carry * dt : 0)
-        b.z += vz * dt + (set ? set.z * carry * dt : 0)
+        if (!b.beached) {
+          b.x += vx * dt + (set ? set.x * carry * dt : 0)
+          b.z += vz * dt + (set ? set.z * carry * dt : 0)
+        }
 
         const sea = sampleOcean(b.x, b.z, t)
-        b.deckY = sea.y + 0.22
-        b.object.position.set(b.x, b.deckY, b.z)
+        const groundHere = deps.groundAt(b.x, b.z)
+        if (b.beached) {
+          b.deckY = Math.max(groundHere, sea.y) + 0.12
+          b.object.position.set(b.x, b.deckY, b.z)
+        } else {
+          b.deckY = sea.y + 0.22
+          b.object.position.set(b.x, b.deckY, b.z)
+        }
 
         // Steer only while poling — residual drift must not chase a heading
         // (that, plus Euler rock, was the spin-in-circles bug).
@@ -2866,9 +3194,55 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         b.yaw = heading
         b.object.rotation.order = 'YXZ'
         b.object.rotation.y = heading
-        b.object.rotation.x = sea.normal.z * 0.35
-        b.object.rotation.z = -sea.normal.x * 0.35
-        if (b.mast) animateSail(b.object, t)
+        if (b.beached) {
+          b.object.rotation.x = 0.04
+          b.object.rotation.z = -0.02
+        } else {
+          b.object.rotation.x = sea.normal.z * 0.35
+          b.object.rotation.z = -sea.normal.x * 0.35
+        }
+        if (b.mast) animateSail(b.object, t, !!b.torn)
+
+        // Soft fail — a gale works the sail; locker can take a sea
+        if (aboard && boardGrace <= 0 && !b.beached && b.mast && !b.torn) {
+          const storm = deps.storm?.() ?? 0
+          if (storm > FAIL_STORM_GATE) {
+            const rate =
+              FAIL_RATE * ((storm - FAIL_STORM_GATE) / Math.max(0.05, 1 - FAIL_STORM_GATE))
+            b.failMeter = Math.min(1, (b.failMeter ?? 0) + rate * dt)
+            if ((b.failMeter ?? 0) > 0.55 && !saidFail) {
+              saidFail = true
+              deps.hud.whisper('The sail cracks like a whip. Hold the sheet.')
+            }
+            if ((b.failMeter ?? 0) >= 1) {
+              b.torn = true
+              b.failMeter = 0
+              saidFail = false
+              animateSail(b.object, t, true)
+              deps.hud.whisper('Canvas tears. Mend it when you can.')
+              // Locker floods if one is lashed — light gear goes
+              if (b.locker && b.hold && !b.flooded) {
+                b.flooded = true
+                let lost = 0
+                for (const k of ['leaf', 'plastic', 'can', 'rope'] as const) {
+                  if ((b.hold[k] ?? 0) > 0) {
+                    const n = Math.min(b.hold[k], k === 'rope' ? 1 : 2)
+                    b.hold[k] -= n
+                    lost += n
+                  }
+                }
+                if (lost > 0) {
+                  deps.hud.whisper('Seas in the locker. Something light is gone.')
+                } else {
+                  deps.hud.whisper('Seas in the locker. The hold runs wet.')
+                }
+              }
+            }
+          } else {
+            b.failMeter = Math.max(0, (b.failMeter ?? 0) - dt * 0.15)
+            if ((b.failMeter ?? 0) < 0.3) saidFail = false
+          }
+        }
 
         if (aboard) {
           player.x += b.x - prevX
@@ -2890,17 +3264,33 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
               const outZ = (player.z - b.z) / (d || 1)
               const outward = player.dirX * outX + player.dirZ * outZ
               if (view.speed > 0.55 && outward > 0.35) {
-                washGrace = 0.85
-                live = player
-                player.mode = 'swim'
-                player.x = b.x + outX * (b.radius + 1.25)
-                player.z = b.z + outZ * (b.radius + 1.25)
-                player.y = sea.y - 0.15
-                player.vy = 0
-                player.submersion = 0.7
-                player.speed = Math.min(player.speed, 1.2)
-                onRaftDeck = false
-                swimming = true
+                const shoreY = deps.groundAt(
+                  b.x + outX * (b.radius + 1.1),
+                  b.z + outZ * (b.radius + 1.1),
+                )
+                if (b.beached && shoreY > 0.35) {
+                  // Step onto sand from a hauled hull
+                  player.mode = 'walk'
+                  player.x = b.x + outX * (b.radius + 0.85)
+                  player.z = b.z + outZ * (b.radius + 0.85)
+                  player.y = shoreY + WALK_EYE
+                  player.vy = 0
+                  player.submersion = 0
+                  onRaftDeck = false
+                  swimming = false
+                } else {
+                  washGrace = 0.85
+                  live = player
+                  player.mode = 'swim'
+                  player.x = b.x + outX * (b.radius + 1.25)
+                  player.z = b.z + outZ * (b.radius + 1.25)
+                  player.y = sea.y - 0.15
+                  player.vy = 0
+                  player.submersion = 0.7
+                  player.speed = Math.min(player.speed, 1.2)
+                  onRaftDeck = false
+                  swimming = true
+                }
               } else {
                 const s = lip / d
                 player.x = b.x + (player.x - b.x) * s
@@ -2918,18 +3308,32 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           deckDist > b.radius * DECK_LIP &&
           deckDist < b.radius + 1.05
         ) {
-          // Soft skirt was holding a walker past the gunwale — put them in the sea
-          washGrace = 0.85
           const ang = Math.atan2(player.z - b.z, player.x - b.x)
-          player.mode = 'swim'
-          player.x = b.x + Math.cos(ang) * (b.radius + 1.25)
-          player.z = b.z + Math.sin(ang) * (b.radius + 1.25)
-          player.y = sea.y - 0.15
-          player.vy = 0
-          player.submersion = 0.7
-          player.speed = Math.min(player.speed, 1.2)
-          onRaftDeck = false
-          swimming = true
+          const edgeX = b.x + Math.cos(ang) * (b.radius + 1.1)
+          const edgeZ = b.z + Math.sin(ang) * (b.radius + 1.1)
+          const shoreY = deps.groundAt(edgeX, edgeZ)
+          if (b.beached && shoreY > 0.35) {
+            player.mode = 'walk'
+            player.x = edgeX
+            player.z = edgeZ
+            player.y = shoreY + WALK_EYE
+            player.vy = 0
+            player.submersion = 0
+            onRaftDeck = false
+            swimming = false
+          } else {
+            // Soft skirt was holding a walker past the gunwale — put them in the sea
+            washGrace = 0.85
+            player.mode = 'swim'
+            player.x = b.x + Math.cos(ang) * (b.radius + 1.25)
+            player.z = b.z + Math.sin(ang) * (b.radius + 1.25)
+            player.y = sea.y - 0.15
+            player.vy = 0
+            player.submersion = 0.7
+            player.speed = Math.min(player.speed, 1.2)
+            onRaftDeck = false
+            swimming = true
+          }
           px = player.x
           pz = player.z
         }
@@ -3057,11 +3461,16 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       // Narrow shelf past the gunwale so the walker's slope probe (±0.9 m)
       // doesn't see a cliff into the ocean floor — but steep enough that a
       // swimmer past the lip can't auto-stand. Climb is the way back aboard.
-      const skirt = b.radius + 1.0
+      // Beached hulls offer a longer ramp onto sand.
+      const skirt = b.beached ? b.radius + 2.2 : b.radius + 1.0
       if (d > skirt) continue
       if (d <= b.radius) {
         const lip = 1 - (d / b.radius) ** 2
         best = Math.max(best, b.deckY + lip * 0.04)
+      } else if (b.beached) {
+        const t = Math.min(1, (d - b.radius) / (skirt - b.radius))
+        const sand = deps.groundAt(x, z)
+        best = Math.max(best, THREE.MathUtils.lerp(b.deckY, Math.max(sand, b.deckY - 0.3), t))
       } else {
         const t = Math.min(1, (d - b.radius) / (skirt - b.radius))
         best = Math.max(best, THREE.MathUtils.lerp(b.deckY, -1.25, Math.pow(t, 0.7)))
@@ -3107,6 +3516,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     saidSail = false
     saidWash = false
     saidOar = false
+    saidPoleHint = false
+    saidFail = false
+    saidBeach = false
     washMeter = 0
     boardGrace = 0
     washGrace = 0
@@ -3136,6 +3548,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       floats: b.floats,
       expands: b.expands,
       marked: b.marked,
+      beached: b.beached,
+      torn: b.torn,
+      flooded: b.flooded,
       sides: b.sides,
       roof: (b.roof ?? 'none') as SavedRoof,
       hasBarrel: b.hasBarrel,
@@ -3255,6 +3670,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           floats: !!s.floats,
           expands: s.expands ?? 0,
           marked: !!s.marked,
+          beached: !!s.beached,
+          torn: !!s.torn,
+          flooded: !!s.flooded,
         })
         if (s.mast) fitMast(build.object, m)
         if (s.rail) fitRail(build.object, m)
@@ -3269,6 +3687,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         if (s.floats) {
           build.buoyant = true
           build.shelter = Math.max(build.shelter, build.shelter + 0.08)
+        }
+        if (s.torn) animateSail(build.object, 0, true)
+        if (s.beached) {
+          build.deckY = Math.max(deps.groundAt(x, z), sampleOcean(x, z, 0).y) + 0.12
+          build.object.position.set(x, build.deckY, z)
         }
       }
 
@@ -3337,6 +3760,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       oar: OAR_COST,
       floats: FLOAT_COST,
       drip: DRIP_COST,
+      mend: MEND_COST,
       label: costLabel,
     },
   }

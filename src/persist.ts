@@ -28,6 +28,9 @@ export type SavedBuild = {
   floats?: boolean
   expands?: number
   marked?: boolean
+  beached?: boolean
+  torn?: boolean
+  flooded?: boolean
   sides?: number
   roof?: SavedRoof
   hasBarrel?: boolean

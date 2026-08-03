@@ -53,8 +53,10 @@ them raw to eat, or cook them once you've kindled a fire. The debris that drifts
 by — planks, barrels, crates, rope, canvas, bottles, cans — goes in the stash, and from there
 you improvise: a lean-to you can rest under, a fire to cook or smoke fish (and
 carry as a brand at night), a rain-catch, a raft you Climb aboard and fit with
-sail, rail, locker, oar, floats and a wider deck, and ashore a seat, drying rack,
-signal smoke, dug rain hollows and tin drips. Shelters are fashioned in stages —
+sail, rail, locker, oar, floats and a wider deck — sit the thwart, rest under
+sail, Haul ashore and Shove off, Mend a sail a gale tore — and ashore a seat, drying rack,
+signal smoke, dug rain hollows and tin drips. A spar buoy stands partway to the
+island so the crossing has a shape. Shelters are fashioned in stages —
 Raise a frame, Lash walls, Roof with fronds or a canvas tarp (or scrap bottles),
 then Rest once covered. Barrels plant as cisterns or sit under the eaves;
 Fill them from rock pools or a rain-catch (a can scoops cleaner). A frond mat

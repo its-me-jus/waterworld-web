@@ -20,6 +20,7 @@ import { createSeaState } from './sea'
 import { createShark } from './shark'
 import { createShoreSurf } from './shore'
 import { createSky } from './sky'
+import { createSparBuoy } from './spar'
 import { createSplashLayer } from './splash'
 import { createSwimmer } from './swimmer'
 import {
@@ -122,6 +123,13 @@ const island = createIsland(scene, {
   z: -680,
   lowPower,
   hazeColor: skyRig.horizonColor,
+})
+
+// Spar buoy ~a third of the way to the island — a mast in the haze so the
+// crossing isn't wreck-or-island and nothing between.
+const spar = createSparBuoy(scene, {
+  x: -38 + (980 - -38) * 0.32,
+  z: -104 + (-680 - -104) * 0.32,
 })
 
 // The island shelters its waterline: fully calm over the beach ring, the
@@ -512,6 +520,7 @@ const opMenu = createOpMenu(app, {
   spots: {
     island: { x: beach.x, z: beach.z, y: beach.y + 1.7 },
     wreck: { x: wreck.group.position.x + 5, z: wreck.group.position.z + 5 },
+    spar: { x: spar.position.x + 3, z: spar.position.z + 3 },
   },
   resetRun: restart,
 })
@@ -969,9 +978,10 @@ function frame() {
   loot.update(dt, view)
   forage.update(camera, view)
   harvest.update(t)
-  improvise.update(dt, t, player, view, player.yaw)
+  improvise.update(dt, t, player, view, player.yaw, { dive: input.dive })
   shark.update(dt, t, camera, hasDived)
   oceanAudio.setDanger(shark.proximity)
+  spar.update(t)
 
   const reachable = vitals.alive ? interactions.find(camera) : null
   // Drop only when nothing else is in reach — the stash is a last resort,

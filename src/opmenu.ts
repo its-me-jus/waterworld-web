@@ -76,6 +76,7 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
         <div class="op-cheats">
           <button data-tp="island" type="button">Island</button>
           <button data-tp="wreck" type="button">Wreck</button>
+          <button data-tp="spar" type="button">Spar</button>
           <button data-cheat="stash" type="button">Fill stash</button>
           <button data-cheat="reset" type="button" class="warn">Start again</button>
           ${
