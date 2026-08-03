@@ -181,6 +181,8 @@ npm run dev
 - `npm run test:camp` — camp life coverage: shelter growth (frame → ridge →
   rooms, across a reload), the tired timer (drain, sleep, HUD), and fishing
   (trap set/stock/check, the spear prompt). Needs `npm run dev`.
+- `npm run test:save` — living-world save fidelity: littoral, salvage, wreck,
+  weather/sea, smoking timers, wash meter, fishing equip. Needs `npm run dev`.
 - `npm run shot:camp` — beauty shots of the three-room hut inside and out,
   the trap riding the wash, and the tired HUD into `shots/`. Needs
   `npm run dev`.

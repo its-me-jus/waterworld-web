@@ -85,28 +85,18 @@ await page.evaluate(() => {
     nextGlassIn: 200,
   })
 
-  ww.improvise.setWashMeter(0.42)
-
-  // Hang a fish over a planted fire so curing persists
+  // Force a fire with a fish in the smoke so curing persists across reload
   const beach = ww.island.shore[0]
-  ww.player.x = beach.x
-  ww.player.z = beach.z
-  ww.player.y = beach.y + 1.7
-  ww.player.mode = 'walk'
-  ww.salvage.stash.plank += 2
-  const recipes = ww.improvise.campRecipes()
-  const fire = recipes.find((r) => r.verb === 'Kindle' || r.label.toLowerCase().includes('fire'))
-  if (fire) fire.use()
-  ww.forage.grant(1)
-  const smoke = ww.improvise.campRecipes().find((r) => r.verb === 'Smoke')
-  // Smoke may only be an interaction — plant via snapshot patch if needed
-  const builds = ww.improvise.snapshot()
-  const fireBuild = builds.find((b) => b.kind === 'fire')
-  if (fireBuild) {
-    fireBuild.curing = [{ readyIn: 18 }]
-    ww.improvise.restore(builds)
-  }
-  void smoke
+  ww.improvise.restore([
+    {
+      kind: 'fire',
+      x: beach.x + 2,
+      z: beach.z + 2,
+      curing: [{ readyIn: 18 }],
+    },
+  ])
+  // After restore — reset clears the wash meter
+  ww.improvise.setWashMeter(0.42)
 
   window.dispatchEvent(new Event('pagehide'))
 })
