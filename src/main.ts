@@ -342,6 +342,9 @@ loot = createWreckLoot(app, camera, hud, vitals, {
   gearState: () => wreck.gearLockerState,
   pryGear: wreck.pryGear,
   takeSuit: wreck.takeSuit,
+  lanternSpot: wreck.lanternSpot,
+  takeLantern: wreck.takeLantern,
+  suitLeft: () => wreck.suitLeft,
   tinSpot: wreck.tinSpot,
   takeTin: wreck.takeTin,
   logSpot: wreck.logSpot,
@@ -350,13 +353,19 @@ loot = createWreckLoot(app, camera, hud, vitals, {
   shark,
   thump: (i) => oceanAudio.impact(i),
 })
-// ?knife=1 skips the deck dive, ?spear=1 starts armed, ?suit=1 already dressed
+// ?knife=1 skips the deck dive; ?spear=1, ?suit=1, and ?lantern=1 grant wreck gear
 if (params.has('knife')) loot.grant('knife')
 if (params.has('spear')) loot.grant('spear')
 if (params.has('suit')) loot.grant('suit')
+if (params.has('lantern')) loot.grant('lantern')
 
 const forage = createForage(hud, vitals, {
   interactions,
+  camera,
+  scene,
+  sfx: (kind, intensity) => {
+    if (kind === 'splash') oceanAudio.sfx(kind, intensity)
+  },
   provisionSpot: wreck.provisionSpot,
   takeProvision: wreck.takeProvision,
   fish: underwaterWorld.fish,
@@ -620,6 +629,8 @@ if (import.meta.env.DEV) {
       shark,
       loot,
       forage,
+      littoral,
+      harvest,
       improvise,
       opMenu,
       underwater: underwaterWorld,
@@ -1095,7 +1106,7 @@ function frame() {
   island.update(camera, underwater, t)
   shore.update(t, camera, underwater)
   salvage.update(t, camera.position, weather.storm)
-  loot.update(dt, view)
+  loot.update(dt, view, weather.daylight)
   forage.update(camera, view, dt)
   littoral.update(dt, player, { biolum: weather.biolum, rain: weather.rain })
   underwaterWorld.fish.setAttractors(littoral.fishAttractors())
