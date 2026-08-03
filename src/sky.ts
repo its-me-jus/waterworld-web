@@ -89,9 +89,12 @@ void main() {
   col += uTint * pow(sun, 6.0) * 0.55;
   col += vec3(1.0, 0.93, 0.82) * rim * pow(sun, 3.0) * 0.35;
 
-  float horizonFade = smoothstep(0.015, 0.22, d.y);
-  float topFade = 1.0 - smoothstep(0.75, 1.0, d.y) * 0.35;
-  float alpha = mix(wispy * 0.45, cover, 0.75) * horizonFade * topFade * 0.9 * uOpacity;
+  float horizonFade = smoothstep(0.02, 0.28, d.y);
+  float topFade = 1.0 - smoothstep(0.7, 1.0, d.y) * 0.35;
+  // Soften cover edges so night cloud banks don't read as hard meridians
+  float edge = smoothstep(0.0, 0.35, cover) * (1.0 - smoothstep(0.75, 1.0, cover));
+  float alpha = mix(wispy * 0.4, cover, 0.7) * horizonFade * topFade * 0.85 * uOpacity;
+  alpha *= 0.75 + edge * 0.35;
 
   gl_FragColor = vec4(col, alpha);
 
@@ -190,19 +193,23 @@ void main() {
   vec3 d = normalize(vDir);
   if (d.y < 0.02) discard;
 
-  // Tilted galactic plane — a soft dusty ridge across the dome
+  // Tilted galactic plane — rotate into a frame where Y is "off the band".
+  // Use the continuous xz projection for noise (never atan): atan(y,x) has a
+  // ±π branch cut that painted a hard vertical seam through the night sky.
   float tilt = 0.55;
-  float band = d.y * cos(tilt) + d.z * sin(tilt);
-  float along = atan(d.x, d.z * cos(tilt) - d.y * sin(tilt));
+  float cy = cos(tilt);
+  float sy = sin(tilt);
+  vec3 g = vec3(d.x, d.y * cy + d.z * sy, -d.y * sy + d.z * cy);
+  float band = g.y;
 
-  float ridge = 1.0 - smoothstep(0.0, 0.22, abs(band));
-  float grit = fbm(vec2(along * 1.8, band * 6.0));
-  float dust = fbm(vec2(along * 4.5 + 2.0, band * 12.0));
-  float mask = ridge * (0.45 + grit * 0.55) * (0.65 + dust * 0.5);
-  mask *= smoothstep(0.02, 0.18, d.y);
+  float ridge = exp(-pow(abs(band) / 0.32, 1.35));
+  float grit = fbm(g.xz * 2.4 + vec2(band * 3.0, 0.0));
+  float dust = fbm(g.xz * 6.2 + vec2(2.0 + band * 5.0, band * 8.0));
+  float mask = ridge * (0.35 + grit * 0.45) * (0.55 + dust * 0.4);
+  mask *= smoothstep(0.04, 0.28, d.y);
 
-  float alpha = mask * uOpacity * 0.55;
-  if (alpha < 0.004) discard;
+  float alpha = mask * uOpacity * 0.32;
+  if (alpha < 0.002) discard;
 
   vec3 col = mix(vec3(0.55, 0.62, 0.78), vec3(0.82, 0.88, 0.96), grit);
   gl_FragColor = vec4(col, alpha);
@@ -237,9 +244,11 @@ varying vec2 vUv;
 void main() {
   vec2 p = vUv * 2.0 - 1.0;
   float r = length(p);
-  if (r > 1.0) discard;
-  float a = exp(-r * r * 2.8) * 0.55 * uOpacity;
-  if (a < 0.01) discard;
+  // Soft falloff all the way to zero — a hard discard used to leave a crisp
+  // circular chord across the night sky that read as a "seam".
+  float a = exp(-r * r * 2.4) * 0.55 * uOpacity;
+  a *= 1.0 - smoothstep(0.72, 1.0, r);
+  if (a < 0.002) discard;
   gl_FragColor = vec4(0.78, 0.84, 0.95, a);
 
   #include <tonemapping_fragment>
@@ -291,7 +300,13 @@ export function createSky(
   opts: { shadows?: boolean; shadowSize?: number; shadowExtent?: number } = {},
 ): SkyRig {
   const sky = new Sky()
+  // Stock Sky uses a 1×1×1 box (two tris per face). At night the Preetham
+  // gradient is steep enough that those faces crease into hard meridians.
+  // Keep a box (the shader's far-plane trick expects it) but tessellate it.
+  sky.geometry.dispose()
+  sky.geometry = new THREE.BoxGeometry(1, 1, 1, 48, 48, 48) as unknown as typeof sky.geometry
   sky.scale.setScalar(6000)
+  sky.frustumCulled = false
   scene.add(sky)
 
   const u = sky.material.uniforms
@@ -299,6 +314,13 @@ export function createSky(
   u['rayleigh'].value = 1.55
   u['mieCoefficient'].value = 0.0025
   u['mieDirectionalG'].value = 0.8
+  // Three.js Sky ships with its own cloud layer at 0.4 coverage. We draw a
+  // separate deck; leaving both on stacked a muddy night band with its own
+  // seams. Kill the built-in clouds.
+  if (u['cloudCoverage']) u['cloudCoverage'].value = 0
+  if (u['cloudDensity']) u['cloudDensity'].value = 0
+  // Never fog the dome — Exp2 fog at sky distance paints a flat slab over it.
+  sky.material.fog = false
 
   // The Preetham fit hands back radiances around 2–5 at noon, which was fine
   // when the material tone-mapped its own output and clamped everything above
@@ -355,7 +377,7 @@ export function createSky(
   const hemi = new THREE.HemisphereLight(0x9dc6e8, 0x07202b, 0.4)
   scene.add(hemi)
 
-  const cloudGeo = new THREE.SphereGeometry(3200, 32, 20)
+  const cloudGeo = new THREE.SphereGeometry(3200, 64, 32)
   const cloudMat = new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
@@ -435,7 +457,7 @@ export function createSky(
     blending: THREE.AdditiveBlending,
     fog: false,
   })
-  const milky = new THREE.Mesh(new THREE.SphereGeometry(4400, 48, 28), milkyMat)
+  const milky = new THREE.Mesh(new THREE.SphereGeometry(4400, 96, 48), milkyMat)
   milky.frustumCulled = false
   milky.renderOrder = -2
   milky.visible = false
