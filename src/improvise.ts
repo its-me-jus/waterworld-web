@@ -194,13 +194,19 @@ const POLE_GUNWALE = 0.48
 /** Past this fraction of radius you're over the gunwale. */
 const DECK_LIP = 0.9
 /** After Shove, ignore auto-beach so the wash doesn't pin her again. */
-const SHOVE_GRACE = 2.8
-/** Ground height that counts as "still aground" after a shove. */
-const SHOVE_CLEAR_GROUND = 0.08
-/** Hard shelf — auto-beach even while moving. */
-const BEACH_HARD = 0.55
-/** Soft wash — auto-beach only when nearly stopped. */
-const BEACH_SOFT = 0.18
+const SHOVE_GRACE = 3.2
+/**
+ * How far sand must sit above the live sea before the hull sticks.
+ * Absolute ground thresholds fail on the island shelf (sand is metres high
+ * while the waterline is still a long walk seaward).
+ */
+const BEACH_HARD_CLEAR = 0.42
+/** Soft wash — stick only when nearly stopped. */
+const BEACH_SOFT_CLEAR = 0.04
+/** Clear of the shelf: sand clearly under water, not just wave-kissed. */
+const SHOVE_CLEAR = -0.22
+/** Extra metres past first clear sample so a trough doesn't re-pin her. */
+const SHOVE_EXTRA = 3.5
 /** Passive sail drift (m/s) once the mast is rigged. */
 const SAIL_SPEED = 0.95
 const SAIL_SPEED_BARREL = 1.35
@@ -1246,6 +1252,11 @@ function raftLocal(b: Build, lx: number, lz: number) {
 function beachedDeckY(ground: number, seaY: number) {
   const wash = Math.max(0, seaY - ground)
   return ground + 0.1 + Math.min(0.06, wash * 0.12)
+}
+
+/** Sand height minus live sea — positive means the beach is dry under the hull. */
+function beachClearance(ground: number, seaY: number) {
+  return ground - seaY
 }
 
 export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: ImproviseDeps) {
@@ -2341,18 +2352,21 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     use: () => {
       const raft = nearestOfKind(px, pz, 'raft', 4.2)
       if (!raft || !raft.beached) return
-      // Hunt deeper water — not just the nearest downhill sample
+      // Hunt water that covers the sand — island shelves are tall, so absolute
+      // ground height is a liar; clearance against the live sea is the truth.
       let bestX = raft.x
       let bestZ = raft.z
       let bestScore = Infinity
-      for (let r = 2.2; r <= 9.5; r += 1.15) {
-        for (let i = 0; i < 16; i++) {
-          const a = (i / 16) * Math.PI * 2
+      for (let r = 3; r <= 28; r += 1.5) {
+        for (let i = 0; i < 20; i++) {
+          const a = (i / 20) * Math.PI * 2
           const hx = raft.x + Math.cos(a) * r
           const hz = raft.z + Math.sin(a) * r
           const h = deps.groundAt(hx, hz)
-          // Low ground wins; a little preference for distance so we clear the shelf
-          const score = h * 5 - r * 0.12
+          const seaY = sampleOcean(hx, hz, time).y
+          const clear = beachClearance(h, seaY)
+          // Prefer real water (negative clearance); then lower sand; then farther
+          const score = clear * 8 + h * 0.05 - r * 0.04
           if (score < bestScore) {
             bestScore = score
             bestX = hx
@@ -2365,23 +2379,33 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       let len = Math.hypot(dx, dz) || 1
       const wasAboard =
         !!live && Math.hypot(live.x - raft.x, live.z - raft.z) <= raft.radius * DECK_LIP + 0.4
-      // Step seaward until the shelf drops, or we've pushed far enough
-      for (let step = 0; step < 6; step++) {
-        raft.x += (dx / len) * 1.55
-        raft.z += (dz / len) * 1.55
-        if (deps.groundAt(raft.x, raft.z) < SHOVE_CLEAR_GROUND) break
-        // Retarget if the first bearing climbs again
-        if (step === 2 || step === 4) {
+      // Step seaward until water covers the sand, or we've pushed far enough
+      let cleared = false
+      for (let step = 0; step < 22; step++) {
+        raft.x += (dx / len) * 1.85
+        raft.z += (dz / len) * 1.85
+        const h = deps.groundAt(raft.x, raft.z)
+        const seaY = sampleOcean(raft.x, raft.z, time).y
+        if (!cleared && beachClearance(h, seaY) <= SHOVE_CLEAR) {
+          cleared = true
+          // Keep going a touch past the first wet sample
+          raft.x += (dx / len) * SHOVE_EXTRA
+          raft.z += (dz / len) * SHOVE_EXTRA
+          break
+        }
+        if (step === 3 || step === 8 || step === 14) {
           let redoX = raft.x
           let redoZ = raft.z
-          let redoH = deps.groundAt(raft.x, raft.z)
-          for (let i = 0; i < 12; i++) {
-            const a = (i / 12) * Math.PI * 2
-            const hx = raft.x + Math.cos(a) * 3.4
-            const hz = raft.z + Math.sin(a) * 3.4
-            const h = deps.groundAt(hx, hz)
-            if (h < redoH) {
-              redoH = h
+          let redoScore = Infinity
+          for (let i = 0; i < 16; i++) {
+            const a = (i / 16) * Math.PI * 2
+            const hx = raft.x + Math.cos(a) * 5.5
+            const hz = raft.z + Math.sin(a) * 5.5
+            const hh = deps.groundAt(hx, hz)
+            const ss = sampleOcean(hx, hz, time).y
+            const score = beachClearance(hh, ss) * 8 - 0.08
+            if (score < redoScore) {
+              redoScore = score
               redoX = hx
               redoZ = hz
             }
@@ -2391,8 +2415,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           len = Math.hypot(dx, dz) || 1
         }
       }
-      raft.vx = (dx / len) * 1.35
-      raft.vz = (dz / len) * 1.35
+      raft.vx = (dx / len) * 1.6
+      raft.vz = (dz / len) * 1.6
       raft.beached = false
       shoveGrace = SHOVE_GRACE
       saidBeach = false
@@ -3218,12 +3242,14 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           deps.hud.whisper('Look down to pole — or hold dive on a phone.')
         }
 
-        // Ran aground — hard shelf sticks; soft wash only when nearly stopped.
-        // Shove grace keeps a freshly pushed hull from snapping back to sand.
+        // Ran aground — sand above the live sea sticks the hull. Soft wash
+        // only when nearly stopped. Shove grace keeps a push from snapping back.
         if (!b.beached && shoveGrace <= 0) {
           const ground = deps.groundAt(b.x, b.z)
+          const seaY = sampleOcean(b.x, b.z, t).y
+          const clear = beachClearance(ground, seaY)
           const speed = Math.hypot(b.vx ?? 0, b.vz ?? 0)
-          if (ground > BEACH_HARD || (ground > BEACH_SOFT && speed < 0.28 && aboard)) {
+          if (clear > BEACH_HARD_CLEAR || (clear > BEACH_SOFT_CLEAR && speed < 0.28 && aboard)) {
             b.beached = true
             b.vx = 0
             b.vz = 0
@@ -3301,8 +3327,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         // still pole back out (auto-beach only sticks when nearly stopped).
         if (!b.beached) {
           const shelf = deps.groundAt(b.x, b.z)
-          if (shelf > 0.06 && shelf <= BEACH_HARD) {
-            const shelfDrag = Math.exp(-(0.55 + shelf * 2.2) * dt)
+          const seaHere = sampleOcean(b.x, b.z, t).y
+          const clear = beachClearance(shelf, seaHere)
+          if (clear > -0.05 && clear < BEACH_HARD_CLEAR) {
+            const shelfDrag = Math.exp(-(0.55 + clear * 2.4) * dt)
             vx *= shelfDrag
             vz *= shelfDrag
           }
