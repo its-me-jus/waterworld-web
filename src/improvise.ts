@@ -129,7 +129,7 @@ type Build = {
   oar?: boolean
   /** Plastic bottles tied under the deck. */
   floats?: boolean
-  /** How many times the deck has been widened (cap 3). */
+  /** How many times the deck has been widened (cap EXPAND_MAX). */
   expands?: number
   /** Progressive shelter: walls lashed (0–2). */
   sides?: number
@@ -203,6 +203,8 @@ const WOODPILE_COST: Cost = { plank: 1 }
 const WOODPILE_MAX = 24
 /** Max times you can widen one raft — five courses, a proper ferry deck. */
 const EXPAND_MAX = 5
+/** Metres added to the walkable radius per Lash Deck. */
+const EXPAND_RADIUS = 0.42
 const SIDE_MAX = 2
 /** A shelter grows to three rooms — hut, then house, then hall. */
 const ROOM_MAX = 3
@@ -279,8 +281,11 @@ const WASH_RAIL = 0.22
 const WASH_LOCKER = 0.08
 const WASH_STORM_GATE = 0.42
 const WASH_RAIL_GATE = 0.72
-/** Look-down pitch (radians) required to pole — accidental walk won't drive her. */
-const POLE_LOOK_DOWN = -0.22
+/**
+ * Look-down pitch (radians) required to pole — slight dip is enough; hold Dive
+ * (Shift/Q, or the Dive button) also counts. Looking level keeps walk-the-deck.
+ */
+const POLE_LOOK_DOWN = -0.12
 /** Look-down pitch required to Dig — same sign as pole (positive pitch is look up). */
 const DIG_LOOK_DOWN = -0.28
 /** Soft-fail: how fast a gale frays the sail while you're aboard. */
@@ -1136,15 +1141,23 @@ function raftMesh(m: ReturnType<typeof mats>, withBarrel: boolean) {
   board.name = 'sternBoard'
   g.add(board)
 
-  // Push pole — lashed along the starboard rail, ready to hand
+  // Push pole — lashed along the starboard rail; dips when you pole
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 2.6, 6), m.brand)
+  pole.name = 'pushPole'
   pole.rotation.z = Math.PI / 2
   pole.position.set(0.15, 0.28, 0.72)
   g.add(pole)
   const poleGrip = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.015, 4, 8), m.rope)
+  poleGrip.name = 'pushPoleGrip'
   poleGrip.position.set(1.1, 0.28, 0.72)
   poleGrip.rotation.y = Math.PI / 2
   g.add(poleGrip)
+
+  // Stern tiller blank — the tiller arm fits when you Rig Sail
+  const tillerSlot = new THREE.Group()
+  tillerSlot.name = 'tillerSlot'
+  tillerSlot.visible = false
+  g.add(tillerSlot)
 
   // Lashings at the joints
   for (const [x, z] of [
@@ -1231,6 +1244,7 @@ function fitMast(raft: THREE.Group, m: ReturnType<typeof mats>) {
   const slot = raft.getObjectByName('mastSlot') as THREE.Group
   if (!slot || slot.children.length) {
     if (slot) slot.visible = true
+    fitTiller(raft, m)
     return
   }
   const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 2.8, 8), m.brand)
@@ -1257,6 +1271,30 @@ function fitMast(raft: THREE.Group, m: ReturnType<typeof mats>) {
   stay.position.set(0.4, 1.2, 0)
   stay.rotation.z = 0.55
   slot.add(stay)
+  slot.visible = true
+  fitTiller(raft, m)
+}
+
+/** Stern tiller — marks the helm and swings when you steer under canvas. */
+function fitTiller(raft: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = raft.getObjectByName('tillerSlot') as THREE.Group
+  if (!slot) return
+  if (slot.children.length) {
+    slot.visible = true
+    return
+  }
+  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.032, 1.15, 6), m.brand)
+  arm.name = 'tillerArm'
+  arm.rotation.z = Math.PI / 2
+  arm.position.set(1.05, 0.48, 0)
+  slot.add(arm)
+  const grip = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.016, 4, 8), m.rope)
+  grip.position.set(0.55, 0.48, 0)
+  grip.rotation.y = Math.PI / 2
+  slot.add(grip)
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.38, 0.08), m.wood)
+  post.position.set(1.45, 0.38, 0)
+  slot.add(post)
   slot.visible = true
 }
 
@@ -1573,6 +1611,44 @@ function animateSail(raft: THREE.Object3D, t: number, torn = false) {
   }
 }
 
+/** Push pole dips into the water while you're driving — the tell that she's answering. */
+function animatePushPole(raft: THREE.Object3D, t: number, active: boolean) {
+  const pole = raft.getObjectByName('pushPole')
+  const grip = raft.getObjectByName('pushPoleGrip')
+  if (!pole) return
+  if (active) {
+    const stroke = Math.sin(t * 4.4)
+    pole.rotation.z = Math.PI / 2 + stroke * 0.38
+    pole.position.y = 0.28 + Math.max(0, -stroke) * 0.14
+    if (grip) {
+      grip.position.y = pole.position.y
+      grip.position.x = 1.1 + stroke * 0.08
+    }
+  } else {
+    pole.rotation.z = Math.PI / 2
+    pole.position.y = 0.28
+    if (grip) {
+      grip.position.y = 0.28
+      grip.position.x = 1.1
+    }
+  }
+}
+
+/** Tiller swings when you helm — marks the stern and confirms the steer. */
+function animateTiller(raft: THREE.Object3D, t: number, active: boolean) {
+  const slot = raft.getObjectByName('tillerSlot')
+  if (!slot || !slot.visible) return
+  const arm = raft.getObjectByName('tillerArm')
+  if (!arm) return
+  if (active) {
+    arm.rotation.y = Math.sin(t * 3.2) * 0.28
+    arm.position.y = 0.48 + Math.abs(Math.sin(t * 3.2)) * 0.02
+  } else {
+    arm.rotation.y = Math.sin(t * 0.4) * 0.04
+    arm.position.y = 0.48
+  }
+}
+
 function smokedFishMesh(m: ReturnType<typeof mats>) {
   const g = new THREE.Group()
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.28, 3, 6), m.fish)
@@ -1709,6 +1785,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let saidWash = false
   let saidOar = false
   let saidPoleHint = false
+  let saidPoleNudge = false
   let saidHelm = false
   let saidHelmHint = false
   let saidFail = false
@@ -1720,7 +1797,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   /** Ground / live sea under the platform anchor (recomputed every frame). */
   let platGround = -1000
   let platSea = 0
-  /** Dive/look-down held — intentional pole when at the gunwale. */
+  /** Dive/look-down held — intentional pole anywhere aboard. */
   let poleIntent = false
   /** Seconds of stickiness after Climb — kills leftover swim speed that throws you off. */
   let boardGrace = 0
@@ -1730,6 +1807,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let shoveGrace = 0
   /** 0..1 — fills in foul weather on an open deck; rail buys you time. */
   let washMeter = 0
+  /** Cooldown for poling splash foley. */
+  let poleSplashAt = 0
+  /** Seconds spent walking aboard without poling — drives a second coach nudge. */
+  let idleAboardT = 0
+  /** Last craft-status line sent to the HUD (avoid DOM thrash). */
+  let lastCraft = ''
   /** Live player ref — Climb mutates this to seat you on the deck. */
   let live: {
     x: number
@@ -3159,8 +3242,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       })
       deps.hud.whisper(
         withBarrel
-          ? 'Barrels under planks. Climb aboard. Look down and walk to pole — Shove if she beaches.'
-          : 'Three planks and a lashing. Climb aboard. Look down and walk to pole her out.',
+          ? 'Barrels under planks. Climb aboard. Look down (or hold Dive) and walk to pole — Shove if she beaches.'
+          : 'Three planks and a lashing. Climb aboard. Look down (or hold Dive) and walk to pole her out.',
       )
       tap('lash', 0.85)
     },
@@ -3191,8 +3274,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       boardGrace = 1.4
       deps.hud.whisper(
         raft.beached
-          ? 'Aboard. Shove off the sand, then look down and walk to pole.'
-          : 'Aboard. Look down and walk to pole — look level to work the deck.',
+          ? 'Aboard. Shove off the sand, then look down (or hold Dive) and walk to pole.'
+          : 'Aboard. Look down (or hold Dive) and walk to pole — look level to work the deck.',
       )
       tap('wood', 0.7)
       tap('splash', 0.35)
@@ -3247,7 +3330,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     available: () => {
       if (!deps.vitals.alive || !onRaftDeck || time < restReadyAt) return false
       const raft = nearestRaftOnDeck()
-      return !!raft && !!raft.mast && !raft.torn
+      // Beached hulls keep Shove on the F prompt — Rest waits until you're afloat
+      return !!raft && !!raft.mast && !raft.torn && !raft.beached
     },
     use: () => {
       const raft = nearestRaftOnDeck()
@@ -3400,6 +3484,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     verb: 'Shove',
     label: 'Off',
     radius: 3.4,
+    priority: 3.2,
     available: () => {
       if (!deps.vitals.alive) return false
       const raft = nearestOfKind(px, pz, 'raft', 4.2)
@@ -3488,7 +3573,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         boardGrace = 0.6
         onRaftDeck = true
       }
-      deps.hud.whisper('Off the sand. Look down at the gunwale to pole her out.')
+      deps.hud.whisper('Off the sand. Look down (or hold Dive) and walk to pole her out.')
       tap('haul', 0.7)
       tap('splash', 0.55)
     },
@@ -3501,6 +3586,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     verb: 'Drop',
     label: 'Anchor',
     radius: 3.4,
+    priority: 1.1,
     available: () => {
       if (!deps.vitals.alive) return false
       const raft = nearestOfKind(px, pz, 'raft', 4.2)
@@ -3524,6 +3610,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     verb: 'Weigh',
     label: 'Anchor',
     radius: 3.4,
+    priority: 2.4,
     available: () => {
       if (!deps.vitals.alive) return false
       const raft = nearestOfKind(px, pz, 'raft', 4.2)
@@ -3556,7 +3643,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       raft.mast = true
       raft.shelter = Math.max(raft.shelter, raft.buoyant ? 0.78 : 0.7)
       fitMast(raft.object, m)
-      deps.hud.whisper('Canvas on a yard. Take the stern and look down — the tiller steers her.')
+      deps.hud.whisper(
+        'Canvas on a yard — and a tiller aft. Stand by the thwart, look down (or hold Dive), and walk. She steers where you look.',
+      )
       tap('sail', 0.7)
       tap('lash', 0.55)
     },
@@ -3579,7 +3668,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       raft.radius += 0.35
       raft.shelter = Math.max(raft.shelter, raft.shelter + 0.12)
       fitRail(raft.object, m)
-      deps.hud.whisper('A rail. The deck keeps more of you.')
+      deps.hud.whisper('A rail. The deck keeps more of you — harder for a sea to wash you off.')
+      tap('lash', 0.65)
+      tap('wood', 0.4)
     },
   })
 
@@ -3600,6 +3691,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (!raft.hold) raft.hold = emptyHold()
       fitLocker(raft.object, m)
       deps.hud.whisper('A crate, lashed dry. Stow what you cannot swim with.')
+      tap('lash', 0.55)
+      tap('wood', 0.5)
     },
   })
 
@@ -3697,7 +3790,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const raft = nearestRaftOnDeck()
       if (!raft || !deps.salvage.spend(EXPAND_COST)) return
       raft.expands = (raft.expands ?? 0) + 1
-      raft.radius += 0.42
+      raft.radius += EXPAND_RADIUS
       fitExpand(raft.object, m, raft.expands)
       const n = raft.expands
       deps.hud.whisper(
@@ -3707,6 +3800,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
             ? `Full ferry deck (${EXPAND_MAX}/${EXPAND_MAX}). As wide as the lashing will hold.`
             : `Wider still (${n}/${EXPAND_MAX}). Lash Deck again when you have the planks.`,
       )
+      tap('lash', 0.7)
+      tap('wood', 0.55)
     },
   })
 
@@ -3725,7 +3820,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (!raft || !deps.salvage.spend(OAR_COST)) return
       raft.oar = true
       fitOar(raft.object, m)
-      deps.hud.whisper('An oar on the thwart. The pole has a partner.')
+      deps.hud.whisper('An oar on the thwart. Look down and walk — she bites harder and turns cleaner.')
+      tap('lash', 0.6)
+      tap('wood', 0.45)
     },
   })
 
@@ -3746,7 +3843,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       raft.buoyant = true
       raft.shelter = Math.max(raft.shelter, raft.shelter + 0.08)
       fitFloat(raft.object, m)
-      deps.hud.whisper('Bottles under the deck. She rides higher.')
+      deps.hud.whisper('Bottles under the deck. She rides higher — and poles a touch faster.')
+      tap('lash', 0.55)
+      tap('splash', 0.4)
     },
   })
 
@@ -4474,7 +4573,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     pz = player.z
     live = player
     swimming = !view.walking
-    // Pole: look down at the water, or hold dive (mobile) while at the gunwale
+    // Pole: look down at the water, or hold Dive (Shift/Q / Dive button)
     poleIntent = lookPitch <= POLE_LOOK_DOWN || !!intent?.dive
     onLand = view.walking && view.groundY > 0.3
     groundY = view.groundY
@@ -4753,6 +4852,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (fill) fill.intensity = 0
     }
 
+    let craftLine: string | null = null
     for (const b of builds) {
       if (b.kind === 'raft') {
         const prevX = b.x
@@ -4773,9 +4873,17 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           poleIntent &&
           view.speed > 0.28 &&
           boardGrace <= 0
-        if (aboard && !b.beached && !b.anchored && view.speed > 0.4 && !poleIntent && !saidPoleHint) {
-          saidPoleHint = true
-          deps.hud.whisper('Look down and walk — that poles her. Look level to walk the deck.')
+        if (aboard && !b.beached && !b.anchored && view.speed > 0.35 && !poleIntent) {
+          idleAboardT += dt
+          if (!saidPoleHint) {
+            saidPoleHint = true
+            deps.hud.whisper('Look down (or hold Dive) and walk — that poles her. Look level to work the deck.')
+          } else if (!saidPoleNudge && idleAboardT > 8) {
+            saidPoleNudge = true
+            deps.hud.whisper('Still stuck? Tip the view down or hold Dive, then walk — the hull follows.')
+          }
+        } else if (aboard && (poling || view.speed <= 0.2)) {
+          idleAboardT = 0
         }
 
         // The helm: stand aft by the thwart with canvas up, and the same
@@ -4797,7 +4905,19 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           !poling
         ) {
           saidHelmHint = true
-          deps.hud.whisper('The tiller. Look down and push — the sail will take her where you look.')
+          deps.hud.whisper('The tiller aft. Look down (or hold Dive) and push — the sail takes her where you look.')
+        }
+
+        // Quiet craft readout — applied once after the builds loop
+        if (aboard) {
+          if (b.beached) craftLine = 'Beached — Shove (F)'
+          else if (b.anchored) craftLine = 'Anchored — Weigh (F) to sail'
+          else if (sailing) craftLine = 'At the helm'
+          else if (poling) craftLine = b.oar ? 'Poling · oar' : 'Poling'
+          else if (atHelm && !poleIntent) craftLine = 'Stern · look down + walk to helm'
+          else if (b.mast && !b.torn && !poleIntent) craftLine = 'Look down + walk to pole · stern to helm'
+          else if (!poleIntent) craftLine = 'Look down + walk to pole'
+          else if (view.speed <= 0.28) craftLine = 'Walk to pole'
         }
 
         // Ran aground — sand above the live sea sticks the hull. Soft wash
@@ -4876,6 +4996,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           if (b.oar && !saidOar && Math.hypot(vx, vz) > 0.9) {
             saidOar = true
             deps.hud.whisper('Blade and shaft. She turns when you ask.')
+          }
+          if (t >= poleSplashAt) {
+            poleSplashAt = t + 0.85
+            tap('splash', 0.28 + Math.min(0.35, Math.hypot(vx, vz) * 0.12))
           }
         } else if (b.mast && aboard && !b.torn) {
           // Sail draws while you're aboard — idle if torn or overboard
@@ -4962,6 +5086,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           b.object.rotation.z = -sea.normal.x * 0.35
         }
         if (b.mast) animateSail(b.object, t, !!b.torn)
+        animatePushPole(b.object, t, poling && !sailing)
+        animateTiller(b.object, t, sailing)
 
         // Soft fail — a gale works the sail; locker can take a sea
         if (aboard && boardGrace <= 0 && !b.beached && b.mast && !b.torn) {
@@ -5237,6 +5363,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         b.object.rotation.z = Math.sin(t * 0.9 + b.z * 0.6) * 0.1
       }
     }
+    if (craftLine !== lastCraft) {
+      lastCraft = craftLine ?? ''
+      deps.hud.setCraft(craftLine)
+    }
     stockTraps(dt)
 
     // Carpentry walls are real: the body stops at a solid panel and passes a
@@ -5362,6 +5492,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     saidWash = false
     saidOar = false
     saidPoleHint = false
+    saidPoleNudge = false
     saidHelm = false
     saidHelmHint = false
     saidFail = false
@@ -5370,6 +5501,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     boardGrace = 0
     washGrace = 0
     shoveGrace = 0
+    idleAboardT = 0
+    poleSplashAt = 0
+    lastCraft = ''
+    deps.hud.setCraft(null)
   }
 
   function fillHold(src?: SavedHold): Hold {
@@ -5401,6 +5536,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       oar: b.oar,
       floats: b.floats,
       expands: b.expands,
+      radius: b.kind === 'raft' ? b.radius : undefined,
       marked: b.marked,
       beached: b.beached,
       anchored: b.anchored,
@@ -5560,7 +5696,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       } else if (kind === 'raft') {
         const withBarrel = !!s.buoyant
         const sea = sampleOcean(x, z, 0).y
-        const radius = (withBarrel ? 2.35 : 2.05) + (s.rail ? 0.35 : 0) + (s.expands ?? 0) * 0.38
+        const radius = (withBarrel ? 2.35 : 2.05) + (s.rail ? 0.35 : 0) + (s.expands ?? 0) * EXPAND_RADIUS
         build = addBuild('raft', raftMesh(m, withBarrel), x, z, sea + 0.22, radius, withBarrel ? 0.62 : 0.55, {
           buoyant: withBarrel,
           vx: s.vx ?? 0,

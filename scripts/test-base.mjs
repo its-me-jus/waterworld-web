@@ -70,6 +70,8 @@ async function fillStash(page) {
     s.leaf += 8
     s.canvas += 3
     s.barrel += 1
+    s.plastic += 4
+    s.crate += 1
   })
 }
 
@@ -448,6 +450,45 @@ const ctxB = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   await page.waitForTimeout(400)
   ok('Weigh Anchor available', await waitRecipe(page, 'Anchor', 'Weigh'))
   ok('anchor weighed', (await page.evaluate(snap, 'raft'))[0].anchored === false)
+
+  // —— upgrades: oar, floats, deck expand + radius restore ————————————————
+  await teleport(page, (await page.evaluate(snap, 'raft'))[0].x, (await page.evaluate(snap, 'raft'))[0].z, 3.2, 'walk')
+  await page.waitForTimeout(400)
+  ok('Lash Oar available', await waitRecipe(page, 'Oar'))
+  ok('oar lashed', (await page.evaluate(snap, 'raft'))[0].oar === true)
+  ok('Lash Floats available', await waitRecipe(page, 'Floats'))
+  ok('floats lashed', (await page.evaluate(snap, 'raft'))[0].floats === true)
+
+  const beforeExpand = await page.evaluate(snap, 'raft')
+  const baseRadius = beforeExpand[0].radius
+  ok('Lash Deck available', await waitRecipe(page, 'Deck'))
+  ok('Lash Deck available again', await waitRecipe(page, 'Deck'))
+  const afterExpand = (await page.evaluate(snap, 'raft'))[0]
+  ok(`deck expanded twice (${afterExpand.expands})`, afterExpand.expands === 2)
+  ok(
+    `radius grew with expands (${baseRadius?.toFixed(2)} → ${afterExpand.radius?.toFixed(2)})`,
+    Math.abs((afterExpand.radius ?? 0) - (baseRadius ?? 0) - 0.84) < 0.02,
+  )
+
+  // Craft status chip while aboard
+  const craftOn = await page.evaluate(() => {
+    const el = document.querySelector('#craft')
+    return !!el && el.classList.contains('on') && (el.textContent?.length ?? 0) > 0
+  })
+  ok('craft status chip shows while aboard', craftOn)
+
+  // Save / restore keeps expand radius (was 0.38 vs 0.42 mismatch)
+  const saved = await page.evaluate(() => {
+    const snap = window.ww.improvise.snapshot()
+    window.ww.improvise.restore(snap)
+    return window.ww.improvise.snapshot().find((b) => b.kind === 'raft')
+  })
+  ok('expands survive restore', saved?.expands === 2)
+  ok(
+    `expand radius survives restore (${saved?.radius?.toFixed(2)})`,
+    Math.abs((saved?.radius ?? 0) - (afterExpand.radius ?? 0)) < 0.02,
+  )
+  ok('oar/floats/mast survive restore', saved?.oar && saved?.floats && saved?.mast)
 
   await page.close()
 }

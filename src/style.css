@@ -82,6 +82,28 @@ body.touch-ui canvas {
   }
 }
 
+/* Quiet raft drive state — only while you're aboard */
+#craft {
+  position: absolute;
+  left: 50%;
+  top: calc(max(1.1rem, env(safe-area-inset-top)) + 1.35rem);
+  transform: translateX(-50%) translateY(-4px);
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(186, 220, 236, 0.72);
+  text-shadow: 0 1px 8px rgba(3, 14, 20, 0.85);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.45s ease, transform 0.45s ease;
+  pointer-events: none;
+}
+
+#craft.on {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 #crosshair {
   position: fixed;
   z-index: 4;
