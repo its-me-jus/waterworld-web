@@ -121,11 +121,10 @@ grid so you can architect your own base instead of inheriting one:
 If the world prompt is busy (Strike, Sleep, Fire), Pack → **Camp** still lists
 every carpentry recipe that's ready where you're standing.
 
-**Raft:** Climb aboard · on a phone hold **▼ (POLE)** + MOVE to drive (release ▼
-to work the deck) · **Shove** if she's beached · **Rig Sail** then stand aft —
-▼ becomes **HELM** · **Lash Deck** up to five times for a ferry-sized platform ·
-locker for the wreck run. Pack → Camp → Raft lists Shove / Haul / Anchor when
-the action button is busy.
+**Raft:** Climb aboard · on a phone **tap POLE** (toggle) + MOVE to drive · face
+a fitting or open **Pack → Camp → Raft** for sail, rail, locker, oar, floats, and
+**Lash Deck** (up to five times) · **Shove** if she's beached · with sail, stand
+aft and tap **HELM**.
 
 Fires burn on platform decks, rain gear and lockers work the same ashore, and
 the whole base persists with the rest of the camp.
@@ -161,18 +160,18 @@ barrel as a cistern — a camp you made, not one the world planted for you.
 - **Touch (primary):** left stick move · drag anywhere to look · ▲ rise / ▼ dive ·
   action button appears when something is in reach (same verbs as desktop **F**).
   Pack opens from the hub button.
-- **Raft on a phone:** Climb aboard · the ▼ button becomes **POLE** — hold it and
-  push MOVE to drive · release ▼ to walk the deck and use fittings · stand aft
-  with a sail up and ▼ becomes **HELM** · **Shove** / **Haul** / **Drop Anchor**
-  live on the action button and under Pack → Camp → Raft
+- **Raft on a phone:** Climb aboard · tap **POLE** to toggle drive on (reads
+  **POLE ON**) · push MOVE to go · tap POLE again to walk the deck · face a
+  fitting for **Lash Deck / Rail / Sail…** (or Pack → Camp → Raft) · stand aft
+  with a sail and tap **HELM** · **Shove** / **Haul** / **Anchor** also live
+  under Pack → Camp → Raft
 - **Desktop:** WASD · click for mouse-look · Space/E up · Shift/Q dive · **F**
   to take, eat, drink, open, pry, cut, jab, lash, dig, kindle or cook · **Tab**
   opens the Pack hub (Body, Stash, Camp builds, Field kit: Island / Wreck / Start again)
 - **Raft on desktop:** look down (or hold Dive) anywhere aboard and walk to pole ·
   with canvas rigged, stand at the stern tiller and do the same to **helm** ·
-  a quiet status line confirms Poling / At the helm / Beached · **Drop/Weigh anchor**
-  holds her against the set · **Shove** clears a beached hull · **Haul** grounds her
-  on purpose
+  face fittings (or Pack → Raft) to widen the deck, add rail, oar, floats ·
+  **Drop/Weigh anchor** · **Shove** / **Haul**
 
 ## Live
 
