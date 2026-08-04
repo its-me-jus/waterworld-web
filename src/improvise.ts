@@ -4581,7 +4581,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         Math.max(platGround + 0.6, platSea + 0.7),
       )
     }
-    layPlatformItem && (layPlatformItem.priority = platExpanding && canLayPlatform() ? 2.6 : 0)
+    // Expand priority only while aboard a deck — near a tile on the sand
+    // (woodpile, walls) must not let Lay steal Stow / Raise.
+    layPlatformItem &&
+      (layPlatformItem.priority = platExpanding && onPlatformDeck && canLayPlatform() ? 2.6 : 0)
     const wallAt = offset(player, facingYaw, 1.5, 0)
     setAnchor(wallPos, wallAt.x, wallAt.z, deps.groundAt(wallAt.x, wallAt.z) + 1.0)
     {
