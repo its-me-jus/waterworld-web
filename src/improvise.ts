@@ -70,6 +70,13 @@ export type ImproviseDeps = {
   current?: () => { x: number; z: number; strength: number }
   /** Optional foley — lash / wood / splash / sail / haul. */
   sfx?: (kind: 'lash' | 'wood' | 'splash' | 'sail' | 'haul', intensity?: number) => void
+  /** True on the touch / phone UI — coaching and drive chrome lead with ▼ + MOVE. */
+  touch?: boolean
+  /**
+   * Relabel the Dive button while aboard: pole / helm so drive isn't a mystery
+   * on a phone. Pass null when you leave the deck.
+   */
+  setDriveMode?: (mode: 'pole' | 'helm' | null) => void
 }
 
 type BuildKind =
@@ -1707,6 +1714,16 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const builds: Build[] = []
   const tap = (kind: 'lash' | 'wood' | 'splash' | 'sail' | 'haul', intensity = 0.7) =>
     deps.sfx?.(kind, intensity)
+  const onTouch = !!deps.touch
+  /** Mobile leads with ▼; desktop still teaches look-down. */
+  const poleHow = onTouch
+    ? 'Hold ▼ and push MOVE to pole'
+    : 'Look down (or hold Dive) and walk to pole'
+  const poleHowShort = onTouch ? 'Hold ▼ + MOVE to pole' : 'Look down + walk to pole'
+  const helmHow = onTouch
+    ? 'Stand aft, hold ▼ and push MOVE — the tiller steers where you look'
+    : 'Stand aft, look down and walk — the tiller steers where you look'
+  const deckWork = onTouch ? 'release ▼ to work the deck' : 'look level to work the deck'
 
   // Separate anchors so recipes don't fight for one F-prompt when materials overlap
   const leanPos = new THREE.Vector3()
@@ -3242,8 +3259,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       })
       deps.hud.whisper(
         withBarrel
-          ? 'Barrels under planks. Climb aboard. Look down (or hold Dive) and walk to pole — Shove if she beaches.'
-          : 'Three planks and a lashing. Climb aboard. Look down (or hold Dive) and walk to pole her out.',
+          ? `Barrels under planks. Climb aboard. ${poleHow}. Shove if she beaches.`
+          : `Three planks and a lashing. Climb aboard. ${poleHow}.`,
       )
       tap('lash', 0.85)
     },
@@ -3274,8 +3291,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       boardGrace = 1.4
       deps.hud.whisper(
         raft.beached
-          ? 'Aboard. Shove off the sand, then look down (or hold Dive) and walk to pole.'
-          : 'Aboard. Look down (or hold Dive) and walk to pole — look level to work the deck.',
+          ? `Aboard. Shove off the sand, then ${poleHowShort.toLowerCase()}.`
+          : `Aboard. ${poleHow} — ${deckWork}.`,
       )
       tap('wood', 0.7)
       tap('splash', 0.35)
@@ -3288,7 +3305,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   }
 
   // Sit the stern thwart — the raft's built-in seat
-  deps.interactions.add({
+  addCamp('raft', {
     position: thwartPos,
     verb: 'Sit',
     label: 'Thwart',
@@ -3322,7 +3339,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   // Rest under the sail — a nap on the deck, not a full lean-to sleep
-  deps.interactions.add({
+  addCamp('raft', {
     position: sailRestPos,
     verb: 'Rest',
     label: 'Under sail',
@@ -3330,7 +3347,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     available: () => {
       if (!deps.vitals.alive || !onRaftDeck || time < restReadyAt) return false
       const raft = nearestRaftOnDeck()
-      // Beached hulls keep Shove on the F prompt — Rest waits until you're afloat
+      // Beached hulls keep Shove on the action button — Rest waits until you're afloat
       return !!raft && !!raft.mast && !raft.torn && !raft.beached
     },
     use: () => {
@@ -3418,7 +3435,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   // Haul the raft onto sand when the water shoals
-  deps.interactions.add({
+  addCamp('raft', {
     position: beachPos,
     verb: 'Haul',
     label: 'Ashore',
@@ -3479,7 +3496,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
-  deps.interactions.add({
+  addCamp('raft', {
     position: shovePos,
     verb: 'Shove',
     label: 'Off',
@@ -3573,7 +3590,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         boardGrace = 0.6
         onRaftDeck = true
       }
-      deps.hud.whisper('Off the sand. Look down (or hold Dive) and walk to pole her out.')
+      deps.hud.whisper(`Off the sand. ${poleHow}.`)
       tap('haul', 0.7)
       tap('splash', 0.55)
     },
@@ -3643,9 +3660,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       raft.mast = true
       raft.shelter = Math.max(raft.shelter, raft.buoyant ? 0.78 : 0.7)
       fitMast(raft.object, m)
-      deps.hud.whisper(
-        'Canvas on a yard — and a tiller aft. Stand by the thwart, look down (or hold Dive), and walk. She steers where you look.',
-      )
+      deps.hud.whisper(`Canvas on a yard — and a tiller aft. ${helmHow}.`)
       tap('sail', 0.7)
       tap('lash', 0.55)
     },
@@ -3820,7 +3835,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (!raft || !deps.salvage.spend(OAR_COST)) return
       raft.oar = true
       fitOar(raft.object, m)
-      deps.hud.whisper('An oar on the thwart. Look down and walk — she bites harder and turns cleaner.')
+      deps.hud.whisper(
+        onTouch
+          ? 'An oar on the thwart. Hold ▼ + MOVE — she bites harder and turns cleaner.'
+          : 'An oar on the thwart. Look down and walk — she bites harder and turns cleaner.',
+      )
       tap('lash', 0.6)
       tap('wood', 0.45)
     },
@@ -4853,6 +4872,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     }
 
     let craftLine: string | null = null
+    let nextDriveMode: 'pole' | 'helm' | null = null
     for (const b of builds) {
       if (b.kind === 'raft') {
         const prevX = b.x
@@ -4877,10 +4897,18 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           idleAboardT += dt
           if (!saidPoleHint) {
             saidPoleHint = true
-            deps.hud.whisper('Look down (or hold Dive) and walk — that poles her. Look level to work the deck.')
+            deps.hud.whisper(
+              onTouch
+                ? `Hold ▼ and push MOVE — that poles her. Release ▼ to work the deck.`
+                : `Look down (or hold Dive) and walk — that poles her. Look level to work the deck.`,
+            )
           } else if (!saidPoleNudge && idleAboardT > 8) {
             saidPoleNudge = true
-            deps.hud.whisper('Still stuck? Tip the view down or hold Dive, then walk — the hull follows.')
+            deps.hud.whisper(
+              onTouch
+                ? 'Still stuck? Hold the ▼ button, then push the stick — the hull follows.'
+                : 'Still stuck? Tip the view down or hold Dive, then walk — the hull follows.',
+            )
           }
         } else if (aboard && (poling || view.speed <= 0.2)) {
           idleAboardT = 0
@@ -4905,20 +4933,45 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           !poling
         ) {
           saidHelmHint = true
-          deps.hud.whisper('The tiller aft. Look down (or hold Dive) and push — the sail takes her where you look.')
+          deps.hud.whisper(
+            onTouch
+              ? 'The tiller aft. Hold ▼ and push MOVE — the sail takes her where you look.'
+              : 'The tiller aft. Look down (or hold Dive) and push — the sail takes her where you look.',
+          )
         }
 
         // Quiet craft readout — applied once after the builds loop
+        let driveMode: 'pole' | 'helm' | null = null
         if (aboard) {
-          if (b.beached) craftLine = 'Beached — Shove (F)'
-          else if (b.anchored) craftLine = 'Anchored — Weigh (F) to sail'
-          else if (sailing) craftLine = 'At the helm'
-          else if (poling) craftLine = b.oar ? 'Poling · oar' : 'Poling'
-          else if (atHelm && !poleIntent) craftLine = 'Stern · look down + walk to helm'
-          else if (b.mast && !b.torn && !poleIntent) craftLine = 'Look down + walk to pole · stern to helm'
-          else if (!poleIntent) craftLine = 'Look down + walk to pole'
-          else if (view.speed <= 0.28) craftLine = 'Walk to pole'
+          if (b.beached) {
+            craftLine = onTouch ? 'Beached — tap Shove' : 'Beached — Shove'
+          } else if (b.anchored) {
+            craftLine = onTouch ? 'Anchored — tap Weigh' : 'Anchored — Weigh to sail'
+          } else if (sailing) {
+            craftLine = 'At the helm'
+            driveMode = 'helm'
+          } else if (poling) {
+            craftLine = b.oar ? 'Poling · oar' : 'Poling'
+            driveMode = 'pole'
+          } else if (atHelm && !poleIntent) {
+            craftLine = onTouch ? 'Stern · hold ▼ + MOVE to helm' : 'Stern · look down + walk to helm'
+            driveMode = 'helm'
+          } else if (b.mast && !b.torn && !poleIntent) {
+            craftLine = onTouch
+              ? 'Hold ▼ + MOVE to pole · stern to helm'
+              : 'Look down + walk to pole · stern to helm'
+            driveMode = 'pole'
+          } else if (!poleIntent) {
+            craftLine = poleHowShort
+            driveMode = 'pole'
+          } else if (view.speed <= 0.28) {
+            craftLine = onTouch ? 'Push MOVE to pole' : 'Walk to pole'
+            driveMode = atHelm ? 'helm' : 'pole'
+          } else {
+            driveMode = atHelm ? 'helm' : 'pole'
+          }
         }
+        if (aboard) nextDriveMode = driveMode
 
         // Ran aground — sand above the live sea sticks the hull. Soft wash
         // only when nearly stopped. Shove grace keeps a push from snapping back.
@@ -5367,6 +5420,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       lastCraft = craftLine ?? ''
       deps.hud.setCraft(craftLine)
     }
+    deps.setDriveMode?.(nextDriveMode)
     stockTraps(dt)
 
     // Carpentry walls are real: the body stops at a solid panel and passes a
@@ -5505,6 +5559,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     poleSplashAt = 0
     lastCraft = ''
     deps.hud.setCraft(null)
+    deps.setDriveMode?.(null)
   }
 
   function fillHold(src?: SavedHold): Hold {

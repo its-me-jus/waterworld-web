@@ -61,7 +61,7 @@ export function createTouchControls(parent: HTMLElement) {
   actions.innerHTML = `
     <button type="button" class="touch-btn touch-use" data-act="use"></button>
     <button type="button" class="touch-btn" data-act="rise" aria-label="Swim up">▲</button>
-    <button type="button" class="touch-btn" data-act="dive" aria-label="Dive">▼</button>
+    <button type="button" class="touch-btn touch-dive" data-act="dive" aria-label="Dive">▼</button>
   `
   wrap.appendChild(actions)
 
@@ -73,8 +73,10 @@ export function createTouchControls(parent: HTMLElement) {
   let lookId: number | null = null
   let lookLastX = 0
   let lookLastY = 0
+  let driveMode: 'pole' | 'helm' | null = null
 
   const useBtn = actions.querySelector('[data-act="use"]') as HTMLButtonElement
+  const diveBtn = actions.querySelector('[data-act="dive"]') as HTMLButtonElement
   useBtn.addEventListener('pointerdown', (e) => {
     e.preventDefault()
     usePending = true
@@ -105,9 +107,25 @@ export function createTouchControls(parent: HTMLElement) {
   bindHold(actions.querySelector('[data-act="rise"]') as HTMLButtonElement, (v) => {
     rise = v
   })
-  bindHold(actions.querySelector('[data-act="dive"]') as HTMLButtonElement, (v) => {
+  bindHold(diveBtn, (v) => {
     dive = v
   })
+
+  function paintDiveBtn() {
+    if (driveMode === 'helm') {
+      diveBtn.textContent = 'HELM'
+      diveBtn.setAttribute('aria-label', 'Hold to helm')
+      diveBtn.classList.add('drive')
+    } else if (driveMode === 'pole') {
+      diveBtn.textContent = 'POLE'
+      diveBtn.setAttribute('aria-label', 'Hold to pole')
+      diveBtn.classList.add('drive')
+    } else {
+      diveBtn.textContent = '▼'
+      diveBtn.setAttribute('aria-label', 'Dive')
+      diveBtn.classList.remove('drive')
+    }
+  }
 
   const startStick = (stick: Stick, e: PointerEvent) => {
     const rect = stick.root.getBoundingClientRect()
@@ -198,5 +216,12 @@ export function createTouchControls(parent: HTMLElement) {
     useBtn.classList.toggle('on', label !== null)
   }
 
-  return { apply, setVisible, setAction, root: wrap }
+  /** While aboard, ▼ becomes POLE / HELM so drive is obvious on a phone. */
+  function setDriveMode(mode: 'pole' | 'helm' | null) {
+    if (mode === driveMode) return
+    driveMode = mode
+    paintDiveBtn()
+  }
+
+  return { apply, setVisible, setAction, setDriveMode, root: wrap }
 }

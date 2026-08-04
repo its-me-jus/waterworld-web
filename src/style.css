@@ -483,6 +483,15 @@ body.underwater #bubbles {
   border-color: rgba(255, 255, 255, 0.65);
 }
 
+/* Aboard a raft — ▼ renames to POLE / HELM */
+.touch-dive.drive {
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  font-weight: 600;
+  border-color: rgba(170, 220, 240, 0.7);
+  background: rgba(20, 48, 62, 0.62);
+}
+
 .touch-use {
   display: none;
   width: auto;
