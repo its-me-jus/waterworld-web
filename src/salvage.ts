@@ -15,7 +15,17 @@ import { barrelObject, crateObject, plankObject } from './wreck'
  * the beach — exist once per run and stay taken.
  */
 
-export type StashKind = 'plank' | 'barrel' | 'crate' | 'rope' | 'canvas' | 'plastic' | 'can' | 'leaf'
+export type StashKind =
+  | 'plank'
+  | 'barrel'
+  | 'crate'
+  | 'rope'
+  | 'canvas'
+  | 'plastic'
+  | 'can'
+  | 'leaf'
+  | 'nut'
+  | 'shell'
 export type Stash = Record<StashKind, number>
 
 const STASH_LABEL: Record<StashKind, { one: string; many: string }> = {
@@ -27,6 +37,8 @@ const STASH_LABEL: Record<StashKind, { one: string; many: string }> = {
   plastic: { one: 'Bottle', many: 'Bottles' },
   can: { one: 'Can', many: 'Cans' },
   leaf: { one: 'Frond', many: 'Fronds' },
+  nut: { one: 'Coconut', many: 'Coconuts' },
+  shell: { one: 'Shell', many: 'Shells' },
 }
 
 /** How far a drifter gets before it counts as left behind. */
@@ -116,6 +128,22 @@ function shellfishObject(mat: Mats) {
     shell.position.set(Math.cos(i * 2.1) * 0.2, (i % 2) * 0.05, Math.sin(i * 2.1) * 0.2)
     group.add(shell)
   }
+  return group
+}
+
+function shellObject(mat: Mats) {
+  const group = new THREE.Group()
+  const cup = new THREE.Mesh(
+    new THREE.SphereGeometry(0.14, 8, 6, 0, Math.PI * 2, 0, 1.35),
+    mat.shell,
+  )
+  cup.scale.set(1.1, 0.55, 1.25)
+  cup.rotation.x = 0.35
+  group.add(cup)
+  const lip = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.018, 4, 10), mat.shell)
+  lip.rotation.x = Math.PI / 2
+  lip.position.y = 0.06
+  group.add(lip)
   return group
 }
 
@@ -231,6 +259,8 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     plastic: 0,
     can: 0,
     leaf: 0,
+    nut: 0,
+    shell: 0,
   }
   const finds: Find[] = []
   const up = new THREE.Vector3(0, 1, 0)
@@ -410,7 +440,16 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
   for (let i = 0; i < opts.shore.length; i += 3) {
     const at = opts.shore[i].clone()
     at.y += 0.22
-    register(dropAt(coconutObject(mat), at), 'Drink', 'Coconut', (f) => consume(f, 0.12, 0.45), 2.6)
+    register(dropAt(coconutObject(mat), at), 'Take', 'Coconut', (f) => take(f, 'nut'), 2.6)
+  }
+
+  // Tide shells — scoops for barrel work, light to carry
+  for (let i = 1; i < opts.shore.length; i += 4) {
+    const at = opts.shore[i].clone()
+    at.y += 0.12
+    const sh = dropAt(shellObject(mat), at)
+    sh.rotation.y = i * 0.7
+    register(sh, 'Take', 'Shell', (f) => take(f, 'shell'), 2.3)
   }
 
   // —— inland cairn ————————————————————————————————————————————————
@@ -440,8 +479,9 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     { build: () => kelpObject(mat), verb: 'Eat', label: 'Kelp', lift: 0.02, use: (f: Find) => consume(f, 0.14, 0.02) },
     { build: () => plasticBottleObject(mat), verb: 'Take', label: 'Bottle', lift: 0.09, use: (f: Find) => take(f, 'plastic') },
     { build: () => plankObject(1.7, 0.26, mat.wood), verb: 'Take', label: 'Plank', lift: 0.03, use: (f: Find) => take(f, 'plank') },
-    { build: () => coconutObject(mat), verb: 'Drink', label: 'Coconut', lift: 0.08, use: (f: Find) => consume(f, 0.12, 0.45) },
+    { build: () => coconutObject(mat), verb: 'Take', label: 'Coconut', lift: 0.08, use: (f: Find) => take(f, 'nut') },
     { build: () => tinCanObject(mat), verb: 'Take', label: 'Can', lift: 0.05, use: (f: Find) => take(f, 'can') },
+    { build: () => shellObject(mat), verb: 'Take', label: 'Shell', lift: 0.04, use: (f: Find) => take(f, 'shell') },
     { build: () => crateObject(mat.wood), verb: 'Take', label: 'Crate', lift: 0.16, use: (f: Find) => take(f, 'crate') },
   ]
 
@@ -481,6 +521,8 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     if (kind === 'canvas') return canvasObject(mat)
     if (kind === 'plastic') return plasticBottleObject(mat)
     if (kind === 'can') return tinCanObject(mat)
+    if (kind === 'nut') return coconutObject(mat)
+    if (kind === 'shell') return shellObject(mat)
     if (kind === 'leaf') {
       const g = new THREE.Group()
       for (let i = 0; i < 3; i++) {

@@ -158,11 +158,11 @@ markers in-world, no "correct" build order.
 | **Plant cistern** | 1 barrel | Dry ground | Open barrel alone — rain store without a shelter |
 | **Fire** | 1 plank | Dry ground | Heat, cook/smoke fish, and a warm light at night. **Take** it as a brand to carry; **Plant** it to set camp again. Diving puts it out. |
 | **Rain-catch** | 1 canvas + 1 rope | Higher dry ground | Refilling fresh water |
-| **Raft** | 3 plank + 1 rope (+1 barrel) | Waterline | A real deck: gunwales, push pole, climb-aboard. Walk the centre to work; pole from the edge to steer. |
+| **Raft** | 3 plank + 1 rope (+1 barrel) | Waterline | A real deck: gunwales, push pole, climb-aboard. Look down + walk to pole; look level to work. |
 | **Rig sail** | 1 plank + 1 canvas + 1 rope | On the raft | Mast and canvas — slow trade-wind drift while you're aboard. A gale can tear it; **Mend** with canvas + rope. |
 | **Lash rail** | 1 plank + 1 rope | On the raft | Higher rails, wider deck, harder to wash off |
 | **Lash locker** | 1 crate | On the raft | Dry storage. **Stow** / **Fetch** your pack. A torn sail in a gale can flood it. |
-| **Lash deck** | 2 plank | On the raft | Widen the deck (up to three times). Room to work. |
+| **Lash deck** | 2 plank | On the raft | Widen the deck (up to **five** times). Ferry room. |
 | **Lash oar** | 1 plank + 1 rope | On the raft | Better pole bite and a cleaner turn |
 | **Lash floats** | 2 bottle | On the raft | Plastic under the deck — she rides higher |
 | **Scratch stern** | Mate's spear (memory) | On the raft | The Wanderer's mark — your watch, your deck |
@@ -218,14 +218,14 @@ any lean-to. Fires burn on deck tiles; the day counter turns at world
 midnight, so sleeping the night away in your own room is how a day gets
 banked.
 
-Fall off and **Climb** the raft from the water (F when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft. An empty raft keeps her heading — she won't spin to chase leftover pole speed. Walk the centre to work; **look down** (or hold dive on a phone) at the gunwale to pole and steer. On sand she sits still — **Shove** clear of the shelf, then pole again. **Haul** her up the beach when you mean to camp. A gale can tear the sail — **Mend** it.
+Fall off and **Climb** the raft from the water (F when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft. An empty raft keeps her heading — she won't spin to chase leftover pole speed. **Look down** (or hold dive on a phone) anywhere aboard and walk to **pole**; look level to walk and work fittings. On sand she sits still — **Shove** clear of the shelf, then pole again. **Haul** her up the beach when you mean to camp. A gale can tear the sail — **Mend** it. **Lash Deck** up to five times for a ferry-sized platform.
 
-Island harvest sits on top of the scenery: **Pull** palm fronds for thatch,
-**Break** driftwood into a plank, **Fell** a stripped palm once you have the
-galley knife (two planks), **Pull** long grass and twist it into rope. Ocean junk
+Island harvest sits on top of the scenery: **Pull** palm fronds (and a coconut) for thatch and drinkable stash, **Break** driftwood into a plank, **Fell** a stripped palm once you have the
+galley knife (two planks), **Pull** long grass or inland **vines** into rope. Shore **shells** scoop water into barrels like a tin can. Ocean junk
 adds **bottles** and **cans** to the drifter pool — bottles are a light swim aid
 and lash into raft floats or a scrap roof; cans hang as a tin drip ashore.
-**Barrels** plant as cisterns or sit under a shelter eave and fill with rain.
+**Coconuts** Take into the Pack and Drink later (F or Pack tap) so a hill camp
+doesn't mean dying of thirst on every fishing walk. **Barrels** plant as cisterns or sit under a shelter eave and fill with rain.
 
 A shelter is fashioned in pieces, not summoned whole: **Raise** a frame, **Lash**
 walls, **Roof** with fronds / canvas tarp / scrap bottles, then **Rest** once

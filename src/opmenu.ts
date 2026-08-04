@@ -1,5 +1,5 @@
 import type { Vitals } from './survival'
-import { resetVitals } from './survival'
+import { eat, resetVitals } from './survival'
 import type { Salvage, Stash, StashKind } from './salvage'
 import type { WreckLoot } from './wreckloot'
 import type { CampGroup, CampRecipe } from './improvise'
@@ -219,7 +219,13 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     const rows = (Object.keys(stash) as StashKind[]).map((key) => {
       const n = stash[key]
       const name = n === 1 ? labels[key].one : labels[key].many
-      return `<div class="op-cell${n ? '' : ' empty'}"><span class="n">${n}</span><span class="k">${name}</span></div>`
+      const drinkable = key === 'nut' && n > 0
+      return (
+        `<div class="op-cell${n ? '' : ' empty'}${drinkable ? ' op-use' : ''}"` +
+        `${drinkable ? ' data-drink-nut="1"' : ''}>` +
+        `<span class="n">${n}</span>` +
+        `<span class="k">${name}${drinkable ? ' · drink' : ''}</span></div>`
+      )
     })
     const fish = deps.rawFish()
     rows.push(
@@ -404,6 +410,14 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
       return
     }
 
+    const drinkNut = (e.target as HTMLElement).closest<HTMLElement>('[data-drink-nut]')
+    if (drinkNut && deps.salvage.stash.nut > 0) {
+      deps.salvage.stash.nut -= 1
+      eat(deps.vitals, 0.08, 0.42)
+      render()
+      return
+    }
+
     const equipEl = (e.target as HTMLElement).closest<HTMLElement>('[data-equip]')
     if (equipEl?.dataset.equip === 'rod' || equipEl?.dataset.equip === 'net') {
       deps.equipTool?.(equipEl.dataset.equip)
@@ -434,6 +448,8 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
         deps.salvage.stash.plastic += 3
         deps.salvage.stash.can += 2
         deps.salvage.stash.leaf += 4
+        deps.salvage.stash.nut += 3
+        deps.salvage.stash.shell += 4
         break
       case 'fish':
         deps.grantFish?.(2)

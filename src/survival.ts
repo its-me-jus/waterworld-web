@@ -51,8 +51,13 @@ const STAMINA_REFILL = 32
 const WARMTH_IN_WATER = 900
 const WARMTH_ON_LAND = 3000
 const WARMTH_REFILL = 420
-const THIRST = 1500
-const HUNGER = 2600
+/**
+ * Thirst / hunger are paced for island walks — base up the hill, fishing in
+ * the wash, and back again shouldn't empty both tanks every trip. Roughly
+ * an hour of easy thirst and ~90 minutes of hunger from full.
+ */
+const THIRST = 3600
+const HUNGER = 5400
 /** A full day awake spends the tank; working hard spends it up to twice as fast. */
 const ENERGY_WAKE = 430
 
@@ -173,8 +178,9 @@ export function updateVitals(v: Vitals, dt: number, ctx: VitalsContext) {
 
   // An open wound feeds the sea a little of you too, and caps how strong
   // you can get until it clots
-  v.water = drain(v.water, dt * (1 + ctx.effort * 0.5), THIRST)
-  v.food = drain(v.food, dt * (1 + ctx.effort * 0.35) * (v.wounded ? 1.35 : 1), HUNGER)
+  // Water & food — paced so a hill walk to the fishing spots isn't a crisis
+  v.water = drain(v.water, dt * (1 + ctx.effort * 0.35), THIRST)
+  v.food = drain(v.food, dt * (1 + ctx.effort * 0.25) * (v.wounded ? 1.25 : 1), HUNGER)
 
   // —— the wound ————————————————————————————————————————————
   if (v.wounded) {

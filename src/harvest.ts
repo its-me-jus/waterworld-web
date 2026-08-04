@@ -29,11 +29,11 @@ export type HarvestDeps = {
 }
 
 type Node = {
-  kind: 'palm' | 'log' | 'grass'
+  kind: 'palm' | 'log' | 'grass' | 'vine'
   object: THREE.Group
   item: Interactable
   taken: boolean
-  /** Grass comes back; wood does not. */
+  /** Grass / vine come back; wood does not. */
   returnAt: number
   /** Palm: pull fronds first, then fell the trunk. */
   palmStage?: 'fronds' | 'trunk' | 'gone'
@@ -138,6 +138,28 @@ function grassMesh(m: Mats, seed: number) {
   return g
 }
 
+function vineMesh(m: Mats, seed: number) {
+  const g = new THREE.Group()
+  g.name = 'harvestVine'
+  for (let i = 0; i < 5; i++) {
+    const len = 0.9 + ((seed + i) % 4) * 0.15
+    const strand = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.028, len, 4), m.grass)
+    strand.position.set(
+      Math.cos(i * 1.4) * 0.15,
+      len * 0.35,
+      Math.sin(i * 1.4) * 0.15,
+    )
+    strand.rotation.z = ((i % 3) - 1) * 0.55
+    strand.rotation.x = 0.4 + (i % 2) * 0.2
+    g.add(strand)
+  }
+  const knot = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.025, 4, 8), m.wood)
+  knot.rotation.x = Math.PI / 2
+  knot.position.y = 0.2
+  g.add(knot)
+  return g
+}
+
 function plantAt(
   scene: THREE.Scene,
   object: THREE.Group,
@@ -219,9 +241,10 @@ export function createHarvest(scene: THREE.Scene, deps: HarvestDeps) {
             if (child.name === 'frond' || child.name === 'nut') child.visible = false
           }
           deps.salvage.stash.leaf += 2
+          deps.salvage.stash.nut += 1
           node.item.verb = 'Fell'
           node.item.label = 'Palm'
-          deps.hud.whisper('Fronds strip clean. Good for a roof.')
+          deps.hud.whisper('Fronds and a nut. Roof thatch, and water for later.')
           return
         }
         if (!deps.hasKnife()) {
@@ -307,11 +330,40 @@ export function createHarvest(scene: THREE.Scene, deps: HarvestDeps) {
     grasses++
   }
 
+  // —— vine tangles inland — extra rope without walking the grass again ——
+  const vineWanted = low ? 4 : 8
+  let vines = 0
+  for (let i = 0; i < 60 && vines < vineWanted; i++) {
+    const ang = i * 1.85 + 0.9
+    const r = 14 + (i % 7) * 5.5
+    const x = deps.islandCentre.x + Math.cos(ang) * r
+    const z = deps.islandCentre.z + Math.sin(ang) * r
+    const h = deps.heightAt(x, z)
+    if (h < 1.4 || h > 14) continue
+    addNode(
+      'vine',
+      vineMesh(m, i + 41),
+      x,
+      z,
+      'Pull',
+      'Vines',
+      (node) => {
+        node.taken = true
+        node.object.visible = false
+        node.returnAt = performance.now() / 1000 + 110 + (i % 6) * 14
+        deps.salvage.stash.rope += 1
+        deps.hud.whisper('Tough vines. They twist into rope.')
+      },
+      2.5,
+    )
+    vines++
+  }
+
   function update(_time: number) {
     const now = performance.now() / 1000
     for (const node of nodes) {
       if (!node.taken) continue
-      if (node.kind !== 'grass') continue
+      if (node.kind !== 'grass' && node.kind !== 'vine') continue
       if (node.returnAt <= 0 || now < node.returnAt) continue
       node.taken = false
       node.returnAt = 0
@@ -341,7 +393,7 @@ export function createHarvest(scene: THREE.Scene, deps: HarvestDeps) {
       taken: node.taken,
       palmStage: node.palmStage,
       returnIn:
-        node.kind === 'grass' && node.taken && node.returnAt > now
+        (node.kind === 'grass' || node.kind === 'vine') && node.taken && node.returnAt > now
           ? node.returnAt - now
           : 0,
     }))
@@ -375,11 +427,14 @@ export function createHarvest(scene: THREE.Scene, deps: HarvestDeps) {
           node.item.label = 'Palm'
         }
       } else if (s.taken) {
-        if (node.kind === 'grass' && (s.returnIn ?? 0) > 0) {
+        if (
+          (node.kind === 'grass' || node.kind === 'vine') &&
+          (s.returnIn ?? 0) > 0
+        ) {
           node.taken = true
           node.object.visible = false
           node.returnAt = now + (s.returnIn ?? 0)
-        } else if (node.kind === 'grass') {
+        } else if (node.kind === 'grass' || node.kind === 'vine') {
           // Already regrown
           node.taken = false
           node.object.visible = true

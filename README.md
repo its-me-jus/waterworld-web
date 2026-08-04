@@ -121,6 +121,11 @@ grid so you can architect your own base instead of inheriting one:
 If the world prompt is busy (Strike, Sleep, Fire), Pack → **Camp** still lists
 every carpentry recipe that's ready where you're standing.
 
+**Raft:** Climb aboard · look **down** and walk to **pole** (look level to
+work the deck) · **Shove** if she's beached · **Rig Sail** then stand aft and
+look down to **helm** · **Lash Deck** up to five times for a ferry-sized
+platform · locker for the wreck run.
+
 Fires burn on platform decks, rain gear and lockers work the same ashore, and
 the whole base persists with the rest of the camp.
 

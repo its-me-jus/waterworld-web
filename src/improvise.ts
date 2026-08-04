@@ -7,6 +7,7 @@ import type { Salvage, StashKind } from './salvage'
 import type { SavedBuild, SavedHold, SavedRoof } from './persist'
 import { eat, rest, type Vitals } from './survival'
 import { sampleOcean, oceanState } from './waves'
+import { stashCount } from './logistics'
 import { barrelObject, crateObject, plankObject } from './wreck'
 
 /**
@@ -200,8 +201,8 @@ const ROOF_COST: Cost = { plank: 1, leaf: 1 }
 const WOODPILE_COST: Cost = { plank: 1 }
 /** Cap on planks sitting in one pile (mansion stockpile, not a cheat crate). */
 const WOODPILE_MAX = 24
-/** Max times you can widen one raft. */
-const EXPAND_MAX = 3
+/** Max times you can widen one raft — five courses, a proper ferry deck. */
+const EXPAND_MAX = 5
 const SIDE_MAX = 2
 /** A shelter grows to three rooms — hut, then house, then hall. */
 const ROOM_MAX = 3
@@ -239,11 +240,9 @@ const SAIL_HELM_BARREL = 2.7
 /** Local stern threshold — stand aft of this (toward the thwart) to take the helm. */
 const HELM_STERN_X = 0.35
 /**
- * Deck radius fraction: inside this is for walking / fittings; at or past it,
- * stick input poles. Lets you work the locker without driving the raft.
+ * Deck lip — past this fraction of radius you're overboard.
+ * (Poling is look-down anywhere aboard; no separate gunwale gate.)
  */
-const POLE_GUNWALE = 0.48
-/** Past this fraction of radius you're over the gunwale. */
 const DECK_LIP = 0.9
 /** After Shove, ignore auto-beach so the wash doesn't pin her again. */
 const SHOVE_GRACE = 3.2
@@ -281,7 +280,7 @@ const WASH_LOCKER = 0.08
 const WASH_STORM_GATE = 0.42
 const WASH_RAIL_GATE = 0.72
 /** Look-down pitch (radians) required to pole — accidental walk won't drive her. */
-const POLE_LOOK_DOWN = -0.32
+const POLE_LOOK_DOWN = -0.22
 /** Look-down pitch required to Dig — same sign as pole (positive pitch is look up). */
 const DIG_LOOK_DOWN = -0.28
 /** Soft-fail: how fast a gale frays the sail while you're aboard. */
@@ -315,6 +314,8 @@ const emptyHold = (): Hold => ({
   plastic: 0,
   can: 0,
   leaf: 0,
+  nut: 0,
+  shell: 0,
 })
 
 function holdCount(h: Hold) {
@@ -1326,18 +1327,29 @@ function fitMark(raft: THREE.Group, m: ReturnType<typeof mats>) {
 function fitExpand(raft: THREE.Group, m: ReturnType<typeof mats>, n: number) {
   const slot = raft.getObjectByName('expandSlot') as THREE.Group
   if (!slot) return
-  const side = n % 2 === 1 ? 1 : -1
-  const row = Math.floor((n - 1) / 2)
-  for (let i = 0; i < 3; i++) {
-    const plank = plankObject(2.4 + row * 0.2, 0.28, m.wood)
-    plank.position.set(row * 0.15, 0.06, side * (1.05 + row * 0.32) + (i - 1) * 0.08)
-    plank.rotation.y = side * 0.04
-    slot.add(plank)
+  // Clear and rebuild so restore / multi-lash always match the count
+  while (slot.children.length) {
+    const c = slot.children[0]
+    slot.remove(c)
+    c.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) obj.geometry.dispose()
+    })
   }
-  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.025, 4, 8), m.rope)
-  lash.rotation.x = Math.PI / 2
-  lash.position.set(0.4, 0.14, side * (1.05 + row * 0.32))
-  slot.add(lash)
+  for (let k = 1; k <= n; k++) {
+    const side = k % 2 === 1 ? 1 : -1
+    const row = Math.floor((k - 1) / 2)
+    for (let i = 0; i < 3; i++) {
+      const plank = plankObject(2.4 + row * 0.22, 0.28, m.wood)
+      plank.position.set(row * 0.18, 0.06, side * (1.05 + row * 0.34) + (i - 1) * 0.08)
+      plank.rotation.y = side * 0.04
+      slot.add(plank)
+    }
+    const lash = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.025, 4, 8), m.rope)
+    lash.rotation.x = Math.PI / 2
+    lash.position.set(0.4, 0.14, side * (1.05 + row * 0.34))
+    slot.add(lash)
+  }
+  slot.visible = true
 }
 
 function fitOar(raft: THREE.Group, m: ReturnType<typeof mats>) {
@@ -2496,8 +2508,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       return true
     }
     if (!deps.salvage.poolNear(px, pz)) return false
-    // A tin can scoops from a rock hollow; bare hands spill most of it
-    const want = deps.salvage.stash.can > 0 ? Math.min(room, 0.4) : Math.min(room, 0.18)
+    // A tin can or a shell scoops from a rock hollow; bare hands spill most of it
+    const hasScoop = deps.salvage.stash.can > 0 || deps.salvage.stash.shell > 0
+    const want = hasScoop ? Math.min(room, 0.42) : Math.min(room, 0.18)
     const got = deps.salvage.drawFromPool(px, pz, want)
     if (got < 0.05) return false
     target.water = (target.water ?? 0) + got
@@ -2506,7 +2519,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     deps.hud.whisper(
       deps.salvage.stash.can > 0
         ? 'Scooped with the tin. The barrel takes it.'
-        : 'Cupped hands. Most spills — some stays.',
+        : deps.salvage.stash.shell > 0
+          ? 'Shell as a ladle. Cleaner than hands.'
+          : 'Cupped hands. Most spills — some stays.',
     )
     return true
   }
@@ -2799,7 +2814,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
       if (!locker?.hold || !deps.vitals.alive) return false
       const s = deps.salvage.stash
-      return s.plank + s.barrel + s.crate + s.rope + s.canvas + s.plastic + s.can + s.leaf > 0
+      return stashCount(s) > 0
     },
     use: () => {
       const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
@@ -3144,8 +3159,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       })
       deps.hud.whisper(
         withBarrel
-          ? 'Barrels under planks. Climb aboard. Walk the deck — pole from the edge.'
-          : 'Three planks and a lashing. Climb aboard — walk the deck, pole from the edge.',
+          ? 'Barrels under planks. Climb aboard. Look down and walk to pole — Shove if she beaches.'
+          : 'Three planks and a lashing. Climb aboard. Look down and walk to pole her out.',
       )
       tap('lash', 0.85)
     },
@@ -3174,7 +3189,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       live.vy = 0
       live.submersion = 0
       boardGrace = 1.4
-      deps.hud.whisper('Hands on the gunwale. Up.')
+      deps.hud.whisper(
+        raft.beached
+          ? 'Aboard. Shove off the sand, then look down and walk to pole.'
+          : 'Aboard. Look down and walk to pole — look level to work the deck.',
+      )
       tap('wood', 0.7)
       tap('splash', 0.35)
     },
@@ -3594,7 +3613,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (!raft?.locker || !deps.vitals.alive) return false
       const s = deps.salvage.stash
       return (
-        s.plank + s.barrel + s.crate + s.rope + s.canvas + s.plastic + s.can + s.leaf > 0
+        stashCount(s) > 0
       )
     },
     use: () => {
@@ -3678,14 +3697,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const raft = nearestRaftOnDeck()
       if (!raft || !deps.salvage.spend(EXPAND_COST)) return
       raft.expands = (raft.expands ?? 0) + 1
-      raft.radius += 0.38
+      raft.radius += 0.42
       fitExpand(raft.object, m, raft.expands)
+      const n = raft.expands
       deps.hud.whisper(
-        raft.expands === 1
-          ? 'Two more planks. The deck grows.'
-          : raft.expands >= EXPAND_MAX
-            ? 'As wide as the lashing will hold.'
-            : 'Wider still. Room to work.',
+        n === 1
+          ? `Deck widened (1/${EXPAND_MAX}). Room to stand.`
+          : n >= EXPAND_MAX
+            ? `Full ferry deck (${EXPAND_MAX}/${EXPAND_MAX}). As wide as the lashing will hold.`
+            : `Wider still (${n}/${EXPAND_MAX}). Lash Deck again when you have the planks.`,
       )
     },
   })
@@ -4138,6 +4158,29 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     use: () => {
       if (!deps.eatRawFish()) return
       deps.hud.whisper('Raw fish. It stays down.')
+    },
+  })
+
+  // Carried coconut — drink from the arms when nothing more urgent is in reach
+  deps.interactions.add({
+    position: eatPos,
+    verb: 'Drink',
+    label: 'Coconut',
+    radius: 1.8,
+    available: () =>
+      deps.vitals.alive &&
+      deps.salvage.stash.nut > 0 &&
+      deps.vitals.water < 0.92 &&
+      !craftPending(),
+    use: () => {
+      if (deps.salvage.stash.nut <= 0) return
+      deps.salvage.stash.nut -= 1
+      eat(deps.vitals, 0.08, 0.42)
+      deps.hud.whisper(
+        deps.salvage.stash.nut > 0
+          ? 'Sweet water. Cool. Carry another for the hill walk.'
+          : 'The last of the nut. Sweet while it lasted.',
+      )
     },
   })
 
@@ -4721,13 +4764,18 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           washGrace <= 0 &&
           (boardGrace > 0 || view.walking) &&
           deckDist <= b.radius * DECK_LIP
-        // Pole from the gunwale — look down (or hold dive) so walk ≠ thrust.
-        const atGunwale = aboard && !b.beached && deckDist >= b.radius * POLE_GUNWALE
+        // Pole anywhere on an afloat deck when looking down (or holding dive).
+        // Looking level keeps the stick as walk so you can work the locker.
         const poling =
-          atGunwale && poleIntent && view.speed > 0.35 && boardGrace <= 0
-        if (atGunwale && view.speed > 0.4 && !poleIntent && !saidPoleHint && aboard) {
+          aboard &&
+          !b.beached &&
+          !b.anchored &&
+          poleIntent &&
+          view.speed > 0.28 &&
+          boardGrace <= 0
+        if (aboard && !b.beached && !b.anchored && view.speed > 0.4 && !poleIntent && !saidPoleHint) {
           saidPoleHint = true
-          deps.hud.whisper('Look down to pole — or hold dive on a phone.')
+          deps.hud.whisper('Look down and walk — that poles her. Look level to walk the deck.')
         }
 
         // The helm: stand aft by the thwart with canvas up, and the same
