@@ -421,6 +421,8 @@ const improvise = createImprovise(scene, camera, {
   storm: () => climate.state.storm,
   current: () => sea.current,
   sfx: (kind, intensity) => oceanAudio.sfx(kind, intensity),
+  touch: mobile,
+  setDriveMode: (mode) => touch.setDriveMode(mode),
 })
 raftAt = improvise.standAt
 
@@ -440,6 +442,7 @@ function restart() {
   hud.clearDead()
   hud.setPrompt(null)
   touch.setAction(null)
+  touch.setDriveMode(null)
   runStart = climate.getElapsed()
   lastDay = 1
   hud.setDay(1)

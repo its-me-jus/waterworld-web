@@ -37,6 +37,8 @@ export type SavedBuild = {
   oar?: boolean
   floats?: boolean
   expands?: number
+  /** Live walkable radius — diagnostics / tests; restore recomputes from fittings. */
+  radius?: number
   marked?: boolean
   beached?: boolean
   anchored?: boolean

@@ -158,8 +158,8 @@ markers in-world, no "correct" build order.
 | **Plant cistern** | 1 barrel | Dry ground | Open barrel alone — rain store without a shelter |
 | **Fire** | 1 plank | Dry ground | Heat, cook/smoke fish, and a warm light at night. **Take** it as a brand to carry; **Plant** it to set camp again. Diving puts it out. |
 | **Rain-catch** | 1 canvas + 1 rope | Higher dry ground | Refilling fresh water |
-| **Raft** | 3 plank + 1 rope (+1 barrel) | Waterline | A real deck: gunwales, push pole, climb-aboard. Look down + walk to pole; look level to work. |
-| **Rig sail** | 1 plank + 1 canvas + 1 rope | On the raft | Mast and canvas — slow trade-wind drift while you're aboard. A gale can tear it; **Mend** with canvas + rope. |
+| **Raft** | 3 plank + 1 rope (+1 barrel) | Waterline | A real deck: gunwales, push pole, climb-aboard. Hold ▼ + MOVE to pole (phone); look down + walk on desktop. |
+| **Rig sail** | 1 plank + 1 canvas + 1 rope | On the raft | Mast, canvas, and a stern tiller — slow trade-wind drift while you're aboard. Stand aft to helm (▼ becomes HELM on a phone). A gale can tear it; **Mend** with canvas + rope. |
 | **Lash rail** | 1 plank + 1 rope | On the raft | Higher rails, wider deck, harder to wash off |
 | **Lash locker** | 1 crate | On the raft | Dry storage. **Stow** / **Fetch** your pack. A torn sail in a gale can flood it. |
 | **Lash deck** | 2 plank | On the raft | Widen the deck (up to **five** times). Ferry room. |
@@ -218,7 +218,7 @@ any lean-to. Fires burn on deck tiles; the day counter turns at world
 midnight, so sleeping the night away in your own room is how a day gets
 banked.
 
-Fall off and **Climb** the raft from the water (F when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft. An empty raft keeps her heading — she won't spin to chase leftover pole speed. **Look down** (or hold dive on a phone) anywhere aboard and walk to **pole**; look level to walk and work fittings. On sand she sits still — **Shove** clear of the shelf, then pole again. **Haul** her up the beach when you mean to camp. A gale can tear the sail — **Mend** it. **Lash Deck** up to five times for a ferry-sized platform.
+Fall off and **Climb** the raft from the water (action button when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft. An empty raft keeps her heading — she won't spin to chase leftover pole speed. On a phone, **hold ▼** (it renames to **POLE** / **HELM**) and push **MOVE** to drive; release ▼ to walk and work fittings. On desktop, **look down** (or hold Dive) and walk. A quiet status line confirms when you're poling, at the helm, beached, or anchored. On sand she sits still — **Shove** (action button or Pack → Camp → Raft) clear of the shelf, then pole again. **Haul** her up the beach when you mean to camp. A gale can tear the sail — **Mend** it. **Lash Deck** up to five times for a ferry-sized platform.
 
 Island harvest sits on top of the scenery: **Pull** palm fronds (and a coconut) for thatch and drinkable stash, **Break** driftwood into a plank, **Fell** a stripped palm once you have the
 galley knife (two planks), **Pull** long grass or inland **vines** into rope. Shore **shells** scoop water into barrels like a tin can. Ocean junk

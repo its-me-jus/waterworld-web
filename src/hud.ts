@@ -50,6 +50,7 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
       <circle class="breath-fill" cx="40" cy="40" r="${RING_RADIUS}" />
     </svg>
     <div id="day"></div>
+    <div id="craft"></div>
     <div id="vitals"></div>
     <div id="stash"></div>
     <div id="prompt"><kbd>F</kbd><span></span></div>
@@ -81,6 +82,7 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
   const promptText = promptBox.querySelector('span') as HTMLElement
   const hurt = root.querySelector('#hurt') as HTMLElement
   const dayChip = root.querySelector('#day') as HTMLElement
+  const craftChip = root.querySelector('#craft') as HTMLElement
   if (opts.touch) promptBox.classList.add('no-key')
 
   const rows = ROWS.map(({ key, label, from }) => {
@@ -117,6 +119,7 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
   let lastPrompt = ''
   let lastStash = ''
   let lastDay = 0
+  let lastCraft = ''
 
   const whisperQueue: string[] = []
   let whisperT = 0
@@ -129,6 +132,15 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
   /** A quiet one-liner, queued so several can't stomp each other. */
   function whisper(text: string) {
     if (whisperQueue.length < 5) whisperQueue.push(text)
+  }
+
+  /** Raft drive/state chip — only while you're aboard. */
+  function setCraft(text: string | null) {
+    const next = text ?? ''
+    if (next === lastCraft) return
+    lastCraft = next
+    craftChip.textContent = next
+    craftChip.classList.toggle('on', next !== '')
   }
 
   function setPrompt(prompt: Prompt | string | null) {
@@ -265,12 +277,14 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     whisperQueue.length = 0
     whisperT = 0
     lastDay = 0
+    setCraft(null)
   }
 
   return {
     update,
     whisper,
     setPrompt,
+    setCraft,
     setStash,
     setDay,
     setDead,
