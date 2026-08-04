@@ -483,13 +483,23 @@ body.underwater #bubbles {
   border-color: rgba(255, 255, 255, 0.65);
 }
 
-/* Aboard a raft — ▼ renames to POLE / HELM */
+/* Aboard a raft — ▼ renames to POLE / HELM (tap to toggle) */
 .touch-dive.drive {
-  font-size: 0.62rem;
-  letter-spacing: 0.14em;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
   font-weight: 600;
   border-color: rgba(170, 220, 240, 0.7);
   background: rgba(20, 48, 62, 0.62);
+  line-height: 1.1;
+}
+
+.touch-dive.drive.engaged,
+.touch-dive.drive.active {
+  font-size: 0.52rem;
+  letter-spacing: 0.08em;
+  background: rgba(70, 160, 190, 0.78);
+  border-color: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 0 0 3px rgba(120, 200, 230, 0.4);
 }
 
 .touch-use {

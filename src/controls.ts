@@ -66,7 +66,9 @@ export function createTouchControls(parent: HTMLElement) {
   wrap.appendChild(actions)
 
   let rise = false
-  let dive = false
+  let diveHeld = false
+  /** When aboard, POLE/HELM is tap-toggle instead of hold. */
+  let driveEngaged = false
   let usePending = false
   let lookDeltaX = 0
   let lookDeltaY = 0
@@ -107,23 +109,42 @@ export function createTouchControls(parent: HTMLElement) {
   bindHold(actions.querySelector('[data-act="rise"]') as HTMLButtonElement, (v) => {
     rise = v
   })
-  bindHold(diveBtn, (v) => {
-    dive = v
+
+  // Dive is hold-to-submerge in the water; aboard it becomes tap-toggle POLE/HELM
+  diveBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    if (driveMode) {
+      driveEngaged = !driveEngaged
+      paintDiveBtn()
+      return
+    }
+    diveHeld = true
+    diveBtn.classList.add('active')
   })
+  const releaseDiveHold = () => {
+    if (driveMode) return
+    diveHeld = false
+    diveBtn.classList.remove('active')
+  }
+  diveBtn.addEventListener('pointerup', releaseDiveHold)
+  diveBtn.addEventListener('pointercancel', releaseDiveHold)
+  diveBtn.addEventListener('pointerleave', releaseDiveHold)
 
   function paintDiveBtn() {
+    diveBtn.classList.toggle('drive', !!driveMode)
+    diveBtn.classList.toggle('engaged', !!driveMode && driveEngaged)
     if (driveMode === 'helm') {
-      diveBtn.textContent = 'HELM'
-      diveBtn.setAttribute('aria-label', 'Hold to helm')
-      diveBtn.classList.add('drive')
+      diveBtn.textContent = driveEngaged ? 'HELM ON' : 'HELM'
+      diveBtn.setAttribute('aria-label', driveEngaged ? 'Helm on — tap to stop' : 'Tap to helm')
+      diveBtn.classList.toggle('active', driveEngaged)
     } else if (driveMode === 'pole') {
-      diveBtn.textContent = 'POLE'
-      diveBtn.setAttribute('aria-label', 'Hold to pole')
-      diveBtn.classList.add('drive')
+      diveBtn.textContent = driveEngaged ? 'POLE ON' : 'POLE'
+      diveBtn.setAttribute('aria-label', driveEngaged ? 'Pole on — tap to stop' : 'Tap to pole')
+      diveBtn.classList.toggle('active', driveEngaged)
     } else {
       diveBtn.textContent = '▼'
       diveBtn.setAttribute('aria-label', 'Dive')
-      diveBtn.classList.remove('drive')
+      diveBtn.classList.remove('active')
     }
   }
 
@@ -197,7 +218,7 @@ export function createTouchControls(parent: HTMLElement) {
     lookDeltaX = 0
     lookDeltaY = 0
     input.rise = rise
-    input.dive = dive
+    input.dive = driveMode ? driveEngaged : diveHeld
     if (usePending) {
       input.interact = true
       usePending = false
@@ -216,9 +237,13 @@ export function createTouchControls(parent: HTMLElement) {
     useBtn.classList.toggle('on', label !== null)
   }
 
-  /** While aboard, ▼ becomes POLE / HELM so drive is obvious on a phone. */
+  /** While aboard, ▼ becomes POLE / HELM — tap to toggle drive on/off. */
   function setDriveMode(mode: 'pole' | 'helm' | null) {
     if (mode === driveMode) return
+    if (!mode) {
+      driveEngaged = false
+      diveHeld = false
+    }
     driveMode = mode
     paintDiveBtn()
   }

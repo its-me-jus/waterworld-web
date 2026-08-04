@@ -1728,15 +1728,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const tap = (kind: 'lash' | 'wood' | 'splash' | 'sail' | 'haul', intensity = 0.7) =>
     deps.sfx?.(kind, intensity)
   const onTouch = !!deps.touch
-  /** Mobile leads with ▼; desktop still teaches look-down. */
+  /** Mobile leads with tap-toggle POLE; desktop still teaches look-down. */
   const poleHow = onTouch
-    ? 'Hold ▼ and push MOVE to pole'
+    ? 'Tap POLE, then push MOVE'
     : 'Look down (or hold Dive) and walk to pole'
-  const poleHowShort = onTouch ? 'Hold ▼ + MOVE to pole' : 'Look down + walk to pole'
+  const poleHowShort = onTouch ? 'Tap POLE + MOVE' : 'Look down + walk to pole'
   const helmHow = onTouch
-    ? 'Stand aft, hold ▼ and push MOVE — the tiller steers where you look'
+    ? 'Stand aft, tap HELM, then push MOVE — she steers where you look'
     : 'Stand aft, look down and walk — the tiller steers where you look'
-  const deckWork = onTouch ? 'release ▼ to work the deck' : 'look level to work the deck'
+  const deckWork = onTouch ? 'tap POLE off to work the deck' : 'look level to work the deck'
 
   // Separate anchors so recipes don't fight for one F-prompt when materials overlap
   const leanPos = new THREE.Vector3()
@@ -1752,6 +1752,13 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const plantFirePos = new THREE.Vector3()
   const climbPos = new THREE.Vector3()
   const raftFitPos = new THREE.Vector3()
+  /** Per-fitting anchors so facing around the deck reveals upgrades, not only Drop Anchor. */
+  const raftSailPos = new THREE.Vector3()
+  const raftRailPos = new THREE.Vector3()
+  const raftLockerPos = new THREE.Vector3()
+  const raftDeckPos = new THREE.Vector3()
+  const raftOarPos = new THREE.Vector3()
+  const raftFloatPos = new THREE.Vector3()
   const stowPos = new THREE.Vector3()
   const markPos = new THREE.Vector3()
   const seatPos = new THREE.Vector3()
@@ -3307,7 +3314,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       deps.hud.whisper(
         raft.beached
           ? `Aboard. Shove off the sand, then ${poleHowShort.toLowerCase()}.`
-          : `Aboard. ${poleHow} — ${deckWork}.`,
+          : `Aboard. ${poleHow} — ${deckWork}. Pack → Camp → Raft for sail, rail, wider deck.`,
       )
       tap('wood', 0.7)
       tap('splash', 0.35)
@@ -3618,7 +3625,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     verb: 'Drop',
     label: 'Anchor',
     radius: 3.4,
-    priority: 1.1,
+    // Low priority — fittings (sail, deck, rail…) win the action button when ready
+    priority: 0.15,
     available: () => {
       if (!deps.vitals.alive) return false
       const raft = nearestOfKind(px, pz, 'raft', 4.2)
@@ -3659,12 +3667,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   // —— deck fittings —————————————————————————————————————————
+  // Priority beats Drop Anchor so upgrades aren't hidden behind it on a phone.
+  const FIT_PRIORITY = 2.2
   addCamp('raft', {
-    position: raftFitPos,
+    position: raftSailPos,
     verb: 'Rig',
     label: 'Sail',
     cost: MAST_COST,
     radius: 2.8,
+    priority: FIT_PRIORITY,
     available: () => {
       const raft = nearestRaftOnDeck()
       return !!raft && !raft.mast && deps.vitals.alive && deps.salvage.has(MAST_COST)
@@ -3682,11 +3693,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   addCamp('raft', {
-    position: raftFitPos,
+    position: raftRailPos,
     verb: 'Lash',
     label: 'Rail',
     cost: RAIL_COST,
     radius: 2.8,
+    priority: FIT_PRIORITY,
     available: () => {
       const raft = nearestRaftOnDeck()
       return !!raft && !raft.rail && deps.vitals.alive && deps.salvage.has(RAIL_COST)
@@ -3705,11 +3717,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   addCamp('raft', {
-    position: raftFitPos,
+    position: raftLockerPos,
     verb: 'Lash',
     label: 'Locker',
     cost: LOCKER_COST,
     radius: 2.8,
+    priority: FIT_PRIORITY,
     available: () => {
       const raft = nearestRaftOnDeck()
       return !!raft && !raft.locker && deps.vitals.alive && deps.salvage.has(LOCKER_COST)
@@ -3802,11 +3815,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   addCamp('raft', {
-    position: raftFitPos,
+    position: raftDeckPos,
     verb: 'Lash',
     label: 'Deck',
     cost: EXPAND_COST,
     radius: 2.8,
+    priority: FIT_PRIORITY,
     available: () => {
       const raft = nearestRaftOnDeck()
       return (
@@ -3836,11 +3850,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   addCamp('raft', {
-    position: raftFitPos,
+    position: raftOarPos,
     verb: 'Lash',
     label: 'Oar',
     cost: OAR_COST,
     radius: 2.8,
+    priority: FIT_PRIORITY,
     available: () => {
       const raft = nearestRaftOnDeck()
       return !!raft && !raft.oar && deps.vitals.alive && deps.salvage.has(OAR_COST)
@@ -3852,7 +3867,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       fitOar(raft.object, m)
       deps.hud.whisper(
         onTouch
-          ? 'An oar on the thwart. Hold ▼ + MOVE — she bites harder and turns cleaner.'
+          ? 'An oar on the thwart. Tap POLE + MOVE — she bites harder and turns cleaner.'
           : 'An oar on the thwart. Look down and walk — she bites harder and turns cleaner.',
       )
       tap('lash', 0.6)
@@ -3861,11 +3876,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   addCamp('raft', {
-    position: raftFitPos,
+    position: raftFloatPos,
     verb: 'Lash',
     label: 'Floats',
     cost: FLOAT_COST,
     radius: 2.8,
+    priority: FIT_PRIORITY,
     available: () => {
       const raft = nearestRaftOnDeck()
       return !!raft && !raft.floats && deps.vitals.alive && deps.salvage.has(FLOAT_COST)
@@ -4812,6 +4828,17 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     if (nearRaft) {
       climbPos.set(nearRaft.x, nearRaft.deckY + 0.4, nearRaft.z)
       raftFitPos.set(nearRaft.x, nearRaft.deckY + 0.55, nearRaft.z)
+      // Spread fittings around the deck so looking/facing picks the right upgrade
+      const placeFit = (out: THREE.Vector3, lx: number, lz: number, y = 0.55) => {
+        const p = raftLocal(nearRaft, lx, lz)
+        out.set(p.x, nearRaft.deckY + y, p.z)
+      }
+      placeFit(raftSailPos, -0.45, 0, 0.7)
+      placeFit(raftRailPos, 0.1, 0.95)
+      placeFit(raftLockerPos, 0.7, -0.6)
+      placeFit(raftDeckPos, 0.15, 0.45)
+      placeFit(raftOarPos, 0.25, -0.9)
+      placeFit(raftFloatPos, -0.9, 0.55)
       stowPos.set(nearRaft.x + 0.55, nearRaft.deckY + 0.5, nearRaft.z - 0.55)
       markPos.set(nearRaft.x + 1.2, nearRaft.deckY + 0.5, nearRaft.z)
       const thwart = raftLocal(nearRaft, 1.25, 0)
@@ -4819,11 +4846,18 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const underSail = raftLocal(nearRaft, -0.35, 0)
       sailRestPos.set(underSail.x, nearRaft.deckY + 0.7, underSail.z)
       mendPos.set(underSail.x, nearRaft.deckY + 0.65, underSail.z)
-      beachPos.set(nearRaft.x, nearRaft.deckY + 0.35, nearRaft.z)
-      shovePos.set(nearRaft.x, nearRaft.deckY + 0.35, nearRaft.z)
+      // Anchor at the bow stone — not mid-deck fighting Lash Deck
+      placeFit(beachPos, -1.4, 0.2, 0.35)
+      placeFit(shovePos, -1.4, 0.2, 0.35)
     } else {
       climbPos.copy(eatPos)
       raftFitPos.copy(eatPos)
+      raftSailPos.copy(eatPos)
+      raftRailPos.copy(eatPos)
+      raftLockerPos.copy(eatPos)
+      raftDeckPos.copy(eatPos)
+      raftOarPos.copy(eatPos)
+      raftFloatPos.copy(eatPos)
       stowPos.copy(eatPos)
       markPos.copy(eatPos)
       thwartPos.copy(eatPos)
@@ -4915,15 +4949,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           if (!saidPoleHint) {
             saidPoleHint = true
             deps.hud.whisper(
-            onTouch
-              ? 'Hold POLE (▼) and push MOVE — that drives her. Release ▼ to walk the deck.'
-              : `Look down (or hold Dive) and walk — that poles her. Look level to work the deck.`,
-          )
+              onTouch
+                ? 'Tap POLE, then push MOVE — that drives her. Tap POLE again to walk the deck.'
+                : `Look down (or hold Dive) and walk — that poles her. Look level to work the deck.`,
+            )
           } else if (!saidPoleNudge && idleAboardT > 8) {
             saidPoleNudge = true
             deps.hud.whisper(
               onTouch
-                ? 'Still stuck? Keep holding ▼, then push the stick — she goes where you point.'
+                ? 'Still stuck? Tap POLE so it reads POLE ON, then push the stick.'
                 : 'Still stuck? Tip the view down or hold Dive, then walk — the hull follows.',
             )
           }
@@ -4952,13 +4986,21 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           saidHelmHint = true
           deps.hud.whisper(
             onTouch
-              ? 'The tiller aft. Hold ▼ and push MOVE — the sail takes her where you look.'
+              ? 'The tiller aft. Tap HELM, then push MOVE — the sail takes her where you look.'
               : 'The tiller aft. Look down (or hold Dive) and push — the sail takes her where you look.',
           )
         }
 
         // Quiet craft readout — applied once after the builds loop
         let driveMode: 'pole' | 'helm' | null = null
+        const canUpgrade =
+          aboard &&
+          ((!b.mast && deps.salvage.has(MAST_COST)) ||
+            (!b.rail && deps.salvage.has(RAIL_COST)) ||
+            (!b.locker && deps.salvage.has(LOCKER_COST)) ||
+            (!b.oar && deps.salvage.has(OAR_COST)) ||
+            (!b.floats && deps.salvage.has(FLOAT_COST)) ||
+            ((b.expands ?? 0) < EXPAND_MAX && deps.salvage.has(EXPAND_COST)))
         if (aboard) {
           if (b.beached) {
             craftLine = onTouch ? 'Beached — tap Shove' : 'Beached — Shove'
@@ -4971,11 +5013,16 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
             craftLine = b.oar ? 'Poling · oar' : 'Poling'
             driveMode = 'pole'
           } else if (atHelm && !poleIntent) {
-            craftLine = onTouch ? 'Stern · hold ▼ + MOVE to helm' : 'Stern · look down + walk to helm'
+            craftLine = onTouch ? 'Stern · tap HELM + MOVE' : 'Stern · look down + walk to helm'
             driveMode = 'helm'
+          } else if (!poleIntent && canUpgrade) {
+            craftLine = onTouch
+              ? 'Face a fitting or Pack → Raft to upgrade'
+              : 'Face a fitting · Pack → Raft to upgrade'
+            driveMode = 'pole'
           } else if (b.mast && !b.torn && !poleIntent) {
             craftLine = onTouch
-              ? 'Hold ▼ + MOVE to pole · stern to helm'
+              ? 'Tap POLE + MOVE · stern to helm'
               : 'Look down + walk to pole · stern to helm'
             driveMode = 'pole'
           } else if (!poleIntent) {
