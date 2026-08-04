@@ -420,6 +420,43 @@ const ctxB = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   ok(`helm drives toward the look (${helmDx.toFixed(2)} m +x)`, helmDx > 1.0)
   ok(`helm beats passive sail speed (${helmSpeed.toFixed(2)} m/s)`, helmSpeed > 1.1)
 
+  // Feet stay planted while driving — MOVE must not stroll you over the lip
+  await page.evaluate((r) => {
+    const c = Math.cos(r.yaw)
+    const s = Math.sin(r.yaw)
+    const p = window.ww.player
+    p.x = r.x + 0.3 * c
+    p.z = r.z - 0.3 * s
+    p.y = 3.2
+    p.vy = 0
+    p.mode = 'walk'
+    p.yaw = -Math.PI / 2
+    p.pitch = -0.55
+  }, (await page.evaluate(snap, 'raft'))[0])
+  await page.waitForTimeout(300)
+  const plantBefore = await page.evaluate(() => {
+    const [r] = window.ww.improvise.snapshot().filter((b) => b.kind === 'raft')
+    return { rx: r.x, rz: r.z, radius: r.radius }
+  })
+  await page.keyboard.down('KeyW')
+  await page.waitForTimeout(2800)
+  await page.keyboard.up('KeyW')
+  const plantResult = await page.evaluate((b) => {
+    const [r] = window.ww.improvise.snapshot().filter((b) => b.kind === 'raft')
+    const p = window.ww.player
+    return {
+      mode: p.mode,
+      dist: Math.hypot(p.x - r.x, p.z - r.z),
+      moved: Math.hypot(r.x - b.rx, r.z - b.rz),
+      radius: r.radius,
+    }
+  }, plantBefore)
+  ok(
+    `feet planted while poling (dist ${plantResult.dist.toFixed(2)}, mode ${plantResult.mode})`,
+    plantResult.mode === 'walk' && plantResult.dist < plantResult.radius * 0.85,
+  )
+  ok(`hull still drove with planted feet (${plantResult.moved.toFixed(2)} m)`, plantResult.moved > 0.8)
+
   // Anchor from aboard — Pack → Camp carries the verb too
   ok('Drop Anchor available', await waitRecipe(page, 'Anchor', 'Drop'))
   ok('anchor down', (await page.evaluate(snap, 'raft'))[0].anchored === true)

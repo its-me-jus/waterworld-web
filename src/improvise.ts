@@ -1695,6 +1695,19 @@ function raftLocal(b: Build, lx: number, lz: number) {
   }
 }
 
+/** World XZ → raft-local (lx along keel, lz athwart). */
+function raftLocalOf(b: Build, x: number, z: number) {
+  const heading = b.yaw ?? b.object.rotation.y
+  const s = Math.sin(heading)
+  const c = Math.cos(heading)
+  const dx = x - b.x
+  const dz = z - b.z
+  return {
+    lx: dx * c - dz * s,
+    lz: dx * s + dz * c,
+  }
+}
+
 /**
  * Beached hull sits on sand. Waves may wet the planks but must not lift the
  * whole craft — that was the hover-over-beach glitch.
@@ -1816,6 +1829,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let platSea = 0
   /** Dive/look-down held — intentional pole anywhere aboard. */
   let poleIntent = false
+  /** Deck-local feet plant while poling/helming — stick drives the hull, not a stroll off the lip. */
+  let drivePlant: { lx: number; lz: number } | null = null
   /** Seconds of stickiness after Climb — kills leftover swim speed that throws you off. */
   let boardGrace = 0
   /** After a wash-off, stay swimming briefly so the deck skirt can't reclaim you. */
@@ -4592,8 +4607,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     pz = player.z
     live = player
     swimming = !view.walking
-    // Pole: look down at the water, or hold Dive (Shift/Q / Dive button)
-    poleIntent = lookPitch <= POLE_LOOK_DOWN || !!intent?.dive
+    // Phone: only the held POLE/HELM (▼) button drives — looking at the deck to
+    // tap Drop Anchor must not steal the stick into a pole. Desktop still uses
+    // look-down, with Dive/Shift as a backup.
+    poleIntent = onTouch ? !!intent?.dive : lookPitch <= POLE_LOOK_DOWN || !!intent?.dive
     onLand = view.walking && view.groundY > 0.3
     groundY = view.groundY
     if (shoveGrace > 0) shoveGrace = Math.max(0, shoveGrace - dt)
@@ -4898,15 +4915,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           if (!saidPoleHint) {
             saidPoleHint = true
             deps.hud.whisper(
-              onTouch
-                ? `Hold ▼ and push MOVE — that poles her. Release ▼ to work the deck.`
-                : `Look down (or hold Dive) and walk — that poles her. Look level to work the deck.`,
-            )
+            onTouch
+              ? 'Hold POLE (▼) and push MOVE — that drives her. Release ▼ to walk the deck.'
+              : `Look down (or hold Dive) and walk — that poles her. Look level to work the deck.`,
+          )
           } else if (!saidPoleNudge && idleAboardT > 8) {
             saidPoleNudge = true
             deps.hud.whisper(
               onTouch
-                ? 'Still stuck? Hold the ▼ button, then push the stick — the hull follows.'
+                ? 'Still stuck? Keep holding ▼, then push the stick — she goes where you point.'
                 : 'Still stuck? Tip the view down or hold Dive, then walk — the hull follows.',
             )
           }
@@ -5024,24 +5041,31 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           vx = 0
           vz = 0
         } else if (sailing) {
-          // Helmed under canvas — the tiller puts the wind where you aim it
-          const aimX = player.dirX
-          const aimZ = player.dirZ
-          const blend = 1 - Math.exp(-(b.oar ? 2.9 : 2.2) * dt)
-          vx += (aimX * helmTop - vx) * blend
-          vz += (aimZ * helmTop - vz) * blend
+          // Helmed under canvas — aim by facing, stick only commits the drive
+          const aimX = -Math.sin(facingYaw)
+          const aimZ = -Math.cos(facingYaw)
+          // Blend stick direction when moving so strafe still steers
+          const stickAim = view.speed > 0.12
+          const ax = stickAim ? player.dirX : aimX
+          const az = stickAim ? player.dirZ : aimZ
+          const blend = 1 - Math.exp(-(b.oar ? 2.4 : 1.8) * dt)
+          vx += (ax * helmTop - vx) * blend
+          vz += (az * helmTop - vz) * blend
           if (!saidHelm && Math.hypot(vx, vz) > 0.6) {
             saidHelm = true
             deps.hud.whisper('Hands on the tiller. Canvas draws, and she answers.')
             tap('sail', 0.5)
           }
         } else if (poling) {
-          const aimX = player.dirX
-          const aimZ = player.dirZ
-          // Oar bites harder into a new heading
-          const blend = 1 - Math.exp(-(b.oar ? 3.4 : 2.4) * dt)
-          vx += (aimX * top - vx) * blend
-          vz += (aimZ * top - vz) * blend
+          // Prefer stick direction; fall back to facing so a tap of POLE alone
+          // doesn't yank the hull the wrong way.
+          const stickAim = view.speed > 0.12
+          const ax = stickAim ? player.dirX : -Math.sin(facingYaw)
+          const az = stickAim ? player.dirZ : -Math.cos(facingYaw)
+          // Gentler turn — chasing yaw too hard while the stick walks you was the spin
+          const blend = 1 - Math.exp(-(b.oar ? 2.6 : 1.9) * dt)
+          vx += (ax * top - vx) * blend
+          vz += (az * top - vz) * blend
           if (!saidPole && Math.hypot(vx, vz) > 0.4) {
             saidPole = true
             deps.hud.whisper(b.oar ? 'The oar finds water.' : 'The deck answers the pole.')
@@ -5125,7 +5149,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           let dyaw = want - heading
           while (dyaw > Math.PI) dyaw -= Math.PI * 2
           while (dyaw < -Math.PI) dyaw += Math.PI * 2
-          const yawRate = b.oar ? 1.85 : 1.2
+          // Softer yaw on touch — hard chase + walking the deck was the spin-off
+          const yawRate = (b.oar ? 1.35 : 0.85) * (onTouch ? 0.75 : 1)
           heading += dyaw * (1 - Math.exp(-yawRate * dt))
         }
         b.yaw = heading
@@ -5187,6 +5212,35 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         if (aboard) {
           player.x += b.x - prevX
           player.z += b.z - prevZ
+
+          // While driving, plant feet on the deck — MOVE steers the hull, it
+          // must not stroll you over the gunwale as she yaws.
+          const driving = poling || sailing
+          if (driving) {
+            if (!drivePlant) {
+              const loc = raftLocalOf(b, player.x, player.z)
+              // Keep a little room from the lip so a plant near the edge is safe
+              const maxR = b.radius * 0.55
+              const r = Math.hypot(loc.lx, loc.lz)
+              if (r > maxR) {
+                loc.lx *= maxR / r
+                loc.lz *= maxR / r
+              }
+              drivePlant = loc
+            }
+            const planted = raftLocal(b, drivePlant.lx, drivePlant.lz)
+            player.x = planted.x
+            player.z = planted.z
+            player.y = b.deckY + WALK_EYE
+            player.vy = 0
+            player.submersion = 0
+            player.mode = 'walk'
+            onRaftDeck = true
+            swimming = false
+          } else {
+            drivePlant = null
+          }
+
           // Keep feet on the deck while boarding; free walk after
           if (boardGrace > 0) {
             const d = Math.hypot(player.x - b.x, player.z - b.z)
@@ -5194,7 +5248,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
               player.x = b.x
               player.z = b.z
             }
-          } else {
+          } else if (!driving) {
             // Soft clamp inside the lip so micro-overshoot doesn't drop you
             const d = Math.hypot(player.x - b.x, player.z - b.z)
             const lip = b.radius * DECK_LIP
@@ -5420,6 +5474,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       lastCraft = craftLine ?? ''
       deps.hud.setCraft(craftLine)
     }
+    if (!craftLine) drivePlant = null
     deps.setDriveMode?.(nextDriveMode)
     stockTraps(dt)
 
@@ -5558,6 +5613,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     idleAboardT = 0
     poleSplashAt = 0
     lastCraft = ''
+    drivePlant = null
     deps.hud.setCraft(null)
     deps.setDriveMode?.(null)
   }
