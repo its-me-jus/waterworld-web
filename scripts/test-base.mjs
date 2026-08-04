@@ -152,31 +152,44 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   const [plat] = await page.evaluate(snap, 'platform')
   ok('platform snapped to the grid', Math.abs(plat.x / 2.4 - Math.round(plat.x / 2.4)) < 1e-6)
 
-  // Expand: stand on the deck, face +z, Lay the neighbour tile
+  // Expand: stand on the deck, face each cardinal until Lay aims an empty neighbour
   await teleport(page, plat.x, plat.z, plat.y + 1.75, 'walk')
-  await page.evaluate(() => {
-    window.ww.player.yaw = 0
-    window.ww.player.pitch = 0
-  })
   await page.waitForTimeout(400)
-  ok('expand Lay Platform available', await waitRecipe(page, 'Platform'))
+  let expanded = false
+  for (const yaw of [Math.PI / 2, Math.PI, -Math.PI / 2, 0]) {
+    await page.evaluate((y) => {
+      window.ww.player.yaw = y
+      window.ww.player.pitch = 0
+    }, yaw)
+    await page.waitForTimeout(300)
+    if (await waitRecipe(page, 'Platform', null, 4000)) {
+      expanded = true
+      break
+    }
+  }
+  ok('expand Lay Platform available', expanded)
   ok('second platform joined', (await page.evaluate(counts)).platform === 2)
   const plats = await page.evaluate(snap, 'platform')
-  const joined = plats.some(
-    (p) => Math.abs(p.x - plat.x) < 0.01 && Math.abs(p.z - (plat.z + 2.4)) < 0.01,
-  )
-  ok('neighbour snapped +1 tile on z', joined)
+  const joined = plats.some((p) => {
+    if (p.x === plat.x && p.z === plat.z) return false
+    const dx = Math.abs(p.x - plat.x)
+    const dz = Math.abs(p.z - plat.z)
+    return (dx < 0.01 && Math.abs(dz - 2.4) < 0.01) || (dz < 0.01 && Math.abs(dx - 2.4) < 0.01)
+  })
+  ok('neighbour snapped one tile away', joined)
 
   // Woodpile stockpile beside the house
   await teleport(page, plat.x - 3.2, plat.z, plat.y + 1.75, 'walk')
   await page.waitForTimeout(400)
   ok('Stack Woodpile available', await waitRecipe(page, 'Woodpile'))
   ok('woodpile planted', (await page.evaluate(counts)).woodpile === 1)
+  const [pile] = await page.evaluate(snap, 'woodpile')
+  await teleport(page, pile.x + 0.4, pile.z + 0.4, (pile.y ?? plat.y) + 1.6, 'walk')
   await page.evaluate(() => {
     window.ww.salvage.stash.plank += 6
   })
-  await page.waitForTimeout(200)
-  const piled = await faceAndPressF(page, { yaw: Math.PI / 2, pitch: -0.2 }, /stow on pile/i, 12000)
+  await page.waitForTimeout(400)
+  const piled = await faceAndPressF(page, { yaw: Math.PI, pitch: -0.4 }, /stow on pile/i, 15000)
   ok('stowed planks on pile', piled)
   const pileHold = await page.evaluate(() => {
     const w = window.ww.improvise.snapshot().find((b) => b.kind === 'woodpile')

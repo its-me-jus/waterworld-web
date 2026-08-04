@@ -1655,6 +1655,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const roofPos = new THREE.Vector3()
   const strikePos = new THREE.Vector3()
   const climbPlatPos = new THREE.Vector3()
+  const woodpilePos = new THREE.Vector3()
   const sleepPlatPos = new THREE.Vector3()
 
   /** Construction recipes also listed in Pack → Camp (same use() as F). */
@@ -2725,10 +2726,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   deps.interactions.add({
-    position: leanPos,
+    position: woodpilePos,
     verb: 'Stow',
     label: 'on pile',
-    radius: 2.5,
+    radius: 2.8,
+    priority: 1.2,
     available: () => {
       const pile = nearestOfKind(px, pz, 'woodpile', 2.5)
       if (!pile?.hold || !deps.vitals.alive) return false
@@ -2752,10 +2754,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   deps.interactions.add({
-    position: leanPos,
+    position: woodpilePos,
     verb: 'Fetch',
     label: 'from pile',
-    radius: 2.5,
+    radius: 2.8,
     available: () => {
       const pile = nearestOfKind(px, pz, 'woodpile', 2.5)
       if (!pile?.hold || !deps.vitals.alive) return false
@@ -4604,6 +4606,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const plat = nearestOfKind(player.x, player.z, 'platform', 3.0)
       if (plat) setAnchor(climbPlatPos, plat.x, plat.z, plat.deckY + 0.4)
       else climbPlatPos.copy(eatPos)
+      const pile = nearestOfKind(player.x, player.z, 'woodpile', 3.0)
+      if (pile) setAnchor(woodpilePos, pile.x, pile.z, pile.deckY + 0.45)
+      else woodpilePos.copy(eatPos)
     }
 
     updateCarpentryGhost()
