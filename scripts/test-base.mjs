@@ -441,7 +441,11 @@ const ctxB = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   const drift = Math.hypot(heldAt.x - anchoredAt.x, heldAt.z - anchoredAt.z)
   ok(`anchored hull holds (${drift.toFixed(2)} m)`, drift < 0.3)
 
-  // Weigh and she's free again
+  // Weigh and she's free again — re-seat on the deck in case the hold walk
+  // edged you off the lip (headless physics is sticky).
+  const [rAnchor] = await page.evaluate(snap, 'raft')
+  await teleport(page, rAnchor.x, rAnchor.z, 3.2, 'walk')
+  await page.waitForTimeout(400)
   ok('Weigh Anchor available', await waitRecipe(page, 'Anchor', 'Weigh'))
   ok('anchor weighed', (await page.evaluate(snap, 'raft'))[0].anchored === false)
 
