@@ -83,6 +83,7 @@ type BuildKind =
   | 'drip'
   | 'cistern'
   | 'camp-locker'
+  | 'woodpile'
   | 'trap'
   // —— carpentry: the freeform pieces you architect a base from ——
   | 'platform'
@@ -195,6 +196,10 @@ const PLATFORM_COST: Cost = { plank: 2 }
 const WALL_COST: Cost = { plank: 1 }
 const DOOR_COST: Cost = { plank: 1 }
 const ROOF_COST: Cost = { plank: 1, leaf: 1 }
+/** First sticks of a shore woodpile — the rest Stow in. */
+const WOODPILE_COST: Cost = { plank: 1 }
+/** Cap on planks sitting in one pile (mansion stockpile, not a cheat crate). */
+const WOODPILE_MAX = 24
 /** Max times you can widen one raft. */
 const EXPAND_MAX = 3
 const SIDE_MAX = 2
@@ -684,6 +689,29 @@ function campLockerMesh(m: ReturnType<typeof mats>) {
   lash.position.set(0, 0.45, 0.2)
   lash.rotation.x = Math.PI / 2
   g.add(lash)
+  return g
+}
+
+/**
+ * A shore woodpile — sticks you can Stow into and Fetch from without a crate.
+ * The stack mesh is rebuilt when the count changes so a fat pile reads as stock.
+ */
+function woodpileMesh(m: ReturnType<typeof mats>, planks = 1) {
+  const g = new THREE.Group()
+  g.name = 'woodpile'
+  const n = Math.max(1, Math.min(WOODPILE_MAX, planks))
+  const rows = Math.min(4, Math.ceil(n / 3))
+  let left = n
+  for (let row = 0; row < rows && left > 0; row++) {
+    const across = Math.min(3, left)
+    for (let i = 0; i < across; i++) {
+      const plank = plankObject(1.35 - row * 0.08, 0.16, m.wood)
+      plank.position.set((i - (across - 1) / 2) * 0.22, 0.1 + row * 0.18, (row % 2) * 0.08)
+      plank.rotation.y = ((i + row) % 3) * 0.04
+      g.add(plank)
+      left--
+    }
+  }
   return g
 }
 
@@ -1638,6 +1666,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     item: Interactable
   }
   const campEntries: CampEntry[] = []
+  /** Set when the Lay Platform recipe is registered — update() raises its priority while expanding. */
+  let layPlatformItem: Interactable | null = null
 
   function addCamp(
     group: CampGroup,
@@ -1741,6 +1771,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
   const snapTile = (v: number) => Math.round(v / TILE) * TILE
 
+  /** Live snap target for Lay Platform — recomputed every frame. */
+  let platSnapX = 0
+  let platSnapZ = 0
+  /** True when the snap is an empty neighbour of a deck you're on / facing. */
+  let platExpanding = false
+
   /** The platform tile containing (x, z) — Chebyshev within half a tile. */
   function platformAt(x: number, z: number, slack = 0.06): Build | null {
     for (const b of builds) {
@@ -1748,6 +1784,39 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (Math.max(Math.abs(b.x - x), Math.abs(b.z - z)) < TILE / 2 + slack) return b
     }
     return null
+  }
+
+  /**
+   * Where the next deck tile wants to land.
+   *
+   * Standing on a platform: always the empty neighbour you're facing — that's
+   * how rooms grow. Looking at a deck from outside: the empty cell past it if
+   * you're aimed that way, else the ordinary look-ahead snap. Occupied cells
+   * never win, which is why Lay Platform used to flicker off when you glanced
+   * back at your own floor.
+   */
+  function resolvePlatformSnap(lookX: number, lookZ: number): { x: number; z: number; expanding: boolean } {
+    const under = platformAt(px, pz)
+    if (under) {
+      const side = tileSide(under)
+      const nx = under.x + side.dx * TILE
+      const nz = under.z + side.dz * TILE
+      if (!platformAt(nx, nz, TILE / 2)) return { x: nx, z: nz, expanding: true }
+    }
+    const near = nearestOfKind(px, pz, 'platform', TILE * 1.35)
+    if (near) {
+      const side = tileSide(near)
+      const nx = near.x + side.dx * TILE
+      const nz = near.z + side.dz * TILE
+      if (!platformAt(nx, nz, TILE / 2)) {
+        const toEmpty = Math.hypot(lookX - nx, lookZ - nz)
+        const toNear = Math.hypot(lookX - near.x, lookZ - near.z)
+        if (toEmpty <= toNear + 0.4) return { x: nx, z: nz, expanding: true }
+      }
+    }
+    const sx = snapTile(lookX)
+    const sz = snapTile(lookZ)
+    return { x: sx, z: sz, expanding: false }
   }
 
   /** Carpentry pieces belonging to a tile — walls at its edges, its roof. */
@@ -1843,18 +1912,26 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     tap('wood', 0.6)
   }
 
+  /** Builds that share a plot with carpentry without blocking the next tile. */
+  function blocksPlatform(b: Build) {
+    return (
+      b.kind !== 'platform' &&
+      b.kind !== 'wall' &&
+      b.kind !== 'roof' &&
+      b.kind !== 'woodpile'
+    )
+  }
+
   function canLayPlatform() {
     if (!deps.vitals.alive || carried) return false
     if (!deps.salvage.has(PLATFORM_COST)) return false
     // Dry sand, the wash, or the shallows — stilts reach a couple metres down
     if (platGround < -PLATFORM_MAX_DEPTH) return false
-    const sx = snapTile(platPos.x)
-    const sz = snapTile(platPos.z)
-    if (platformAt(sx, sz, TILE / 2)) return false
+    if (platformAt(platSnapX, platSnapZ, TILE / 2)) return false
     // Other camps own their ground; carpentry tiles may sit beside anything wooden
     for (const b of builds) {
-      if (b.kind === 'platform' || b.kind === 'wall' || b.kind === 'roof') continue
-      if (Math.hypot(b.x - sx, b.z - sz) < 2.1) return false
+      if (!blocksPlatform(b)) continue
+      if (Math.hypot(b.x - platSnapX, b.z - platSnapZ) < 2.1) return false
     }
     return true
   }
@@ -1883,6 +1960,132 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     if (!onLand && !onPlatformDeck) return false
     const tile = wallTargetTile()
     return !!tile && !tileRoof(tile)
+  }
+
+  function refitWoodpile(pile: Build) {
+    const n = Math.max(1, pile.hold?.plank ?? 1)
+    const next = woodpileMesh(m, n)
+    next.position.copy(pile.object.position)
+    next.rotation.y = pile.yaw ?? pile.object.rotation.y
+    scene.remove(pile.object)
+    disposeBuildObject(pile.object)
+    pile.object = next
+    scene.add(next)
+  }
+
+  // Faint placement ghosts — where the next piece will land, not a marker.
+  const ghostMat = new THREE.MeshStandardMaterial({
+    color: 0x9a8264,
+    roughness: 1,
+    transparent: true,
+    opacity: 0.28,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+  const ghostLeaf = new THREE.MeshStandardMaterial({
+    color: 0x6a8a4a,
+    roughness: 1,
+    transparent: true,
+    opacity: 0.22,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+  const ghostRoot = new THREE.Group()
+  ghostRoot.name = 'carpentryGhost'
+  ghostRoot.visible = false
+  scene.add(ghostRoot)
+
+  function clearGhost() {
+    while (ghostRoot.children.length) {
+      const c = ghostRoot.children[0]
+      ghostRoot.remove(c)
+      c.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) obj.geometry.dispose()
+      })
+    }
+    ghostRoot.visible = false
+  }
+
+  function showGhostPlatform(x: number, z: number, y: number) {
+    clearGhost()
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(TILE - 0.12, 0.08, TILE - 0.12), ghostMat)
+    deck.position.y = 0.04
+    ghostRoot.add(deck)
+    ghostRoot.position.set(x, y, z)
+    ghostRoot.visible = true
+  }
+
+  function showGhostWall(x: number, z: number, y: number, yaw: number, door: boolean) {
+    clearGhost()
+    const W = TILE - 0.24
+    if (door) {
+      const left = new THREE.Mesh(new THREE.BoxGeometry(0.72, WALL_HEIGHT - 0.2, 0.06), ghostMat)
+      left.position.set(-W / 2 + 0.45, WALL_HEIGHT / 2, 0)
+      ghostRoot.add(left)
+      const right = new THREE.Mesh(new THREE.BoxGeometry(0.72, WALL_HEIGHT - 0.2, 0.06), ghostMat)
+      right.position.set(W / 2 - 0.45, WALL_HEIGHT / 2, 0)
+      ghostRoot.add(right)
+    } else {
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(W, WALL_HEIGHT - 0.15, 0.06), ghostMat)
+      panel.position.y = WALL_HEIGHT / 2
+      ghostRoot.add(panel)
+    }
+    ghostRoot.position.set(x, y, z)
+    ghostRoot.rotation.y = yaw
+    ghostRoot.visible = true
+  }
+
+  function showGhostRoof(x: number, z: number, y: number) {
+    clearGhost()
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(TILE - 0.05, 0.06, TILE - 0.05), ghostMat)
+    panel.rotation.x = -0.28
+    panel.position.y = 0.1
+    ghostRoot.add(panel)
+    const thatch = new THREE.Mesh(new THREE.BoxGeometry(TILE - 0.2, 0.04, TILE - 0.2), ghostLeaf)
+    thatch.rotation.x = -0.28
+    thatch.position.y = 0.16
+    ghostRoot.add(thatch)
+    ghostRoot.position.set(x, y, z)
+    ghostRoot.rotation.y = 0
+    ghostRoot.visible = true
+  }
+
+  function updateCarpentryGhost() {
+    if (canLayPlatform()) {
+      const ground = deps.groundAt(platSnapX, platSnapZ)
+      const sea = sampleOcean(platSnapX, platSnapZ, time).y
+      const overWater = ground <= sea - 0.3
+      const deckY = overWater ? sea + PLATFORM_RISE_SEA : ground + PLATFORM_RISE_LAND
+      showGhostPlatform(platSnapX, platSnapZ, deckY)
+      return
+    }
+    if (canRaiseWall() || canHangDoor()) {
+      const tile = wallTargetTile()
+      const door = !canRaiseWall() && canHangDoor()
+      if (tile) {
+        const side = tileSide(tile)
+        const mid = tileEdgeMid(tile, side)
+        showGhostWall(
+          mid.x,
+          mid.z,
+          tile.deckY,
+          side.dx !== 0 ? Math.PI / 2 : 0,
+          door,
+        )
+      } else {
+        const snapped = Math.round(yaw / (Math.PI / 2)) * (Math.PI / 2)
+        showGhostWall(wallPos.x, wallPos.z, deps.groundAt(wallPos.x, wallPos.z), snapped, false)
+      }
+      return
+    }
+    if (canPitchRoof()) {
+      const tile = wallTargetTile()
+      if (tile) {
+        showGhostRoof(tile.x, tile.z, tile.deckY + ROOF_RISE)
+        return
+      }
+    }
+    clearGhost()
   }
 
   function addBuild(
@@ -2485,6 +2688,103 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const y = deps.groundAt(x, z)
       addBuild('camp-locker', campLockerMesh(m), x, z, y, 1.6, 0.08, { hold: emptyHold() })
       deps.hud.whisper('Crate on dry sand. Stow what the swim cannot carry.')
+    },
+  })
+
+  // Woodpile — stock planks for a long build without needing a crate
+  addCamp('build', {
+    position: leanPos,
+    verb: 'Stack',
+    label: 'Woodpile',
+    cost: WOODPILE_COST,
+    radius: REACH,
+    available: () => {
+      if (!deps.vitals.alive || carried || !deps.salvage.has(WOODPILE_COST)) return false
+      if (!(onLand || onPlatformDeck)) return false
+      if (onLand && groundY < 0.5) return false
+      if (nearestOfKind(leanPos.x, leanPos.z, 'woodpile', 2.8)) return false
+      for (const b of builds) {
+        if (!blocksPlatform(b) || b.kind === 'woodpile') continue
+        if (Math.hypot(b.x - leanPos.x, b.z - leanPos.z) < 1.2) return false
+      }
+      return true
+    },
+    use: () => {
+      if (!deps.salvage.spend(WOODPILE_COST)) return
+      const x = leanPos.x
+      const z = leanPos.z
+      const y = onPlatformDeck
+        ? (platformAt(px, pz)?.deckY ?? deps.groundAt(x, z) + 0.08)
+        : deps.groundAt(x, z)
+      const hold = emptyHold()
+      hold.plank = 1
+      addBuild('woodpile', woodpileMesh(m, 1), x, z, y, 1.5, 0.05, { hold })
+      deps.hud.whisper('A pile of sticks. Stow planks here — Fetch when the house needs them.')
+      tap('wood', 0.55)
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Stow',
+    label: 'on pile',
+    radius: 2.5,
+    available: () => {
+      const pile = nearestOfKind(px, pz, 'woodpile', 2.5)
+      if (!pile?.hold || !deps.vitals.alive) return false
+      if (deps.salvage.stash.plank <= 0) return false
+      return (pile.hold.plank ?? 0) < WOODPILE_MAX
+    },
+    use: () => {
+      const pile = nearestOfKind(px, pz, 'woodpile', 2.5)
+      if (!pile?.hold) return
+      const room = WOODPILE_MAX - pile.hold.plank
+      if (room <= 0) return
+      const move = Math.min(room, deps.salvage.stash.plank)
+      deps.salvage.stash.plank -= move
+      pile.hold.plank += move
+      refitWoodpile(pile)
+      deps.hud.whisper(
+        move === 1 ? 'One plank on the pile.' : `${move} planks stacked. The pile grows.`,
+      )
+      tap('wood', 0.4)
+    },
+  })
+
+  deps.interactions.add({
+    position: leanPos,
+    verb: 'Fetch',
+    label: 'from pile',
+    radius: 2.5,
+    available: () => {
+      const pile = nearestOfKind(px, pz, 'woodpile', 2.5)
+      if (!pile?.hold || !deps.vitals.alive) return false
+      return pile.hold.plank > 0
+    },
+    use: () => {
+      const pile = nearestOfKind(px, pz, 'woodpile', 2.5)
+      if (!pile?.hold) return
+      // A handful at a time — leave the rest stacked for the next bay
+      const take = Math.min(4, pile.hold.plank)
+      deps.salvage.stash.plank += take
+      pile.hold.plank -= take
+      if (pile.hold.plank <= 0) {
+        builds.splice(builds.indexOf(pile), 1)
+        for (const item of pile.items) deps.interactions.remove(item)
+        scene.remove(pile.object)
+        disposeBuildObject(pile.object)
+        deps.hud.whisper(
+          take === 1 ? 'The last plank. The sand is bare again.' : `${take} planks — the pile is gone.`,
+        )
+      } else {
+        refitWoodpile(pile)
+        deps.hud.whisper(
+          take === 1
+            ? `One plank off the pile. ${pile.hold.plank} left.`
+            : `${take} planks off the pile. ${pile.hold.plank} still stacked.`,
+        )
+      }
+      tap('wood', 0.45)
     },
   })
 
@@ -3523,18 +3823,22 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   // wash, or on stilts over the shallows. Walls hang on tile edges (or stand
   // free as windbreaks), a door hangs where a wall would box you in, and a
   // roof over a closed-in tile turns it into somewhere you can Sleep.
+  // Stand on a deck and face the next square to join another tile; a faint
+  // ghost shows where the piece will land. Pack → Camp lists ready recipes
+  // when the F-prompt is busy with something closer.
 
-  addCamp('build', {
+  const layPlatformItemRegistered = addCamp('build', {
     position: platPos,
     verb: 'Lay',
     label: 'Platform',
     cost: PLATFORM_COST,
     radius: REACH,
+    priority: 0,
     available: canLayPlatform,
     use: () => {
       if (!deps.salvage.spend(PLATFORM_COST)) return
-      const sx = snapTile(platPos.x)
-      const sz = snapTile(platPos.z)
+      const sx = platSnapX
+      const sz = platSnapZ
       const ground = deps.groundAt(sx, sz)
       const sea = sampleOcean(sx, sz, time).y
       const overWater = ground <= sea - 0.3
@@ -3543,12 +3847,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       deps.hud.whisper(
         overWater
           ? 'Piles in the shallows. A deck over the water.'
-          : "Stilts and planks. A floor that isn't sand.",
+          : platExpanding
+            ? 'Joined. Face the next square to grow the floor.'
+            : "Stilts and planks. A floor that isn't sand.",
       )
       tap('wood', 0.8)
       tap('lash', 0.5)
     },
   })
+  layPlatformItem = layPlatformItemRegistered
 
   addCamp('build', {
     position: wallPos,
@@ -3617,7 +3924,18 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (!tile || !deps.salvage.spend(ROOF_COST)) return
       addBuild('roof', roofMesh(m), tile.x, tile.z, tile.deckY + ROOF_RISE, 1.8, 0, { yaw: 0 })
       recomputeTileShelter(tile)
-      deps.hud.whisper('A lid on it. Rain sheds. Shade stays. Sleep if it’s closed in.')
+      const neighbours = [
+        platformAt(tile.x + TILE, tile.z),
+        platformAt(tile.x - TILE, tile.z),
+        platformAt(tile.x, tile.z + TILE),
+        platformAt(tile.x, tile.z - TILE),
+      ].filter(Boolean)
+      const roofedBay = neighbours.some((n) => n && tileRoof(n))
+      deps.hud.whisper(
+        roofedBay
+          ? 'Another bay under cover. Keep joining decks — each lid its own planks and fronds.'
+          : 'A lid on it. Rain sheds. Shade stays. Sleep if it’s closed in.',
+      )
       tap('wood', 0.75)
       tap('lash', 0.4)
     },
@@ -4176,7 +4494,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     const signalY = deps.groundAt(signalAt.x, signalAt.z)
 
     if (onLand && aheadY > 0.3) setAnchor(leanPos, ahead.x, ahead.z, aheadY + 0.5)
-    else setAnchor(leanPos, player.x, player.z, player.y)
+    else if (onPlatformDeck) {
+      const deck = platformAt(px, pz)?.deckY ?? player.y
+      setAnchor(leanPos, ahead.x, ahead.z, deck + 0.35)
+    } else setAnchor(leanPos, player.x, player.z, player.y)
 
     if ((onLand && fireY > 0.3) || onRaftDeck || onPlatformDeck) {
       const y = onRaftDeck
@@ -4223,16 +4544,42 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
     // —— carpentry anchors ———————————————————————————————————
     // Platform snaps to the world tile grid; walls hang on tile edges when a
-    // tile is in reach, else stand free where you face.
+    // tile is in reach, else stand free where you face. Standing on a deck
+    // always aims the next empty neighbour you're facing so rooms grow cleanly.
     const platAt = offset(player, facingYaw, 1.9, 0)
-    platGround = deps.groundAt(platAt.x, platAt.z)
-    platSea = sampleOcean(platAt.x, platAt.z, t).y
-    setAnchor(
-      platPos,
-      snapTile(platAt.x),
-      snapTile(platAt.z),
-      Math.max(platGround + 0.6, platSea + 0.7),
-    )
+    const snap = resolvePlatformSnap(platAt.x, platAt.z)
+    platSnapX = snap.x
+    platSnapZ = snap.z
+    platExpanding = snap.expanding
+    platGround = deps.groundAt(platSnapX, platSnapZ)
+    platSea = sampleOcean(platSnapX, platSnapZ, t).y
+    // Prompt sits on the near edge when expanding so Lay beats Raise Wall
+    if (platExpanding) {
+      const under = platformAt(px, pz) ?? nearestOfKind(px, pz, 'platform', TILE * 1.35)
+      if (under) {
+        setAnchor(
+          platPos,
+          (under.x + platSnapX) * 0.5,
+          (under.z + platSnapZ) * 0.5,
+          Math.max(under.deckY + 0.5, platGround + 0.6, platSea + 0.7),
+        )
+      } else {
+        setAnchor(
+          platPos,
+          platSnapX,
+          platSnapZ,
+          Math.max(platGround + 0.6, platSea + 0.7),
+        )
+      }
+    } else {
+      setAnchor(
+        platPos,
+        platSnapX,
+        platSnapZ,
+        Math.max(platGround + 0.6, platSea + 0.7),
+      )
+    }
+    layPlatformItem && (layPlatformItem.priority = platExpanding && canLayPlatform() ? 2.6 : 0)
     const wallAt = offset(player, facingYaw, 1.5, 0)
     setAnchor(wallPos, wallAt.x, wallAt.z, deps.groundAt(wallAt.x, wallAt.z) + 1.0)
     {
@@ -4258,6 +4605,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (plat) setAnchor(climbPlatPos, plat.x, plat.z, plat.deckY + 0.4)
       else climbPlatPos.copy(eatPos)
     }
+
+    updateCarpentryGhost()
 
     const foot = deps.groundAt(player.x, player.z)
     const seaHere = sampleOcean(player.x, player.z, t).y
@@ -4948,6 +5297,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       disposeBuildObject(carried.object)
       carried = null
     }
+    clearGhost()
     torch.visible = false
     restReadyAt = 0
     sitReadyAt = 0
@@ -4982,7 +5332,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       x: b.x,
       z: b.z,
       yaw: b.yaw ?? b.object.rotation.y,
-      y: b.kind === 'platform' || b.kind === 'wall' || b.kind === 'roof' ? b.deckY : undefined,
+      y:
+        b.kind === 'platform' || b.kind === 'wall' || b.kind === 'roof' || b.kind === 'woodpile'
+          ? b.deckY
+          : undefined,
       variant: b.variant,
       water: b.water,
       buoyant: b.buoyant,
@@ -5122,6 +5475,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         build = addBuild('camp-locker', campLockerMesh(m), x, z, deps.groundAt(x, z), 1.6, 0.08, {
           hold: fillHold(s.hold),
         })
+      } else if (kind === 'woodpile') {
+        const hold = fillHold(s.hold)
+        if (hold.plank < 1) hold.plank = 1
+        const y = s.y ?? deps.groundAt(x, z)
+        build = addBuild('woodpile', woodpileMesh(m, hold.plank), x, z, y, 1.5, 0.05, { hold })
       } else if (kind === 'trap') {
         build = addBuild('trap', trapMesh(m), x, z, deps.groundAt(x, z), 1.6, 0, {
           fish: s.fish ?? 0,
@@ -5281,6 +5639,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         drip: 0,
         cistern: 0,
         'camp-locker': 0,
+        woodpile: 0,
         trap: 0,
         platform: 0,
         wall: 0,
@@ -5324,6 +5683,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       wall: WALL_COST,
       door: DOOR_COST,
       roof: ROOF_COST,
+      woodpile: WOODPILE_COST,
       label: costLabel,
     },
   }

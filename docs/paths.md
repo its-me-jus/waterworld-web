@@ -184,12 +184,32 @@ markers in-world, no "correct" build order.
 The architect-your-own-base layer. Tiles snap to a 2.4 m world grid so pieces
 always meet flush; every piece **Strike**s down for a full refund.
 
+**How to operate it**
+
+1. Carry **2 planks** (Break driftwood, Fell palms with the knife, or Fetch from
+   a woodpile).
+2. Stand on dry sand / the wash / shallows (stilts reach ~2 m down) and face
+   the empty square you want — a faint ghost shows the next deck.
+3. **Lay Platform** (F, or Pack → Camp). Standing on a deck, facing out always
+   aims the empty neighbour so rooms grow. Looking back at your own floor
+   hides the prompt on purpose.
+4. Stand on the tile, face an edge → **Raise Wall** / **Hang Door**. Pitch a
+   **Roof** (1 plank + 1 frond) per tile. A closed-in, roofed tile is a bedroom.
+5. Join more decks the same way. Each bay needs its own lid — bigger houses
+   are more tiles, more walls, more roofs (and more planks).
+6. Stock materials: **Stack Woodpile** (1 plank to plant) then **Stow on pile**
+   / **Fetch from pile**, or **Lash Crate** for mixed salvage.
+
+When the F-prompt shows Strike / Sleep / Fire instead, Pack → **Camp** still
+lists every recipe that's ready right now.
+
 | Recipe | Cost | Where | What it does |
 |--------|------|-------|--------------|
 | **Lay platform** | 2 plank | Land, wash, or shallows (to ~2 m) | Stilt deck tile. Walkable; skirts to a ramp on land; **Climb** aboard from the water |
 | **Raise wall** | 1 plank | Tile edge (or free-standing) | Solid panel — blocks wind and body. Free walls are windbreaks (0.5 shelter) |
 | **Hang door** | 1 plank | Tile edge | Wall with a walk-through gap; blocks its cheeks, passes the middle, counts toward the room |
 | **Pitch roof** | 1 plank + 1 frond | Over a tile | Shed lid. Roofed + walled (shelter ≥ 0.7) makes a bedroom: **Sleep** skips to dawn like the lean-to |
+| **Stack woodpile** | 1 plank | Dry ground or a deck | Shore stockpile (up to 24). **Stow on pile** / **Fetch from pile** (handfuls of 4) |
 | **Strike** | hands | Any piece | Dismantle for a full refund |
 
 A tile's shelter sums what's hung on it: 0.18 base, +0.11 per wall, +0.08 per

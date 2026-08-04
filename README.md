@@ -103,16 +103,23 @@ Past the fixed recipes there is carpentry — freeform pieces that snap to a
 grid so you can architect your own base instead of inheriting one:
 
 - **Lay platform** — a stilt deck tile. On dry sand, in the wash, or piled
-  over the shallows. Walkable, climbable from the water, and tiles chain
-  flush into docks, piers and stilt houses.
+  over the shallows. Stand on a deck and face the next empty square to join
+  another — a faint ghost shows where it lands. Tiles chain flush into docks,
+  piers and stilt houses.
 - **Raise wall** — hangs on the edge of the tile you're on (or facing), or
   stands free as a windbreak. Solid: it stops the wind and it stops you.
 - **Hang door** — the wall you walk through. It blocks its cheeks and lets
   the middle pass, and still counts toward a closed-in room.
 - **Pitch roof** — plank-and-frond lid over a tile. A roofed, walled tile is
   a bedroom: **Sleep** there and the night skips to dawn like any lean-to —
-  which is how the day counter turns.
+  which is how the day counter turns. Bigger houses are more bays — each
+  platform still takes its own lid.
+- **Stack woodpile** — shore stockpile for planks (Stow / Fetch) so a long
+  build doesn't depend on swimming every stick.
 - **Strike** — every piece dismantles for a full refund. Rethink freely.
+
+If the world prompt is busy (Strike, Sleep, Fire), Pack → **Camp** still lists
+every carpentry recipe that's ready where you're standing.
 
 Fires burn on platform decks, rain gear and lockers work the same ashore, and
 the whole base persists with the rest of the camp.

@@ -15,11 +15,18 @@ export type Interactable = {
   radius: number
   available: () => boolean
   use: () => void
+  /**
+   * Higher wins when two things are similarly close. Used so expanding a
+   * deck (Lay Platform into the empty cell you're facing) isn't stolen by
+   * Raise Wall on the edge you're looking past.
+   */
+  priority?: number
 }
 
 export type InteractableSpec = Omit<Interactable, 'radius' | 'available'> & {
   radius?: number
   available?: () => boolean
+  priority?: number
 }
 
 const REACH = 2.9
@@ -55,7 +62,7 @@ export function createInteractions() {
         const facing = distance > 1e-3 ? toItem.divideScalar(distance).dot(forward) : 1
         if (facing < -0.4) continue
 
-        const score = distance - facing * 1.2
+        const score = distance - facing * 1.2 - (item.priority ?? 0)
         if (score < bestScore) {
           bestScore = score
           best = item
@@ -82,7 +89,7 @@ export function createInteractions() {
           label: item.label,
           distance: +distance.toFixed(2),
           facing: +facing.toFixed(2),
-          score: +(distance - facing * 1.2).toFixed(2),
+          score: +(distance - facing * 1.2 - (item.priority ?? 0)).toFixed(2),
           why,
         } as never)
       }

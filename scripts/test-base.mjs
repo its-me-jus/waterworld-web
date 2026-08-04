@@ -152,7 +152,41 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   const [plat] = await page.evaluate(snap, 'platform')
   ok('platform snapped to the grid', Math.abs(plat.x / 2.4 - Math.round(plat.x / 2.4)) < 1e-6)
 
-  // Stand on the tile and wall all four sides
+  // Expand: stand on the deck, face +z, Lay the neighbour tile
+  await teleport(page, plat.x, plat.z, plat.y + 1.75, 'walk')
+  await page.evaluate(() => {
+    window.ww.player.yaw = 0
+    window.ww.player.pitch = 0
+  })
+  await page.waitForTimeout(400)
+  ok('expand Lay Platform available', await waitRecipe(page, 'Platform'))
+  ok('second platform joined', (await page.evaluate(counts)).platform === 2)
+  const plats = await page.evaluate(snap, 'platform')
+  const joined = plats.some(
+    (p) => Math.abs(p.x - plat.x) < 0.01 && Math.abs(p.z - (plat.z + 2.4)) < 0.01,
+  )
+  ok('neighbour snapped +1 tile on z', joined)
+
+  // Woodpile stockpile beside the house
+  await teleport(page, plat.x - 3.2, plat.z, plat.y + 1.75, 'walk')
+  await page.waitForTimeout(400)
+  ok('Stack Woodpile available', await waitRecipe(page, 'Woodpile'))
+  ok('woodpile planted', (await page.evaluate(counts)).woodpile === 1)
+  await page.evaluate(() => {
+    window.ww.salvage.stash.plank += 6
+  })
+  await page.waitForTimeout(200)
+  const piled = await faceAndPressF(page, { yaw: Math.PI / 2, pitch: -0.2 }, /stow on pile/i, 12000)
+  ok('stowed planks on pile', piled)
+  const pileHold = await page.evaluate(() => {
+    const w = window.ww.improvise.snapshot().find((b) => b.kind === 'woodpile')
+    return w?.hold?.plank ?? 0
+  })
+  ok(`woodpile holds more than the seed (${pileHold})`, pileHold > 1)
+  // Restock arms for the room build — pile kept the surplus
+  await fillStash(page)
+
+  // Stand on the first tile and wall all four sides
   await teleport(page, plat.x, plat.z, plat.y + 1.75, 'walk')
   await page.waitForTimeout(400)
   for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
@@ -270,8 +304,8 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   await page.waitForTimeout(3500)
   const c = await page.evaluate(counts)
   ok(
-    `base restored (platform ${c.platform}, walls ${c.wall}, roof ${c.roof})`,
-    c.platform === 1 && c.wall === 4 && c.roof === 1,
+    `base restored (platform ${c.platform}, walls ${c.wall}, roof ${c.roof}, woodpile ${c.woodpile})`,
+    c.platform === 2 && c.wall === 4 && c.roof === 1 && c.woodpile === 1,
   )
   const [plat] = await page.evaluate(snap, 'platform')
   const stand = await page.evaluate((p) => window.ww.improvise.standAt(p.x, p.z), plat)
