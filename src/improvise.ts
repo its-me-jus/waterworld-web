@@ -1948,9 +1948,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   /** Keep POLE/HELM painted briefly after a wash-off so the button doesn't blink to ▼. */
   let driveSticky = 0
   let lastDriveMode: 'pole' | 'helm' | null = null
-  /** Close-eyes Rest sequence — clock jumps while the lids are shut. */
+  /** Close-eyes Rest sequence — clock jumps as the lids shut. */
   type SleepJob = {
-    phase: 'closing' | 'hold' | 'opening'
+    phase: 'closing' | 'opening'
     age: number
     opts: {
       at: { x: number; z: number }
@@ -4838,7 +4838,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     return { night, nearFire, smokedDone, storm }
   }
 
-  /** Close eyes → skip the clock in the dark → open on dawn. */
+  /** Close eyes → clock already jumped → open on dawn. */
   function beginSleep(
     opts: SleepJob['opts'],
     onWake: SleepJob['onWake'],
@@ -4849,28 +4849,23 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       deps.hud.whisper('Too empty to sleep.')
       return
     }
-    sleepJob = { phase: 'closing', age: 0, opts, onWake }
+    // Jump the clock while the lids are shutting — never gate dawn on FPS
+    const result = applySleepBody(opts)
+    sleepJob = { phase: 'closing', age: 0, opts, onWake, result }
     deps.hud.setSleepVeil(1)
   }
 
   function tickSleep(dt: number) {
     if (!sleepJob) return false
-    // Hitch / headless friendly — don't let a capped low FPS stall dawn forever
+    // Hitch / headless friendly — don't let a capped low FPS stall the wake
     sleepJob.age += Math.max(dt, 1 / 40)
     if (sleepJob.phase === 'closing') {
-      if (sleepJob.age >= 0.7) {
-        sleepJob.result = applySleepBody(sleepJob.opts)
-        sleepJob.phase = 'hold'
-        sleepJob.age = 0
-        deps.hud.setSleepVeil(1)
-      }
-    } else if (sleepJob.phase === 'hold') {
-      if (sleepJob.age >= 0.28) {
+      if (sleepJob.age >= 0.55) {
         sleepJob.phase = 'opening'
         sleepJob.age = 0
         deps.hud.setSleepVeil(0)
       }
-    } else if (sleepJob.age >= 0.75) {
+    } else if (sleepJob.age >= 0.7) {
       if (sleepJob.result) sleepJob.onWake(sleepJob.result)
       sleepJob = null
     }
