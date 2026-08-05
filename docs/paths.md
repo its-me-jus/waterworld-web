@@ -297,8 +297,11 @@ Wound** (1 canvas) closes it now — the soft-fail answer ashore.
 strip open roofs (Mend with a frond), stilts over water can wash you off,
 and a spent front throws wrack on a far beach.
 ~~More soft fails~~ — sail-tear / locker flood / bindable wound / roof-strip /
-fire-douse / stilt wash-off. Stop unless runs feel cruel.
+fire-douse / stilt wash-off, plus oar wash-off without a rail and provisions
+spoiling when the locker takes a sea. Stop unless runs feel cruel.
 
+~~Voyage stores / bedding / sleep~~ — shipped: raft cask + Stow/Fetch Food,
+platform bed, wall shelf, close-eyes Rest/Sleep.
 ~~Inland second act~~ — shipped: dry ledge past the cairn (rock seep, windbreak niche).
 ~~Shelter discoverability~~ — shipped: platform nudge at 2 planks, Lay priority over Raise Frame, Pack empty copy.
 ~~Windows / joined roofs / home whisper~~ — shipped with the base-loop polish pass.
