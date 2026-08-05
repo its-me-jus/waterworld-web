@@ -461,6 +461,20 @@ const ctxB = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   ok('Drop Anchor available', await waitRecipe(page, 'Anchor', 'Drop'))
   ok('anchor down', (await page.evaluate(snap, 'raft'))[0].anchored === true)
 
+  // POLE/HELM chrome must stay while aboard — even with the stone down
+  await page.waitForTimeout(200)
+  const driveLabelAnchored = await page.evaluate(() => {
+    const btn = document.querySelector('.touch-dive')
+    return {
+      text: (btn?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+      drive: btn?.classList.contains('drive') ?? false,
+    }
+  })
+  ok(
+    `drive button stays labeled while anchored (${driveLabelAnchored.text})`,
+    driveLabelAnchored.drive && /POLE|HELM/.test(driveLabelAnchored.text),
+  )
+
   // She holds against the helm while the stone is down
   const anchoredAt = await page.evaluate(() => {
     const [r] = window.ww.improvise.snapshot().filter((b) => b.kind === 'raft')

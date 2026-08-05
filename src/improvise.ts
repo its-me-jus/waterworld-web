@@ -1850,6 +1850,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let poleSplashAt = 0
   /** Seconds spent walking aboard without poling — drives a second coach nudge. */
   let idleAboardT = 0
+  /** Keep POLE/HELM painted briefly after a wash-off so the button doesn't blink to ▼. */
+  let driveSticky = 0
+  let lastDriveMode: 'pole' | 'helm' | null = null
   /** Last craft-status line sent to the HUD (avoid DOM thrash). */
   let lastCraft = ''
   /** Live player ref — Climb mutates this to seat you on the deck. */
@@ -4991,7 +4994,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           )
         }
 
-        // Quiet craft readout — applied once after the builds loop
+        // Quiet craft readout — applied once after the builds loop.
+        // Always keep POLE/HELM while aboard (incl. beached / anchored) so the
+        // touch button never blinks back to Dive mid-deck.
         let driveMode: 'pole' | 'helm' | null = null
         const canUpgrade =
           aboard &&
@@ -5004,8 +5009,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         if (aboard) {
           if (b.beached) {
             craftLine = onTouch ? 'Beached — tap Shove' : 'Beached — Shove'
+            driveMode = 'pole'
           } else if (b.anchored) {
             craftLine = onTouch ? 'Anchored — tap Weigh' : 'Anchored — Weigh to sail'
+            // Show HELM at the stern even while the stone is down — weigh, then drive.
+            driveMode =
+              !!b.mast && !b.torn && helmLX > HELM_STERN_X ? 'helm' : 'pole'
           } else if (sailing) {
             craftLine = 'At the helm'
             driveMode = 'helm'
@@ -5035,7 +5044,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
             driveMode = atHelm ? 'helm' : 'pole'
           }
         }
-        if (aboard) nextDriveMode = driveMode
+        if (aboard && driveMode) nextDriveMode = driveMode
 
         // Ran aground — sand above the live sea sticks the hull. Soft wash
         // only when nearly stopped. Shove grace keeps a push from snapping back.
@@ -5522,6 +5531,25 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       deps.hud.setCraft(craftLine)
     }
     if (!craftLine) drivePlant = null
+    // Sticky drive chrome: a wash-off or lip stumble briefly clears `aboard`,
+    // which used to snap POLE → ▼ and drop the toggle. Hold the label while
+    // you're still beside the hull; swim clear and it returns to Dive.
+    if (nextDriveMode) {
+      lastDriveMode = nextDriveMode
+      driveSticky = 0.9
+    } else if (driveSticky > 0) {
+      driveSticky = Math.max(0, driveSticky - dt)
+      const nearRaft = builds.some(
+        (b) => b.kind === 'raft' && Math.hypot(player.x - b.x, player.z - b.z) < b.radius + 2.8,
+      )
+      if (nearRaft && lastDriveMode) nextDriveMode = lastDriveMode
+      else {
+        driveSticky = 0
+        lastDriveMode = null
+      }
+    } else {
+      lastDriveMode = null
+    }
     deps.setDriveMode?.(nextDriveMode)
     stockTraps(dt)
 
@@ -5659,6 +5687,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     shoveGrace = 0
     idleAboardT = 0
     poleSplashAt = 0
+    driveSticky = 0
+    lastDriveMode = null
     lastCraft = ''
     drivePlant = null
     deps.hud.setCraft(null)

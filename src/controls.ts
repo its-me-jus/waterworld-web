@@ -134,11 +134,11 @@ export function createTouchControls(parent: HTMLElement) {
     diveBtn.classList.toggle('drive', !!driveMode)
     diveBtn.classList.toggle('engaged', !!driveMode && driveEngaged)
     if (driveMode === 'helm') {
-      diveBtn.textContent = driveEngaged ? 'HELM ON' : 'HELM'
+      diveBtn.textContent = driveEngaged ? 'HELM\nON' : 'HELM'
       diveBtn.setAttribute('aria-label', driveEngaged ? 'Helm on — tap to stop' : 'Tap to helm')
       diveBtn.classList.toggle('active', driveEngaged)
     } else if (driveMode === 'pole') {
-      diveBtn.textContent = driveEngaged ? 'POLE ON' : 'POLE'
+      diveBtn.textContent = driveEngaged ? 'POLE\nON' : 'POLE'
       diveBtn.setAttribute('aria-label', driveEngaged ? 'Pole on — tap to stop' : 'Tap to pole')
       diveBtn.classList.toggle('active', driveEngaged)
     } else {
@@ -237,11 +237,16 @@ export function createTouchControls(parent: HTMLElement) {
     useBtn.classList.toggle('on', label !== null)
   }
 
-  /** While aboard, ▼ becomes POLE / HELM — tap to toggle drive on/off. */
+  /** While aboard, ▼ becomes POLE / HELM — tap to toggle drive on/off.
+   *  Clearing to null only drops engagement after a real leave (improvise
+   *  already sticky-holds the mode across wash-off blinks). */
   function setDriveMode(mode: 'pole' | 'helm' | null) {
     if (mode === driveMode) return
     if (!mode) {
       driveEngaged = false
+      diveHeld = false
+    } else if (!driveMode) {
+      // Coming aboard: start disengaged so a leftover Dive hold can't pole
       diveHeld = false
     }
     driveMode = mode

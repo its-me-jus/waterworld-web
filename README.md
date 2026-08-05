@@ -121,10 +121,11 @@ grid so you can architect your own base instead of inheriting one:
 If the world prompt is busy (Strike, Sleep, Fire), Pack → **Camp** still lists
 every carpentry recipe that's ready where you're standing.
 
-**Raft:** Climb aboard · on a phone **tap POLE** (toggle) + MOVE to drive · face
-a fitting or open **Pack → Camp → Raft** for sail, rail, locker, oar, floats, and
-**Lash Deck** (up to five times) · **Shove** if she's beached · with sail, stand
-aft and tap **HELM**.
+**Raft:** Climb aboard · on a phone **tap POLE** (toggle — stays labeled while
+you're on deck, including beached / anchored; reads **POLE ON** when engaged) +
+MOVE to drive · face a fitting or open **Pack → Camp → Raft** for sail, rail,
+locker, oar, floats, and **Lash Deck** (up to five times) · **Shove** if she's
+beached · with sail, stand aft and tap **HELM**.
 
 Fires burn on platform decks, rain gear and lockers work the same ashore, and
 the whole base persists with the rest of the camp.
