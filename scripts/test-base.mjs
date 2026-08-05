@@ -225,14 +225,26 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   ok('fire on the deck', (await page.evaluate(counts)).fire === 1)
 
   // Sleep: look down at the floor of a roofed, walled tile
+  // Top up tanks — a long carpentry run can leave you too empty to sleep
+  await page.evaluate(() => {
+    const v = window.ww.vitals
+    v.food = Math.max(v.food, 0.6)
+    v.water = Math.max(v.water, 0.6)
+  })
   ok(
     'slept in the self-built room',
     await faceAndPressF(page, { yaw: 0, pitch: -1.1 }, /sleep under roof/i),
   )
-  await page.waitForFunction(() => document.querySelector('#day')?.textContent === 'Day 2', null, {
-    timeout: 15000,
-  }).catch(() => {})
+  await page
+    .waitForFunction(() => !window.ww.improvise.sleeping, null, { timeout: 20000 })
+    .catch(() => {})
+  await page
+    .waitForFunction(() => document.querySelector('#day')?.textContent === 'Day 2', null, {
+      timeout: 10000,
+    })
+    .catch(() => {})
   ok('woke to Day 2', (await page.evaluate(dayChip)) === 'Day 2')
+  ok('sleep sequence finished', await page.evaluate(() => !window.ww.improvise.sleeping))
 
   // Walls block: outside, push in until stuck — the plane holds
   const [tile] = await page.evaluate(snap, 'platform')

@@ -4855,21 +4855,22 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
   function tickSleep(dt: number) {
     if (!sleepJob) return false
-    sleepJob.age += dt
+    // Hitch / headless friendly — don't let a capped low FPS stall dawn forever
+    sleepJob.age += Math.max(dt, 1 / 40)
     if (sleepJob.phase === 'closing') {
-      if (sleepJob.age >= 0.95) {
+      if (sleepJob.age >= 0.7) {
         sleepJob.result = applySleepBody(sleepJob.opts)
         sleepJob.phase = 'hold'
         sleepJob.age = 0
         deps.hud.setSleepVeil(1)
       }
     } else if (sleepJob.phase === 'hold') {
-      if (sleepJob.age >= 0.4) {
+      if (sleepJob.age >= 0.28) {
         sleepJob.phase = 'opening'
         sleepJob.age = 0
         deps.hud.setSleepVeil(0)
       }
-    } else if (sleepJob.age >= 1.05) {
+    } else if (sleepJob.age >= 0.75) {
       if (sleepJob.result) sleepJob.onWake(sleepJob.result)
       sleepJob = null
     }
