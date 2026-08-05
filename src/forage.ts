@@ -491,6 +491,22 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     smokedFish += Math.max(0, n)
   }
 
+  /** Move smoked fish out of the Pack (into a raft locker / provisions). */
+  function takeSmoked(n = 1) {
+    const want = Math.max(0, Math.floor(n))
+    const got = Math.min(smokedFish, want)
+    smokedFish -= got
+    return got
+  }
+
+  /** Move raw fish out of the Pack (into voyage stores). */
+  function takeRaw(n = 1) {
+    const want = Math.max(0, Math.floor(n))
+    const got = Math.min(rawFish, want)
+    rawFish -= got
+    return got
+  }
+
   function eatSmoked() {
     if (smokedFish <= 0) return false
     smokedFish -= 1
@@ -588,6 +604,8 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     cook,
     takeRawForSmoke,
     addSmoked,
+    takeSmoked,
+    takeRaw,
     eatSmoked,
   }
 }

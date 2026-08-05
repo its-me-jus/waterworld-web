@@ -273,7 +273,12 @@ taxes strength until it clots; a second bite while open ends the run.
 ## Backlog (nothing committed)
 
 - **Memory spine** — the log was one beat. More papers, a name, a reason.
-- **More soft fails** — beyond sail-tear / locker flood, only if runs feel cruel.
+
+~~More soft fails~~ — shipped: sail-tear / locker flood, plus oar wash-off
+without a rail, and provisions spoiling when the locker takes a sea.
+
+~~Voyage stores / bedding / sleep~~ — shipped: raft cask + Stow/Fetch Food,
+platform bed, wall shelf, close-eyes Rest/Sleep.
 
 ~~Night economy / wreck lantern~~ — shipped: sealed diving lantern in the gear
 locker beside the suit; local beam underwater at night, no warmth/breath buff.

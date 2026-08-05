@@ -47,6 +47,12 @@ export type ImproviseDeps = {
   takeRawForSmoke: () => boolean
   /** Finish a smoke cycle into the Pack. */
   addSmoked: (n?: number) => void
+  /** Smoked fish currently in the Pack. */
+  smokedFish?: () => number
+  /** Move smoked fish out of the Pack (into raft provisions). */
+  takeSmoked?: (n?: number) => number
+  /** Move raw fish out of the Pack (into raft provisions). */
+  takeRaw?: (n?: number) => number
   /** Trap-caught fish land in the hand the same way grabbed ones do. */
   grantFish: (n?: number) => void
   /** Fashion a fishing rod from plank + rope. */
@@ -97,6 +103,10 @@ type BuildKind =
   | 'platform'
   | 'wall'
   | 'roof'
+  /** Frond bed on a platform tile — sleep finds it. */
+  | 'bedding'
+  /** Shelf hung on a wall — small shore stash. */
+  | 'shelf'
 
 type SmokeRack = {
   readyAt: number
@@ -166,6 +176,10 @@ type Build = {
   flooded?: boolean
   /** Soft-fail fill 0..1 while a foul sea works the rig. */
   failMeter?: number
+  /** Water cask lashed on the raft deck. */
+  cask?: boolean
+  /** Smoked / raw fish stowed for a crossing (not in the materials hold). */
+  provisions?: { smoked: number; raw: number }
   /** Carpentry piece variant — a wall can be hung as a door you walk through. */
   variant?: 'door'
   /** Extra hotspots this build registered (drink, etc.) — cleared on reset. */
@@ -199,6 +213,12 @@ const SIGNAL_COST: Cost = { plank: 1, canvas: 1 }
 const EXPAND_COST: Cost = { plank: 2 }
 const OAR_COST: Cost = { plank: 1, rope: 1 }
 const FLOAT_COST: Cost = { plastic: 2 }
+/** Lashed water cask on the raft — rain fills it for a crossing. */
+const CASK_COST: Cost = { barrel: 1, rope: 1 }
+/** Frond bed on a platform — warmer Sleep than bare plank. */
+const BED_COST: Cost = { plank: 1, leaf: 2, rope: 1 }
+/** Shelf hung on a wall — small shore stash for gear. */
+const SHELF_COST: Cost = { plank: 1, rope: 1 }
 const DRIP_COST: Cost = { can: 1, rope: 1 }
 const PLATFORM_COST: Cost = { plank: 2 }
 const WALL_COST: Cost = { plank: 1 }
@@ -1057,6 +1077,48 @@ function seatMesh(m: ReturnType<typeof mats>) {
   return g
 }
 
+/** Frond bed — platform Sleep finds it softer than bare plank. */
+function beddingMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  const frame = plankObject(1.55, 0.35, m.wood)
+  frame.position.y = 0.12
+  g.add(frame)
+  const mat = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.08, 0.7), m.leaf)
+  mat.position.y = 0.2
+  g.add(mat)
+  for (const x of [-0.55, 0.55]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.08), m.wood)
+    leg.position.set(x, 0.1, 0.22)
+    g.add(leg)
+    const leg2 = leg.clone()
+    leg2.position.z = -0.22
+    g.add(leg2)
+  }
+  const bolster = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.12, 0.55), m.leaf)
+  bolster.position.set(-0.45, 0.28, 0)
+  g.add(bolster)
+  return g
+}
+
+/** Wall shelf — a small shore stash hung on a panel. */
+function shelfMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  const board = plankObject(1.1, 0.22, m.wood)
+  board.position.y = 1.05
+  g.add(board)
+  for (const x of [-0.4, 0.4]) {
+    const brace = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.28, 0.06), m.wood)
+    brace.position.set(x, 0.88, 0.08)
+    brace.rotation.x = 0.4
+    g.add(brace)
+  }
+  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.015, 4, 6), m.rope)
+  lash.position.set(0, 1.05, 0.1)
+  lash.rotation.y = Math.PI / 2
+  g.add(lash)
+  return g
+}
+
 /** Drying rack — hang fish without a fire; patience does the smoke's job slower. */
 function rackMesh(m: ReturnType<typeof mats>) {
   const g = new THREE.Group()
@@ -1218,6 +1280,10 @@ function raftMesh(m: ReturnType<typeof mats>, withBarrel: boolean) {
   floatSlot.name = 'floatSlot'
   floatSlot.visible = false
   g.add(floatSlot)
+  const caskSlot = new THREE.Group()
+  caskSlot.name = 'caskSlot'
+  caskSlot.visible = false
+  g.add(caskSlot)
   const anchorSlot = new THREE.Group()
   anchorSlot.name = 'anchorSlot'
   anchorSlot.visible = false
@@ -1343,6 +1409,31 @@ function fitLocker(raft: THREE.Group, m: ReturnType<typeof mats>) {
   slot.add(box)
   const lash = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.03, 4, 8), m.rope)
   lash.position.set(0.7, 0.55, -0.62)
+  lash.rotation.x = Math.PI / 2
+  slot.add(lash)
+  slot.visible = true
+}
+
+function fitCask(raft: THREE.Group, m: ReturnType<typeof mats>) {
+  const slot = raft.getObjectByName('caskSlot') as THREE.Group
+  if (!slot || slot.children.length) {
+    if (slot) slot.visible = true
+    return
+  }
+  const cask = barrelObject(m.wood, m.iron)
+  cask.position.set(-0.85, 0.38, 0.55)
+  cask.scale.setScalar(0.72)
+  slot.add(cask)
+  const water = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.22, 0.22, 0.08, 8),
+    new THREE.MeshStandardMaterial({ color: 0x3a6a88, roughness: 0.2, transparent: true, opacity: 0.55 }),
+  )
+  water.name = 'water'
+  water.position.set(-0.85, 0.55, 0.55)
+  water.visible = false
+  slot.add(water)
+  const lash = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.03, 4, 8), m.rope)
+  lash.position.set(-0.85, 0.42, 0.55)
   lash.rotation.x = Math.PI / 2
   slot.add(lash)
   slot.visible = true
@@ -1782,6 +1873,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const climbPlatPos = new THREE.Vector3()
   const woodpilePos = new THREE.Vector3()
   const sleepPlatPos = new THREE.Vector3()
+  const bedPos = new THREE.Vector3()
+  const shelfPos = new THREE.Vector3()
+  const raftCaskPos = new THREE.Vector3()
+  const raftFoodPos = new THREE.Vector3()
 
   /** Construction recipes also listed in Pack → Camp (same use() as F). */
   type CampEntry = {
@@ -1853,6 +1948,33 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   /** Keep POLE/HELM painted briefly after a wash-off so the button doesn't blink to ▼. */
   let driveSticky = 0
   let lastDriveMode: 'pole' | 'helm' | null = null
+  /** Close-eyes Rest sequence — clock jumps while the lids are shut. */
+  type SleepJob = {
+    phase: 'closing' | 'hold' | 'opening'
+    age: number
+    opts: {
+      at: { x: number; z: number }
+      fireRadius: number
+      warmthNight: number
+      warmthDay: number
+      warmthFire: number
+      warmthExtra?: number
+      restQuality?: number
+    }
+    onWake: (result: {
+      night: boolean
+      nearFire: boolean
+      smokedDone: number
+      storm: number
+    }) => void
+    result?: { night: boolean; nearFire: boolean; smokedDone: number; storm: number }
+  }
+  let sleepJob: SleepJob | null = null
+  /** Idle seconds on a beached deck — drives a Shove nudge on phone. */
+  let beachIdleT = 0
+  let saidBeachNudge = false
+  /** Soft-fail: oar washed free (separate from sail tear). */
+  let saidOarFail = false
   /** Last craft-status line sent to the HUD (avoid DOM thrash). */
   let lastCraft = ''
   /** Live player ref — Climb mutates this to seat you on the deck. */
@@ -3526,7 +3648,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     verb: 'Shove',
     label: 'Off',
     radius: 3.4,
-    priority: 3.2,
+    priority: 4.2,
+    menuReady: () => {
+      if (!deps.vitals.alive) return false
+      const raft = nearestOfKind(px, pz, 'raft', 5.5)
+      return !!raft && !!raft.beached
+    },
     available: () => {
       if (!deps.vitals.alive) return false
       const raft = nearestOfKind(px, pz, 'raft', 4.2)
@@ -3902,6 +4029,102 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
+
+  // Voyage stores — rain cask and food for a long crossing.
+  addCamp('raft', {
+    position: raftCaskPos,
+    verb: 'Lash',
+    label: 'Cask',
+    cost: CASK_COST,
+    radius: 2.8,
+    priority: FIT_PRIORITY,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      return !!raft && !raft.cask && deps.vitals.alive && deps.salvage.has(CASK_COST)
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !deps.salvage.spend(CASK_COST)) return
+      raft.cask = true
+      raft.water = 0.15
+      fitCask(raft.object, m)
+      const waterMesh = raft.object.getObjectByName('water')
+      if (waterMesh) waterMesh.visible = true
+      attachBarrelDrink(raft, 'Cask')
+      deps.hud.whisper('A cask on the deck. Rain will fill it — drink on the crossing.')
+      tap('lash', 0.6)
+      tap('wood', 0.45)
+    },
+  })
+
+  addCamp('raft', {
+    position: raftFoodPos,
+    verb: 'Stow',
+    label: 'Food',
+    radius: 2.8,
+    priority: 1.8,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !deps.vitals.alive) return false
+      const smoked = deps.smokedFish?.() ?? 0
+      const raw = deps.rawFish()
+      return smoked + raw > 0
+    },
+    menuReady: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft || !deps.vitals.alive) return false
+      const smoked = deps.smokedFish?.() ?? 0
+      const raw = deps.rawFish()
+      return smoked + raw > 0
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft) return
+      if (!raft.provisions) raft.provisions = { smoked: 0, raw: 0 }
+      const smoked = deps.takeSmoked?.(8) ?? 0
+      const raw = deps.takeRaw?.(4) ?? 0
+      raft.provisions.smoked += smoked
+      raft.provisions.raw += raw
+      const total = raft.provisions.smoked + raft.provisions.raw
+      if (smoked + raw <= 0) {
+        deps.hud.whisper('Nothing left to stow.')
+        return
+      }
+      deps.hud.whisper(
+        total > 3
+          ? `Provisions in the hold (${raft.provisions.smoked} smoked, ${raft.provisions.raw} raw).`
+          : 'Fish stowed for the crossing.',
+      )
+      tap('wood', 0.4)
+    },
+  })
+
+  addCamp('raft', {
+    position: raftFoodPos,
+    verb: 'Fetch',
+    label: 'Food',
+    radius: 2.8,
+    priority: 1.7,
+    available: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft?.provisions || !deps.vitals.alive) return false
+      return raft.provisions.smoked + raft.provisions.raw > 0
+    },
+    use: () => {
+      const raft = nearestRaftOnDeck()
+      if (!raft?.provisions) return
+      const smoked = raft.provisions.smoked
+      const raw = raft.provisions.raw
+      if (smoked > 0) deps.addSmoked(smoked)
+      if (raw > 0) deps.grantFish(raw)
+      raft.provisions = { smoked: 0, raw: 0 }
+      deps.hud.whisper(
+        smoked + raw > 1 ? 'Provisions back in the Pack.' : 'One fish back in hand.',
+      )
+      tap('wood', 0.35)
+    },
+  })
+
   // Dig a hollow in soft sand — rain fills it the way rock pools do, slower.
   // F requires looking at the ground so it doesn't steal every beach prompt;
   // Pack → Camp skips the look-down gate (opening the menu is the intent).
@@ -4115,6 +4338,119 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
+
+  // Lay a frond bed on a closed-in platform — Sleep finds it softer.
+  addCamp('build', {
+    position: bedPos,
+    verb: 'Lay',
+    label: 'Bed',
+    cost: BED_COST,
+    radius: REACH,
+    available: () => {
+      if (!deps.vitals.alive || swimming || !deps.salvage.has(BED_COST)) return false
+      const tile = platformAt(px, pz)
+      if (!tile || !tileRoof(tile) || tile.shelter < SLEEP_SHELTER) return false
+      return !nearestOfKind(tile.x, tile.z, 'bedding', TILE * 0.7)
+    },
+    use: () => {
+      const tile = platformAt(px, pz)
+      if (!tile || !deps.salvage.spend(BED_COST)) return
+      addBuild('bedding', beddingMesh(m), tile.x, tile.z, tile.deckY, 1.5, 0.05, { yaw: 0 })
+      deps.hud.whisper('Fronds on the deck. Sleep will find the planks softer.')
+      tap('wood', 0.55)
+      tap('lash', 0.4)
+    },
+  })
+
+  // Hang a shelf on a wall — small shore stash for the house.
+  addCamp('build', {
+    position: shelfPos,
+    verb: 'Hang',
+    label: 'Shelf',
+    cost: SHELF_COST,
+    radius: REACH,
+    available: () => {
+      if (!deps.vitals.alive || !deps.salvage.has(SHELF_COST)) return false
+      const wall = nearestOfKind(px, pz, 'wall', 2.6)
+      if (!wall || facingDot(wall.x, wall.z) < 0.2) return false
+      return !nearestOfKind(wall.x, wall.z, 'shelf', 1.2)
+    },
+    use: () => {
+      const wall = nearestOfKind(px, pz, 'wall', 2.6)
+      if (!wall || !deps.salvage.spend(SHELF_COST)) return
+      addBuild('shelf', shelfMesh(m), wall.x, wall.z, wall.deckY, 1.4, 0.05, {
+        yaw: wall.yaw ?? wall.object.rotation.y,
+        hold: emptyHold(),
+      })
+      deps.hud.whisper('A shelf on the wall. Stow a little; leave the floor free.')
+      tap('wood', 0.5)
+      tap('lash', 0.45)
+    },
+  })
+
+  deps.interactions.add({
+    position: shelfPos,
+    verb: 'Stow',
+    label: 'On shelf',
+    radius: 2.4,
+    available: () => {
+      if (!deps.vitals.alive) return false
+      const shelf = nearestOfKind(px, pz, 'shelf', 2.4)
+      if (!shelf?.hold) return false
+      return Object.values(deps.salvage.stash).some((n) => n > 0)
+    },
+    use: () => {
+      const shelf = nearestOfKind(px, pz, 'shelf', 2.4)
+      if (!shelf?.hold) return
+      let moved = 0
+      for (const k of Object.keys(deps.salvage.stash) as (keyof typeof deps.salvage.stash)[]) {
+        const n = deps.salvage.stash[k]
+        if (n <= 0) continue
+        // Shelf holds a light load — up to 4 of each kind
+        const room = Math.max(0, 4 - (shelf.hold[k] ?? 0))
+        const take = Math.min(n, room)
+        if (take <= 0) continue
+        deps.salvage.stash[k] -= take
+        shelf.hold[k] = (shelf.hold[k] ?? 0) + take
+        moved += take
+      }
+      if (moved <= 0) {
+        deps.hud.whisper('The shelf is full.')
+        return
+      }
+      deps.hud.whisper(moved > 2 ? 'Gear on the shelf.' : 'Stowed on the shelf.')
+      tap('wood', 0.35)
+    },
+  })
+
+  deps.interactions.add({
+    position: shelfPos,
+    verb: 'Fetch',
+    label: 'From shelf',
+    radius: 2.4,
+    available: () => {
+      if (!deps.vitals.alive) return false
+      const shelf = nearestOfKind(px, pz, 'shelf', 2.4)
+      if (!shelf?.hold) return false
+      return Object.values(shelf.hold).some((n) => n > 0)
+    },
+    use: () => {
+      const shelf = nearestOfKind(px, pz, 'shelf', 2.4)
+      if (!shelf?.hold) return
+      let moved = 0
+      for (const k of Object.keys(shelf.hold) as (keyof typeof shelf.hold)[]) {
+        const n = shelf.hold[k] ?? 0
+        if (n <= 0) continue
+        deps.salvage.stash[k] += n
+        shelf.hold[k] = 0
+        moved += n
+      }
+      if (moved <= 0) return
+      deps.hud.whisper('Off the shelf, into the arms.')
+      tap('wood', 0.3)
+    },
+  })
+
   // Teardown — every piece comes back to the arms. Freedom means rethinking.
   // Strike only announces itself when you're looking at the piece, so it can
   // never steal the prompt from Sleep / work verbs on a closed-in tile.
@@ -4168,6 +4504,38 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const b = striking('platform', 2.5)
       if (!b) return
       strikeDown(b, PLATFORM_COST, 'The deck comes apart. Planks back in the arms.')
+    },
+  })
+
+  deps.interactions.add({
+    position: strikePos,
+    verb: 'Strike',
+    label: 'Bed',
+    radius: 2.5,
+    available: () => !!striking('bedding', 2.2),
+    use: () => {
+      const b = striking('bedding', 2.2)
+      if (!b) return
+      strikeDown(b, BED_COST, 'The bed comes up. Fronds and plank back in hand.')
+    },
+  })
+
+  deps.interactions.add({
+    position: strikePos,
+    verb: 'Strike',
+    label: 'Shelf',
+    radius: 2.5,
+    available: () => !!striking('shelf', 2.2),
+    use: () => {
+      const b = striking('shelf', 2.2)
+      if (!b) return
+      if (b.hold) {
+        for (const k of Object.keys(b.hold) as (keyof typeof b.hold)[]) {
+          deps.salvage.stash[k] += b.hold[k] ?? 0
+          b.hold[k] = 0
+        }
+      }
+      strikeDown(b, SHELF_COST, 'Shelf down. What it held is back in your arms.')
     },
   })
 
@@ -4411,26 +4779,22 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   /**
-   * The shared sleep body — lean-to Rest and platform Sleep both run through
-   * this. Night skips to dawn (the day counter turns); a nearby fire finishes
-   * anything hanging in its smoke. Returns what happened so each caller can
-   * whisper its own version of it.
+   * Apply Rest/Sleep body while the lids are shut — night jumps to dawn,
+   * nearby smoke finishes, energy returns. Callers whisper after the eyes open.
    */
-  function sleepThrough(opts: {
+  function applySleepBody(opts: {
     at: { x: number; z: number }
     fireRadius: number
     warmthNight: number
     warmthDay: number
     warmthFire: number
     warmthExtra?: number
-    /** How well the place sleeps — a walk-in hut beats a deck. */
     restQuality?: number
   }) {
     const v = deps.vitals
     const night = deps.daylight() < 0.38
     const nearFire = !!nearestOfKind(opts.at.x, opts.at.z, 'fire', opts.fireRadius) || !!carried
     let smokedDone = 0
-    // Sleep finishes anything hanging in a nearby smoke rack
     if (nearFire) {
       for (const b of builds) {
         if (b.kind !== 'fire' || !b.smoking?.length) continue
@@ -4456,8 +4820,6 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
     deps.skipTime(seconds)
 
-    // Shelter + optional fire do the warming; sleep itself mends the body.
-    // Foul weather is when a roof earns its keep — more warmth back.
     const storm = deps.storm?.() ?? 0
     const foulBonus = storm > 0.35 ? 0.1 + storm * 0.18 : 0
     const warmthGain =
@@ -4470,12 +4832,53 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     v.food = Math.max(0, v.food - hours * 0.035)
     v.water = Math.max(0, v.water - hours * 0.045)
     if (v.wounded) v.woundClock += hours * 35
-    // The tired timer only unwinds here — a nap takes the edge off, a night
-    // under a real roof brings you back whole
     rest(v, hours, opts.restQuality ?? 1)
 
     restReadyAt = time + (night ? 40 : REST_COOLDOWN)
     return { night, nearFire, smokedDone, storm }
+  }
+
+  /** Close eyes → skip the clock in the dark → open on dawn. */
+  function beginSleep(
+    opts: SleepJob['opts'],
+    onWake: SleepJob['onWake'],
+  ) {
+    if (sleepJob) return
+    const v = deps.vitals
+    if (v.food < 0.1 || v.water < 0.1) {
+      deps.hud.whisper('Too empty to sleep.')
+      return
+    }
+    sleepJob = { phase: 'closing', age: 0, opts, onWake }
+    deps.hud.setSleepVeil(1)
+  }
+
+  function tickSleep(dt: number) {
+    if (!sleepJob) return false
+    sleepJob.age += dt
+    if (sleepJob.phase === 'closing') {
+      if (sleepJob.age >= 0.95) {
+        sleepJob.result = applySleepBody(sleepJob.opts)
+        sleepJob.phase = 'hold'
+        sleepJob.age = 0
+        deps.hud.setSleepVeil(1)
+      }
+    } else if (sleepJob.phase === 'hold') {
+      if (sleepJob.age >= 0.4) {
+        sleepJob.phase = 'opening'
+        sleepJob.age = 0
+        deps.hud.setSleepVeil(0)
+      }
+    } else if (sleepJob.age >= 1.05) {
+      if (sleepJob.result) sleepJob.onWake(sleepJob.result)
+      sleepJob = null
+    }
+    // Hold still while the lids move
+    if (live) {
+      live.vy = 0
+      live.speed = 0
+    }
+    return true
   }
 
   deps.interactions.add({
@@ -4484,115 +4887,123 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     label: 'Shelter',
     radius: 2.6,
     available: () => {
-      if (!deps.vitals.alive || !onLand || time < restReadyAt) return false
+      if (sleepJob || !deps.vitals.alive || !onLand || time < restReadyAt) return false
       const s = leanToAt(px, pz)
       return !!s && shelterComplete(s)
     },
     use: () => {
       const shelter = leanToAt(px, pz)
       if (!shelter || !shelterComplete(shelter)) return
-      const v = deps.vitals
-      if (v.food < 0.1 || v.water < 0.1) {
-        deps.hud.whisper('Too empty to sleep.')
-        return
-      }
-
-      const { night, nearFire, smokedDone, storm } = sleepThrough({
-        at: shelter,
-        fireRadius: 4.5,
-        warmthNight: 0.42,
-        warmthDay: 0.22,
-        warmthFire: 0.18,
-        warmthExtra: shelter.hasMat ? 0.12 : 0,
-        // Standing room and a soft mat are what sleep is measured in
-        restQuality:
-          (shelter.tall ? 1.12 : 1) + (shelter.hasMat ? 0.1 : 0) + ((shelter.rooms ?? 1) - 1) * 0.06,
-      })
       restPos.set(shelter.x, shelter.deckY + 0.6, shelter.z)
-
-      if (smokedDone > 0) {
-        deps.hud.whisper(
-          smokedDone > 1 ? 'The smoke rack is done. Fish for the road.' : 'Smoked fish waits in the Pack.',
-        )
-      } else if (night && storm > 0.55) {
-        deps.hud.whisper(
-          nearFire
-            ? 'The gale works the canvas. Embers hold. Dawn.'
-            : 'You rode the night out under plank. Dawn.',
-        )
-      } else if (night) {
-        deps.hud.whisper(
-          shelter.tall && (shelter.rooms ?? 1) > 1
-            ? 'Dawn comes through the far room. Your own hall around you.'
-            : shelter.tall
-              ? 'Dawn, standing height and all. The hut holds.'
-              : nearFire
-                ? 'Dawn. Embers still warm the lean-to.'
-                : 'Dawn finds you under plank and lashing.',
-        )
-      } else if (storm > 0.5) {
-        deps.hud.whisper('You rest while the front works the roof.')
-      } else {
-        deps.hud.whisper(
-          shelter.tall ? 'A nap on your own floor. The hours turn.' : 'You rest. The sun has moved.',
-        )
-      }
+      beginSleep(
+        {
+          at: shelter,
+          fireRadius: 4.5,
+          warmthNight: 0.42,
+          warmthDay: 0.22,
+          warmthFire: 0.18,
+          warmthExtra: shelter.hasMat ? 0.12 : 0,
+          restQuality:
+            (shelter.tall ? 1.12 : 1) +
+            (shelter.hasMat ? 0.1 : 0) +
+            ((shelter.rooms ?? 1) - 1) * 0.06,
+        },
+        ({ night, nearFire, smokedDone, storm }) => {
+          if (smokedDone > 0) {
+            deps.hud.whisper(
+              smokedDone > 1
+                ? 'The smoke rack is done. Fish for the road.'
+                : 'Smoked fish waits in the Pack.',
+            )
+          } else if (night && storm > 0.55) {
+            deps.hud.whisper(
+              nearFire
+                ? 'The gale works the canvas. Embers hold. Dawn.'
+                : 'You rode the night out under plank. Dawn.',
+            )
+          } else if (night) {
+            deps.hud.whisper(
+              shelter.tall && (shelter.rooms ?? 1) > 1
+                ? 'Dawn comes through the far room. Your own hall around you.'
+                : shelter.tall
+                  ? 'Dawn, standing height and all. The hut holds.'
+                  : nearFire
+                    ? 'Dawn. Embers still warm the lean-to.'
+                    : 'Dawn finds you under plank and lashing.',
+            )
+          } else if (storm > 0.5) {
+            deps.hud.whisper('You rest while the front works the roof.')
+          } else {
+            deps.hud.whisper(
+              shelter.tall
+                ? 'A nap on your own floor. The hours turn.'
+                : 'You rest. The sun has moved.',
+            )
+          }
+        },
+      )
     },
   })
 
   // Sleep in a base you built yourself — a roofed, walled-in platform tile.
-  // Same night skip as the lean-to: dawn comes, the day counter turns.
   deps.interactions.add({
     position: sleepPlatPos,
     verb: 'Sleep',
     label: 'Under roof',
     radius: 2.4,
     available: () => {
-      if (!deps.vitals.alive || swimming || time < restReadyAt) return false
+      if (sleepJob || !deps.vitals.alive || swimming || time < restReadyAt) return false
       const t = platformAt(px, pz)
       return !!t && !!tileRoof(t) && t.shelter >= SLEEP_SHELTER
     },
     use: () => {
       const tile = platformAt(px, pz)
       if (!tile || !tileRoof(tile) || tile.shelter < SLEEP_SHELTER) return
-      const v = deps.vitals
-      if (v.food < 0.1 || v.water < 0.1) {
-        deps.hud.whisper('Too empty to sleep.')
-        return
-      }
-
-      const { night, nearFire, smokedDone, storm } = sleepThrough({
-        at: tile,
-        fireRadius: 4,
-        warmthNight: 0.38,
-        warmthDay: 0.2,
-        warmthFire: 0.15,
-        warmthExtra: tile.shelter >= 0.85 ? 0.06 : 0,
-        restQuality: tile.shelter >= 0.85 ? 1.15 : 1,
-      })
+      const bed = nearestOfKind(tile.x, tile.z, 'bedding', TILE * 0.75)
       sleepPlatPos.set(tile.x, tile.deckY + 0.6, tile.z)
-
-      if (smokedDone > 0) {
-        deps.hud.whisper(
-          smokedDone > 1 ? 'The smoke rack is done. Fish for the road.' : 'Smoked fish waits in the Pack.',
-        )
-      } else if (night && storm > 0.55) {
-        deps.hud.whisper(
-          nearFire
-            ? 'The gale works the roof you pitched. Embers hold. Dawn.'
-            : 'Walls you raised, a roof you pitched. The night passes. Dawn.',
-        )
-      } else if (night) {
-        deps.hud.whisper(
-          nearFire
-            ? 'Dawn. Embers in the corner of a room you built.'
-            : 'Dawn, under a roof of your own making.',
-        )
-      } else if (storm > 0.5) {
-        deps.hud.whisper('You rest while the front works the roof you pitched.')
-      } else {
-        deps.hud.whisper('You rest. Your own roof over you.')
-      }
+      beginSleep(
+        {
+          at: tile,
+          fireRadius: 4,
+          warmthNight: 0.38,
+          warmthDay: 0.2,
+          warmthFire: 0.15,
+          warmthExtra:
+            (tile.shelter >= 0.85 ? 0.06 : 0) + (bed ? 0.14 : 0),
+          restQuality: (tile.shelter >= 0.85 ? 1.15 : 1) + (bed ? 0.12 : 0),
+        },
+        ({ night, nearFire, smokedDone, storm }) => {
+          if (smokedDone > 0) {
+            deps.hud.whisper(
+              smokedDone > 1
+                ? 'The smoke rack is done. Fish for the road.'
+                : 'Smoked fish waits in the Pack.',
+            )
+          } else if (night && storm > 0.55) {
+            deps.hud.whisper(
+              nearFire
+                ? 'The gale works the roof you pitched. Embers hold. Dawn.'
+                : bed
+                  ? 'Walls you raised, a bed you laid. The night passes. Dawn.'
+                  : 'Walls you raised, a roof you pitched. The night passes. Dawn.',
+            )
+          } else if (night) {
+            deps.hud.whisper(
+              bed
+                ? 'Dawn on fronds you laid. A room of your own making.'
+                : nearFire
+                  ? 'Dawn. Embers in the corner of a room you built.'
+                  : 'Dawn, under a roof of your own making.',
+            )
+          } else if (storm > 0.5) {
+            deps.hud.whisper('You rest while the front works the roof you pitched.')
+          } else {
+            deps.hud.whisper(
+              bed ? 'You wake on your own bedding. The sun has moved.' : 'You rest. Your own roof over you.',
+            )
+          }
+        },
+      )
     },
   })
 
@@ -4619,12 +5030,17 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     facingYaw: number,
     intent?: { dive?: boolean },
   ) {
+    live = player
     time = t
+    if (tickSleep(dt)) {
+      // World still turns under closed lids; movement stays planted.
+      deps.setDriveMode?.(null)
+      return
+    }
     yaw = facingYaw
     lookPitch = player.pitch ?? 0
     px = player.x
     pz = player.z
-    live = player
     swimming = !view.walking
     // Phone: only the held POLE/HELM (▼) button drives — looking at the deck to
     // tap Drop Anchor must not steal the stick into a pole. Desktop still uses
@@ -4809,6 +5225,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const pile = nearestOfKind(player.x, player.z, 'woodpile', 3.0)
       if (pile) setAnchor(woodpilePos, pile.x, pile.z, pile.deckY + 0.45)
       else woodpilePos.copy(eatPos)
+      const bedTile = platformAt(player.x, player.z)
+      if (bedTile) setAnchor(bedPos, bedTile.x, bedTile.z, bedTile.deckY + 0.35)
+      else bedPos.copy(eatPos)
+      const shelfWall = nearestOfKind(player.x, player.z, 'wall', 2.8)
+      if (shelfWall) setAnchor(shelfPos, shelfWall.x, shelfWall.z, shelfWall.deckY + 1.1)
+      else shelfPos.copy(eatPos)
     }
 
     updateCarpentryGhost()
@@ -4842,6 +5264,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       placeFit(raftDeckPos, 0.15, 0.45)
       placeFit(raftOarPos, 0.25, -0.9)
       placeFit(raftFloatPos, -0.9, 0.55)
+      placeFit(raftCaskPos, -0.85, 0.55, 0.5)
+      placeFit(raftFoodPos, 0.55, -0.55, 0.5)
       stowPos.set(nearRaft.x + 0.55, nearRaft.deckY + 0.5, nearRaft.z - 0.55)
       markPos.set(nearRaft.x + 1.2, nearRaft.deckY + 0.5, nearRaft.z)
       const thwart = raftLocal(nearRaft, 1.25, 0)
@@ -4861,6 +5285,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       raftDeckPos.copy(eatPos)
       raftOarPos.copy(eatPos)
       raftFloatPos.copy(eatPos)
+      raftCaskPos.copy(eatPos)
+      raftFoodPos.copy(eatPos)
       stowPos.copy(eatPos)
       markPos.copy(eatPos)
       thwartPos.copy(eatPos)
@@ -5005,11 +5431,19 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
             (!b.locker && deps.salvage.has(LOCKER_COST)) ||
             (!b.oar && deps.salvage.has(OAR_COST)) ||
             (!b.floats && deps.salvage.has(FLOAT_COST)) ||
+            (!b.cask && deps.salvage.has(CASK_COST)) ||
             ((b.expands ?? 0) < EXPAND_MAX && deps.salvage.has(EXPAND_COST)))
         if (aboard) {
           if (b.beached) {
-            craftLine = onTouch ? 'Beached — tap Shove' : 'Beached — Shove'
+            craftLine = onTouch
+              ? 'Beached — tap Shove (or Pack → Raft)'
+              : 'Beached — Shove (F) or Pack → Raft'
             driveMode = 'pole'
+            beachIdleT += dt
+            if (onTouch && !saidBeachNudge && beachIdleT > 5) {
+              saidBeachNudge = true
+              deps.hud.whisper('Still on sand. Tap Shove — or open Pack → Camp → Raft.')
+            }
           } else if (b.anchored) {
             craftLine = onTouch ? 'Anchored — tap Weigh' : 'Anchored — Weigh to sail'
             // Show HELM at the stern even while the stone is down — weigh, then drive.
@@ -5258,11 +5692,61 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
                   deps.hud.whisper('Seas in the locker. The hold runs wet.')
                 }
               }
+              // Voyage food takes a soak too — raw spoils first
+              if (b.provisions && (b.provisions.raw > 0 || b.provisions.smoked > 0)) {
+                const rawLost = Math.min(b.provisions.raw, 2)
+                const smokedLost = Math.min(b.provisions.smoked, rawLost < 1 ? 1 : 0)
+                b.provisions.raw -= rawLost
+                b.provisions.smoked -= smokedLost
+                if (rawLost + smokedLost > 0) {
+                  deps.hud.whisper('Seas in the food stores. Something spoiled.')
+                }
+              }
             }
           } else {
             b.failMeter = Math.max(0, (b.failMeter ?? 0) - dt * 0.15)
             if ((b.failMeter ?? 0) < 0.3) saidFail = false
           }
+        }
+
+        // Soft fail — without a rail, a hard gale can take the oar
+        if (
+          aboard &&
+          boardGrace <= 0 &&
+          !b.beached &&
+          b.oar &&
+          !b.rail
+        ) {
+          const storm = deps.storm?.() ?? 0
+          if (storm > 0.72) {
+            if (!saidOarFail && storm > 0.8) {
+              saidOarFail = true
+              deps.hud.whisper('The oar jumps in its lashing. Hold it — or lose it.')
+            }
+            if (storm > 0.88 && Math.random() < dt * 0.12) {
+              b.oar = false
+              const slot = b.object.getObjectByName('oarSlot') as THREE.Group | undefined
+              if (slot) {
+                while (slot.children.length) slot.remove(slot.children[0])
+                slot.visible = false
+              }
+              saidOarFail = false
+              deps.hud.whisper('The oar goes over. Lash another when you can.')
+              tap('splash', 0.85)
+            }
+          } else if (storm < 0.5) {
+            saidOarFail = false
+          }
+        }
+
+        // Rain fills a lashed cask (slower under a torn/absent sail shade)
+        if (b.cask && !b.beached) {
+          const storm = deps.storm?.() ?? 0
+          const rain = 1 + storm * CATCH_STORM_BOOST
+          const shade = b.mast && !b.torn ? 0.55 : 1
+          b.water = Math.min(1, (b.water ?? 0) + (dt / (CISTERN_REFILL * 1.15)) * rain * shade)
+          const waterMesh = b.object.getObjectByName('water')
+          if (waterMesh) waterMesh.visible = (b.water ?? 0) > 0.08
         }
 
         if (aboard) {
@@ -5680,7 +6164,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     saidHelm = false
     saidHelmHint = false
     saidFail = false
+    saidOarFail = false
     saidBeach = false
+    saidBeachNudge = false
+    beachIdleT = 0
+    sleepJob = null
+    deps.hud.clearSleepVeil()
     washMeter = 0
     boardGrace = 0
     washGrace = 0
@@ -5712,7 +6201,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       z: b.z,
       yaw: b.yaw ?? b.object.rotation.y,
       y:
-        b.kind === 'platform' || b.kind === 'wall' || b.kind === 'roof' || b.kind === 'woodpile'
+        b.kind === 'platform' ||
+        b.kind === 'wall' ||
+        b.kind === 'roof' ||
+        b.kind === 'woodpile' ||
+        b.kind === 'bedding' ||
+        b.kind === 'shelf'
           ? b.deckY
           : undefined,
       variant: b.variant,
@@ -5730,6 +6224,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       anchored: b.anchored,
       torn: b.torn,
       flooded: b.flooded,
+      cask: b.cask,
+      provisions: b.provisions
+        ? { smoked: b.provisions.smoked, raw: b.provisions.raw }
+        : undefined,
       sides: b.sides,
       roof: (b.roof ?? 'none') as SavedRoof,
       tall: b.tall,
@@ -5881,6 +6379,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       } else if (kind === 'roof') {
         const y = s.y ?? deps.groundAt(x, z) + ROOF_RISE
         build = addBuild('roof', roofMesh(m), x, z, y, 1.8, 0, { yaw: 0 })
+      } else if (kind === 'bedding') {
+        const y = s.y ?? deps.groundAt(x, z)
+        build = addBuild('bedding', beddingMesh(m), x, z, y, 1.5, 0.05, { yaw: s.yaw ?? 0 })
+      } else if (kind === 'shelf') {
+        const y = s.y ?? deps.groundAt(x, z)
+        build = addBuild('shelf', shelfMesh(m), x, z, y, 1.4, 0.05, {
+          yaw: s.yaw ?? 0,
+          hold: fillHold(s.hold),
+        })
       } else if (kind === 'raft') {
         const withBarrel = !!s.buoyant
         const sea = sampleOcean(x, z, 0).y
@@ -5903,12 +6410,26 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           anchored: !!s.anchored,
           torn: !!s.torn,
           flooded: !!s.flooded,
+          cask: !!s.cask,
+          water: s.cask ? (s.water ?? 0) : undefined,
+          provisions: s.provisions
+            ? {
+                smoked: Math.max(0, Math.floor(s.provisions.smoked ?? 0)),
+                raw: Math.max(0, Math.floor(s.provisions.raw ?? 0)),
+              }
+            : undefined,
         })
         if (s.mast) fitMast(build.object, m)
         if (s.rail) fitRail(build.object, m)
         if (s.locker) fitLocker(build.object, m)
         if (s.oar) fitOar(build.object, m)
         if (s.floats) fitFloat(build.object, m)
+        if (s.cask) {
+          fitCask(build.object, m)
+          const waterMesh = build.object.getObjectByName('water')
+          if (waterMesh) waterMesh.visible = (build.water ?? 0) > 0.08
+          attachBarrelDrink(build, 'Cask')
+        }
         if (s.marked) fitMark(build.object, m)
         if (s.anchored) fitAnchor(build.object, m, true)
         const expands = s.expands ?? 0
@@ -6006,6 +6527,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     get carryingFire() {
       return !!carried
     },
+    /** True while the close-eyes Rest sequence is running. */
+    get sleeping() {
+      return !!sleepJob
+    },
     get counts() {
       const out: Record<BuildKind, number> = {
         'lean-to': 0,
@@ -6024,6 +6549,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         platform: 0,
         wall: 0,
         roof: 0,
+        bedding: 0,
+        shelf: 0,
       }
       for (const b of builds) out[b.kind]++
       if (carried) out.fire++
@@ -6057,6 +6584,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       expand: EXPAND_COST,
       oar: OAR_COST,
       floats: FLOAT_COST,
+      cask: CASK_COST,
+      bed: BED_COST,
+      shelf: SHELF_COST,
       drip: DRIP_COST,
       mend: MEND_COST,
       platform: PLATFORM_COST,

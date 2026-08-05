@@ -475,6 +475,28 @@ const ctxB = await browser.newContext({ viewport: { width: 1280, height: 720 } }
     driveLabelAnchored.drive && /POLE|HELM/.test(driveLabelAnchored.text),
   )
 
+  // Voyage stores — cask recipe when a barrel is in the stash
+  await page.evaluate(() => {
+    window.ww.salvage.stash.barrel += 1
+    window.ww.salvage.stash.rope += 1
+  })
+  await page.waitForTimeout(300)
+  ok('Lash Cask available aboard', await waitRecipe(page, 'Cask'))
+  ok('cask lashed', (await page.evaluate(snap, 'raft'))[0].cask === true)
+  await page.evaluate(() => {
+    window.ww.forage.setFish(2, 3)
+  })
+  await page.waitForTimeout(200)
+  ok('Stow Food available', await waitRecipe(page, 'Food', 'Stow'))
+  const prov = await page.evaluate(() => {
+    const [r] = window.ww.improvise.snapshot().filter((b) => b.kind === 'raft')
+    return r.provisions
+  })
+  ok(
+    `food stowed (${prov?.smoked ?? 0} smoked, ${prov?.raw ?? 0} raw)`,
+    (prov?.smoked ?? 0) + (prov?.raw ?? 0) >= 3,
+  )
+
   // She holds against the helm while the stone is down
   const anchoredAt = await page.evaluate(() => {
     const [r] = window.ww.improvise.snapshot().filter((b) => b.kind === 'raft')

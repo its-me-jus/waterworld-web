@@ -44,6 +44,10 @@ export type SavedBuild = {
   anchored?: boolean
   torn?: boolean
   flooded?: boolean
+  /** Water cask lashed on the raft. */
+  cask?: boolean
+  /** Smoked / raw fish stowed for a crossing. */
+  provisions?: { smoked?: number; raw?: number }
   sides?: number
   roof?: SavedRoof
   hasBarrel?: boolean

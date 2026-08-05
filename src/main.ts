@@ -409,6 +409,9 @@ const improvise = createImprovise(scene, camera, {
   cookFish: () => forage.cook(),
   takeRawForSmoke: () => forage.takeRawForSmoke(),
   addSmoked: (n) => forage.addSmoked(n),
+  smokedFish: () => forage.smokedFish,
+  takeSmoked: (n) => forage.takeSmoked(n),
+  takeRaw: (n) => forage.takeRaw(n),
   grantFish: (n) => forage.grant(n),
   fashionRod: () => forage.fashionRod(),
   fashionNet: () => forage.fashionNet(),
@@ -802,6 +805,16 @@ function frame() {
   input.interact = false
   touch.apply(input)
   desktop.mergeKeys(input)
+  // Rest/Sleep owns the body while the lids are shut
+  if (improvise.sleeping) {
+    input.moveForward = 0
+    input.moveStrafe = 0
+    input.lookDeltaX = 0
+    input.lookDeltaY = 0
+    input.rise = false
+    input.dive = false
+    input.interact = false
+  }
   // Any keyboard use unlocks the audio context (WASD before click)
   if (
     input.moveForward ||
