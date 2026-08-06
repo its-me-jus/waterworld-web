@@ -284,7 +284,11 @@ const salvage = createSalvage(scene, {
 })
 
 const input = createInputState()
-const touch = createTouchControls(app)
+/** Filled once Nearby Actions exists — crowded +N chip opens the sheet. */
+let openNearbyActions = () => {}
+const touch = createTouchControls(app, {
+  onMoreActions: () => openNearbyActions(),
+})
 touch.setVisible(true)
 
 const hud = createHud(app, { touch: mobile, onRestart: restart })
@@ -590,21 +594,28 @@ const nearbyActions = createNearbyActions(app, {
   reachables: () => {
     if (!vitals.alive) return []
     const camp = improvise.campItems()
+    const facing = interactions.find(camera)
     return interactions
       .inReach(camera)
       .filter((item) => !camp.has(item))
-      .map((item) => ({
+      .map((item, i) => ({
         id: `reach:${item.verb}:${item.label}:${item.position.x.toFixed(1)}:${item.position.z.toFixed(1)}`,
         group: 'reach' as const,
         verb: item.verb,
         label: item.label,
         cost: 'hands',
         use: () => item.use(),
+        // Facing-best leads Within reach; otherwise keep distance order.
+        priority: (item.priority ?? 0) + (item === facing ? 100 : 0) + Math.max(0, 40 - i),
       }))
   },
   campRecipes: () => (vitals.alive ? improvise.campRecipes() : []),
   closePack: () => opMenu.setOpen(false),
+  aboard: () => improvise.standAt(player.x, player.z) > -100,
+  whisper: (text) => hud.whisper(text),
+  touch: mobile,
 })
+openNearbyActions = () => nearbyActions.setOpen(true)
 
 const opMenu = createOpMenu(app, {
   salvage,

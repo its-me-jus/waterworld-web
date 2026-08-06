@@ -17,6 +17,8 @@ export type NearbyRow = {
   label: string
   cost: string
   use: () => void
+  /** Higher sorts earlier within a group (facing-best / expand priority). */
+  priority?: number
 }
 
 export type NearbyDeps = {
@@ -26,6 +28,12 @@ export type NearbyDeps = {
   campRecipes: () => CampRecipe[]
   /** Close Pack when Actions opens (and vice versa from Pack side). */
   closePack?: () => void
+  /** True while standing on a raft / deck — Raft group leads the sheet. */
+  aboard?: () => boolean
+  /** Soft coach the first time several verbs are ready. */
+  whisper?: (text: string) => void
+  /** Touch UI — hide 1–9 keycaps and drop the V hint. */
+  touch?: boolean
 }
 
 const GROUP_TITLE: Record<NearbyRow['group'], string> = {
@@ -36,7 +44,20 @@ const GROUP_TITLE: Record<NearbyRow['group'], string> = {
   raft: 'Raft',
 }
 
-const GROUP_ORDER: NearbyRow['group'][] = ['reach', 'build', 'shelter', 'camp', 'raft']
+/** Beach / camp default — Within reach first, then builds. */
+const GROUP_ORDER_LAND: NearbyRow['group'][] = ['reach', 'build', 'shelter', 'camp', 'raft']
+/** Aboard — Raft / Climb / Pole work before beach Dig noise. */
+const GROUP_ORDER_ABOARD: NearbyRow['group'][] = ['raft', 'reach', 'build', 'shelter', 'camp']
+
+/** Carpentry expand path stays clustered even when priorities are tied. */
+const BUILD_RANK: Record<string, number> = {
+  Platform: 40,
+  Wall: 30,
+  Door: 20,
+  Roof: 10,
+}
+
+const COACH_KEY = 'ww.axCoach'
 
 function collectRows(deps: NearbyDeps): NearbyRow[] {
   const rows: NearbyRow[] = [...deps.reachables()]
@@ -48,17 +69,33 @@ function collectRows(deps: NearbyDeps): NearbyRow[] {
       label: r.label,
       cost: r.cost,
       use: r.use,
+      priority: r.priority,
     })
   }
   return rows
 }
 
+function sortGroup(list: NearbyRow[]) {
+  return list.slice().sort((a, b) => {
+    const pa = a.priority ?? 0
+    const pb = b.priority ?? 0
+    if (pb !== pa) return pb - pa
+    if (a.group === 'build' || b.group === 'build') {
+      const ra = BUILD_RANK[a.label] ?? 0
+      const rb = BUILD_RANK[b.label] ?? 0
+      if (rb !== ra) return rb - ra
+    }
+    return a.verb.localeCompare(b.verb) || a.label.localeCompare(b.label)
+  })
+}
+
 export function createNearbyActions(app: HTMLElement, deps: NearbyDeps) {
+  const touch = !!deps.touch
   const button = document.createElement('button')
   button.id = 'ax-open'
   button.type = 'button'
   button.setAttribute('aria-label', 'Open actions')
-  button.title = 'Actions (V)'
+  button.title = touch ? 'Actions' : 'Actions (V)'
   button.innerHTML = `
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M8.5 11.2V7.1a1.6 1.6 0 0 1 3.2 0v2.4"
@@ -79,6 +116,7 @@ export function createNearbyActions(app: HTMLElement, deps: NearbyDeps) {
   overlay.id = 'ax-sheet'
   overlay.setAttribute('role', 'dialog')
   overlay.setAttribute('aria-modal', 'true')
+  if (touch) overlay.classList.add('touch')
   overlay.innerHTML = `
     <div class="ax-panel">
       <div class="ax-head">
@@ -95,10 +133,27 @@ export function createNearbyActions(app: HTMLElement, deps: NearbyDeps) {
   let liveTimer = 0
   let lastPaint = ''
   let flatRows: NearbyRow[] = []
+  let coached = false
+  try {
+    coached = localStorage.getItem(COACH_KEY) === '1'
+  } catch {
+    coached = false
+  }
 
   function badgeText(n: number) {
     if (n <= 0) return ''
     return n > 9 ? '9+' : String(n)
+  }
+
+  function maybeCoach(n: number) {
+    if (coached || n < 2 || !deps.whisper) return
+    coached = true
+    try {
+      localStorage.setItem(COACH_KEY, '1')
+    } catch {
+      /* private mode — still whisper once this session */
+    }
+    deps.whisper(touch ? 'Hand · more builds nearby' : 'V · more builds nearby — or the hand')
   }
 
   function setBadge(n: number) {
@@ -106,6 +161,7 @@ export function createNearbyActions(app: HTMLElement, deps: NearbyDeps) {
     badge.textContent = text
     badge.hidden = !text
     button.classList.toggle('has-ready', n > 0)
+    maybeCoach(n)
   }
 
   function paint(html: string) {
@@ -135,15 +191,20 @@ export function createNearbyActions(app: HTMLElement, deps: NearbyDeps) {
       byGroup.set(r.group, list)
     }
 
+    const order = deps.aboard?.() ? GROUP_ORDER_ABOARD : GROUP_ORDER_LAND
     const chunks: string[] = []
     let index = 0
-    for (const group of GROUP_ORDER) {
+    for (const group of order) {
       const list = byGroup.get(group)
       if (!list?.length) continue
       chunks.push(`<div class="ax-group"><div class="ax-label">${GROUP_TITLE[group]}</div>`)
-      for (const r of list) {
+      for (const r of sortGroup(list)) {
         index += 1
-        const key = index <= 9 ? `<kbd class="ax-key">${index}</kbd>` : `<span class="ax-key ax-key-blank"></span>`
+        const key = touch
+          ? ''
+          : index <= 9
+            ? `<kbd class="ax-key">${index}</kbd>`
+            : `<span class="ax-key ax-key-blank"></span>`
         chunks.push(
           `<button type="button" class="ax-row" data-ax="${r.id}">` +
             key +
@@ -154,6 +215,8 @@ export function createNearbyActions(app: HTMLElement, deps: NearbyDeps) {
       }
       chunks.push('</div>')
     }
+    // Flat order must match on-screen order for 1–9.
+    flatRows = order.flatMap((g) => sortGroup(byGroup.get(g) ?? []))
     paint(chunks.join(''))
   }
 
@@ -198,7 +261,6 @@ export function createNearbyActions(app: HTMLElement, deps: NearbyDeps) {
 
   window.addEventListener('keydown', (e) => {
     if (e.code === 'KeyV' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      // Don't steal typing if a real text field ever appears
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       e.preventDefault()
@@ -209,7 +271,7 @@ export function createNearbyActions(app: HTMLElement, deps: NearbyDeps) {
       setOpen(false)
       return
     }
-    if (!open) return
+    if (!open || touch) return
     const match = /^Digit([1-9])$/.exec(e.code)
     if (!match) return
     const n = Number(match[1])

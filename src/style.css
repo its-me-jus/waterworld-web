@@ -543,15 +543,36 @@ body.underwater #bubbles {
   display: block;
 }
 
-/* Crowded beach — keep the CTA short so it doesn't stack over sticks / dive. */
+/* Crowded beach — keep the CTA short so it doesn't stack over sticks / dive.
+   Verb fires F; the +N chip opens the Actions sheet. */
 .touch-use.crowded {
-  max-width: min(42vw, 9.5rem);
-  padding: 0 0.65rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  max-width: min(48vw, 11rem);
+  padding: 0 0.35rem 0 0.7rem;
   font-size: 0.58rem;
   letter-spacing: 0.08em;
   white-space: nowrap;
+}
+
+.touch-use-verb {
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.touch-use-more {
+  flex-shrink: 0;
+  padding: 0.35rem 0.55rem;
+  margin: 0.15rem 0.15rem 0.15rem 0;
+  border-radius: 999px;
+  background: rgba(255, 196, 120, 0.92);
+  color: #1a1208;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 @media (min-width: 900px) and (pointer: fine) {
@@ -856,7 +877,8 @@ body.underwater #bubbles {
   align-items: center;
   gap: 0.45rem;
   width: 100%;
-  padding: 0.55rem 0.65rem;
+  min-height: 2.75rem;
+  padding: 0.65rem 0.75rem;
   border-radius: 10px;
   border: 1px solid rgba(150, 220, 235, 0.22);
   background: rgba(10, 48, 62, 0.55);
@@ -864,6 +886,12 @@ body.underwater #bubbles {
   text-align: left;
   cursor: pointer;
   transition: background 0.15s ease, transform 0.1s ease;
+}
+
+#ax-sheet.touch .ax-row {
+  grid-template-columns: 1fr auto;
+  min-height: 2.85rem;
+  padding: 0.75rem 0.85rem;
 }
 
 .ax-row:hover {
