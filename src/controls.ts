@@ -230,11 +230,16 @@ export function createTouchControls(parent: HTMLElement) {
     document.body.classList.toggle('touch-ui', on)
   }
 
-  /** The use button only exists while something is in reach. */
-  function setAction(label: string | null) {
-    useBtn.textContent = label ?? ''
-    useBtn.setAttribute('aria-label', label ? label : 'Use')
+  /**
+   * The use button only exists while something is in reach.
+   * When crowded, stay compact: "Raise Wall · +8" instead of a giant pill.
+   */
+  function setAction(label: string | null, more = 0) {
+    const text = label ? (more > 0 ? `${label} · +${more}` : label) : ''
+    useBtn.textContent = text
+    useBtn.setAttribute('aria-label', text || 'Use')
     useBtn.classList.toggle('on', label !== null)
+    useBtn.classList.toggle('crowded', !!label && more > 0)
   }
 
   /** While aboard, ▼ becomes POLE / HELM — tap to toggle drive on/off. */

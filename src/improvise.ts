@@ -5959,7 +5959,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     debugTick(seconds: number) {
       stockTraps(seconds)
     },
-    /** Construction recipes ready right now — Pack Camp tab. */
+    /** Construction recipes ready right now — Pack Camp tab / Actions sheet. */
     campRecipes(): CampRecipe[] {
       return campEntries
         .filter((e) => (e.menuReady ? e.menuReady() : e.item.available()))
@@ -5971,6 +5971,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           cost: e.cost ? costLabel(e.cost, deps.salvage.labels) : 'hands',
           use: () => e.item.use(),
         }))
+    },
+    /** Live Interactable handles for camp recipes — Actions "Within reach" skips these. */
+    campItems(): ReadonlySet<Interactable> {
+      return new Set(campEntries.map((e) => e.item))
     },
     /** True while the player is holding a living brand. */
     get carryingFire() {

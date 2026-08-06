@@ -72,6 +72,22 @@ export function createInteractions() {
       return best
     },
 
+    /**
+     * Everything in arm's reach right now — no facing gate.
+     * The Actions sheet lists these (minus camp recipes, which have their own groups).
+     */
+    inReach(camera: THREE.Camera): Interactable[] {
+      const out: { item: Interactable; distance: number }[] = []
+      for (const item of items) {
+        if (!item.available()) continue
+        const distance = toItem.copy(item.position).sub(camera.position).length()
+        if (distance > item.radius) continue
+        out.push({ item, distance })
+      }
+      out.sort((a, b) => a.distance - b.distance || (b.item.priority ?? 0) - (a.item.priority ?? 0))
+      return out.map((e) => e.item)
+    },
+
     /** Dev: every live candidate and its score, for tuning prompt contention. */
     candidates(camera: THREE.Camera) {
       camera.getWorldDirection(forward)
