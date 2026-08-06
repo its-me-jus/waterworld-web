@@ -42,7 +42,10 @@ function resetStick(stick: Stick) {
   setKnob(stick)
 }
 
-export function createTouchControls(parent: HTMLElement) {
+export function createTouchControls(
+  parent: HTMLElement,
+  opts?: { onMoreActions?: () => void },
+) {
   const wrap = document.createElement('div')
   wrap.id = 'touch-controls'
   parent.appendChild(wrap)
@@ -76,18 +79,50 @@ export function createTouchControls(parent: HTMLElement) {
   let lookLastX = 0
   let lookLastY = 0
   let driveMode: 'pole' | 'helm' | null = null
+  let moreCount = 0
 
   const useBtn = actions.querySelector('[data-act="use"]') as HTMLButtonElement
   const diveBtn = actions.querySelector('[data-act="dive"]') as HTMLButtonElement
+  let moreArmed = false
+
+  function hitMoreChip(e: PointerEvent) {
+    if (moreCount <= 0 || !opts?.onMoreActions) return false
+    const more = useBtn.querySelector('.touch-use-more')
+    if (!more) return false
+    const r = more.getBoundingClientRect()
+    return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
+  }
+
   useBtn.addEventListener('pointerdown', (e) => {
     e.preventDefault()
+    // Crowded beach — +N opens Actions on pointerup so this same tap
+    // doesn't land on the fresh overlay and dismiss it.
+    if (hitMoreChip(e)) {
+      moreArmed = true
+      useBtn.classList.add('active')
+      return
+    }
+    moreArmed = false
     usePending = true
     useBtn.classList.add('active')
   })
-  const releaseUse = () => useBtn.classList.remove('active')
+  const releaseUse = (e?: Event) => {
+    useBtn.classList.remove('active')
+    if (!moreArmed) return
+    moreArmed = false
+    if (e && 'clientX' in e && !hitMoreChip(e as PointerEvent)) return
+    // Defer past the current pointerup so the overlay doesn't see it as a dismiss.
+    window.setTimeout(() => opts?.onMoreActions?.(), 0)
+  }
   useBtn.addEventListener('pointerup', releaseUse)
-  useBtn.addEventListener('pointercancel', releaseUse)
-  useBtn.addEventListener('pointerleave', releaseUse)
+  useBtn.addEventListener('pointercancel', () => {
+    moreArmed = false
+    useBtn.classList.remove('active')
+  })
+  useBtn.addEventListener('pointerleave', () => {
+    if (moreArmed) return
+    useBtn.classList.remove('active')
+  })
 
   const bindHold = (btn: HTMLButtonElement, set: (v: boolean) => void) => {
     const on = (e: Event) => {
@@ -230,11 +265,25 @@ export function createTouchControls(parent: HTMLElement) {
     document.body.classList.toggle('touch-ui', on)
   }
 
-  /** The use button only exists while something is in reach. */
-  function setAction(label: string | null) {
-    useBtn.textContent = label ?? ''
-    useBtn.setAttribute('aria-label', label ? label : 'Use')
+  /**
+   * The use button only exists while something is in reach.
+   * When crowded, stay compact with a tappable +N chip that opens Actions.
+   */
+  function setAction(label: string | null, more = 0) {
+    moreCount = more
+    const crowded = !!label && more > 0
+    if (!label) {
+      useBtn.textContent = ''
+    } else if (crowded) {
+      useBtn.innerHTML =
+        `<span class="touch-use-verb">${label}</span>` +
+        `<span class="touch-use-more" aria-label="Open ${more} more actions">+${more}</span>`
+    } else {
+      useBtn.textContent = label
+    }
+    useBtn.setAttribute('aria-label', label ? (crowded ? `${label}, plus ${more} more` : label) : 'Use')
     useBtn.classList.toggle('on', label !== null)
+    useBtn.classList.toggle('crowded', crowded)
   }
 
   /** While aboard, ▼ becomes POLE / HELM — tap to toggle drive on/off. */

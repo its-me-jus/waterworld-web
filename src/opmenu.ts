@@ -47,6 +47,8 @@ export type OpMenuDeps = {
   spots: Record<string, TeleportSpot>
   /** Full run restart — the menu's reset is the real one, not a vitals patch. */
   resetRun: () => void
+  /** Close Nearby Actions when Pack opens so only one sheet owns the screen. */
+  closeActions?: () => void
 }
 
 type Screen = 'hub' | 'body' | 'stash' | 'camp' | 'kit'
@@ -349,9 +351,9 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     open = next
     overlay.classList.toggle('open', open)
     button.classList.toggle('active', open)
-    document.body.classList.toggle('menu-open', open)
-
     if (open) {
+      deps.closeActions?.()
+      document.body.classList.add('menu-open')
       // Hand the pointer back so the modal is clickable; re-locks on click
       if (document.pointerLockElement) document.exitPointerLock()
       setScreen('hub')
@@ -360,6 +362,9 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     } else {
       window.clearInterval(liveTimer)
       screen = 'hub'
+      if (!document.getElementById('ax-sheet')?.classList.contains('open')) {
+        document.body.classList.remove('menu-open')
+      }
     }
   }
 

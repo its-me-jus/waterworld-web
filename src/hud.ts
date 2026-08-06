@@ -53,7 +53,7 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     <div id="craft"></div>
     <div id="vitals"></div>
     <div id="stash"></div>
-    <div id="prompt"><kbd>F</kbd><span></span></div>
+    <div id="prompt"><kbd>F</kbd><span class="prompt-main"></span><span class="prompt-more"></span></div>
     <div id="hurt"></div>
   `
   app.appendChild(root)
@@ -79,7 +79,8 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
   const vitalsBox = root.querySelector('#vitals') as HTMLElement
   const stashBox = root.querySelector('#stash') as HTMLElement
   const promptBox = root.querySelector('#prompt') as HTMLElement
-  const promptText = promptBox.querySelector('span') as HTMLElement
+  const promptText = promptBox.querySelector('.prompt-main') as HTMLElement
+  const promptMore = promptBox.querySelector('.prompt-more') as HTMLElement
   const hurt = root.querySelector('#hurt') as HTMLElement
   const dayChip = root.querySelector('#day') as HTMLElement
   const craftChip = root.querySelector('#craft') as HTMLElement
@@ -117,6 +118,7 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
   })
 
   let lastPrompt = ''
+  let lastPromptMore = -1
   let lastStash = ''
   let lastDay = 0
   let lastCraft = ''
@@ -143,17 +145,26 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     craftChip.classList.toggle('on', next !== '')
   }
 
-  function setPrompt(prompt: Prompt | string | null) {
+  /**
+   * Soft F prompt — facing-best verb. When several actions are ready, `more`
+   * adds "N more · Actions" so the hand sheet is discoverable without clutter.
+   */
+  function setPrompt(prompt: Prompt | string | null, more = 0) {
     const text =
       typeof prompt === 'string'
         ? prompt
         : prompt
           ? `${prompt.verb} ${prompt.label.toLowerCase()}`
           : ''
-    if (text === lastPrompt) return
+    const extra = text && more > 0 ? more : 0
+    if (text === lastPrompt && extra === lastPromptMore) return
     lastPrompt = text
+    lastPromptMore = extra
     promptText.textContent = text
+    promptMore.textContent = extra > 0 ? `${extra} more · Actions` : ''
+    promptMore.classList.toggle('on', extra > 0)
     promptBox.classList.toggle('on', text !== '')
+    promptBox.classList.toggle('crowded', extra > 0)
   }
 
   function setStash(

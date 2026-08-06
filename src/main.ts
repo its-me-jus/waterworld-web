@@ -13,6 +13,7 @@ import { createIsland } from './island'
 import { createLittoral } from './littoral'
 import { createOcean } from './ocean'
 import { createOpMenu, type TeleportSpot } from './opmenu'
+import { createNearbyActions } from './nearby'
 import { applyVitals, clearSave, legacyWreck, readSave, writeSave, type SavedRun } from './persist'
 import { bindKeyboardMouse, createPlayer, updatePlayer } from './player'
 import { createPostChain } from './post'
@@ -283,7 +284,11 @@ const salvage = createSalvage(scene, {
 })
 
 const input = createInputState()
-const touch = createTouchControls(app)
+/** Filled once Nearby Actions exists — crowded +N chip opens the sheet. */
+let openNearbyActions = () => {}
+const touch = createTouchControls(app, {
+  onMoreActions: () => openNearbyActions(),
+})
 touch.setVisible(true)
 
 const hud = createHud(app, { touch: mobile, onRestart: restart })
@@ -443,6 +448,8 @@ function restart() {
   hud.setPrompt(null)
   touch.setAction(null)
   touch.setDriveMode(null)
+  opMenu.setOpen(false)
+  nearbyActions.setOpen(false)
   runStart = climate.getElapsed()
   lastDay = 1
   hud.setDay(1)
@@ -583,6 +590,33 @@ function teleport(spot: TeleportSpot) {
   collide(player)
 }
 
+const nearbyActions = createNearbyActions(app, {
+  reachables: () => {
+    if (!vitals.alive) return []
+    const camp = improvise.campItems()
+    const facing = interactions.find(camera)
+    return interactions
+      .inReach(camera)
+      .filter((item) => !camp.has(item))
+      .map((item, i) => ({
+        id: `reach:${item.verb}:${item.label}:${item.position.x.toFixed(1)}:${item.position.z.toFixed(1)}`,
+        group: 'reach' as const,
+        verb: item.verb,
+        label: item.label,
+        cost: 'hands',
+        use: () => item.use(),
+        // Facing-best leads Within reach; otherwise keep distance order.
+        priority: (item.priority ?? 0) + (item === facing ? 100 : 0) + Math.max(0, 40 - i),
+      }))
+  },
+  campRecipes: () => (vitals.alive ? improvise.campRecipes() : []),
+  closePack: () => opMenu.setOpen(false),
+  aboard: () => improvise.standAt(player.x, player.z) > -100,
+  whisper: (text) => hud.whisper(text),
+  touch: mobile,
+})
+openNearbyActions = () => nearbyActions.setOpen(true)
+
 const opMenu = createOpMenu(app, {
   salvage,
   loot,
@@ -613,6 +647,7 @@ const opMenu = createOpMenu(app, {
     spar: { x: spar.position.x + 3, z: spar.position.z + 3 },
   },
   resetRun: restart,
+  closeActions: () => nearbyActions.setOpen(false),
 })
 
 // Continue a living camp across reloads — skip if the URL asked for a spawn
@@ -667,6 +702,7 @@ if (import.meta.env.DEV) {
       harvest,
       improvise,
       opMenu,
+      nearbyActions,
       underwater: underwaterWorld,
     },
     __shark: shark,
@@ -909,6 +945,7 @@ function frame() {
     dead = true
     clearSave()
     opMenu.setOpen(false)
+    nearbyActions.setOpen(false)
     hud.setDead(vitals.cause, day)
     if (document.pointerLockElement) document.exitPointerLock()
   }
@@ -971,7 +1008,7 @@ function frame() {
     ground: groundKind,
     lightning: weather.lightning,
     thunder: weather.thunder,
-    menuOpen: opMenu.open,
+    menuOpen: opMenu.open || nearbyActions.open,
   })
   // Pointer-lock / first click also unlocks audio in case the global listeners missed it
   if (document.pointerLockElement) void oceanAudio.unlock()
@@ -1181,10 +1218,14 @@ function frame() {
     : dropKind
       ? { verb: 'Drop', label: salvage.labels[dropKind].one }
       : null
-  hud.setPrompt(prompt)
-  // Mobile action button carries the same words as the centre prompt — verb
-  // alone ("Lash") is ambiguous once lean-to and raft share a verb.
-  touch.setAction(prompt ? `${prompt.verb} ${prompt.label}` : null)
+  const ready = nearbyActions.readyCount()
+  // Facing-best stays on F; crowded beaches point at the Actions sheet.
+  // Drop isn't a sheet row — all ready verbs count as "more".
+  const more = prompt ? (reachable ? Math.max(0, ready - 1) : ready) : 0
+  hud.setPrompt(prompt, more)
+  // Mobile CTA stays compact when crowded — "Raise Wall · +8" instead of a tall pill.
+  touch.setAction(prompt ? `${prompt.verb} ${prompt.label}` : null, more)
+  nearbyActions.tick()
   hud.setStash(salvage.stash, salvage.labels, {
     rawFish: forage.rawFish,
     smokedFish: forage.smokedFish,

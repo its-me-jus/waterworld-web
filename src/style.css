@@ -233,12 +233,16 @@ body.playing:not(.touch-ui) #crosshair {
   left: 50%;
   bottom: 22%;
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.35rem 0.55rem;
+  max-width: min(92vw, 28rem);
   transform: translate(-50%, 6px);
   opacity: 0;
   transition: opacity 0.18s ease, transform 0.18s ease;
   text-shadow: 0 2px 10px rgba(3, 14, 20, 0.95);
+  text-align: center;
 }
 
 #prompt.on {
@@ -259,11 +263,27 @@ body.playing:not(.touch-ui) #crosshair {
   color: rgba(230, 245, 255, 0.9);
 }
 
-#prompt span {
+#prompt .prompt-main {
   font-size: 0.8rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: #eaf6ff;
+}
+
+#prompt .prompt-more {
+  display: none;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(168, 228, 242, 0.72);
+}
+
+#prompt .prompt-more.on {
+  display: inline;
+}
+
+#prompt.crowded {
+  bottom: 20%;
 }
 
 #hurt {
@@ -523,6 +543,38 @@ body.underwater #bubbles {
   display: block;
 }
 
+/* Crowded beach — keep the CTA short so it doesn't stack over sticks / dive.
+   Verb fires F; the +N chip opens the Actions sheet. */
+.touch-use.crowded {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  max-width: min(48vw, 11rem);
+  padding: 0 0.35rem 0 0.7rem;
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.touch-use-verb {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.touch-use-more {
+  flex-shrink: 0;
+  padding: 0.35rem 0.55rem;
+  margin: 0.15rem 0.15rem 0.15rem 0;
+  border-radius: 999px;
+  background: rgba(255, 196, 120, 0.92);
+  color: #1a1208;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 @media (min-width: 900px) and (pointer: fine) {
   .stick {
     width: 118px;
@@ -650,12 +702,12 @@ body.underwater #bubbles {
 }
 
 /* —— operating menu —— */
-#op-open {
+/* Pack bag + Actions hand share one bottom dock */
+#op-open,
+#ax-open {
   position: fixed;
   z-index: 7;
-  left: 50%;
   bottom: max(1.1rem, env(safe-area-inset-bottom));
-  transform: translateX(-50%);
   width: 46px;
   height: 46px;
   display: grid;
@@ -670,19 +722,214 @@ body.underwater #bubbles {
   transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
 }
 
-#op-open svg {
+#op-open {
+  left: calc(50% - 28px);
+  transform: translateX(-100%);
+}
+
+#ax-open {
+  left: calc(50% + 28px);
+  transform: translateX(0);
+}
+
+#op-open svg,
+#ax-open svg {
   width: 22px;
   height: 22px;
 }
 
 #op-open:hover,
-#op-open.active {
+#op-open.active,
+#ax-open:hover,
+#ax-open.active {
   background: rgba(10, 58, 72, 0.75);
   border-color: rgba(168, 228, 242, 0.6);
 }
 
 #op-open:active {
-  transform: translateX(-50%) scale(0.94);
+  transform: translateX(-100%) scale(0.94);
+}
+
+#ax-open:active {
+  transform: scale(0.94);
+}
+
+.ax-badge {
+  position: absolute;
+  top: -0.35rem;
+  right: -0.4rem;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.28rem;
+  border-radius: 999px;
+  background: rgba(255, 196, 120, 0.95);
+  color: #1a1208;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.15rem;
+  text-align: center;
+}
+
+#ax-open.has-ready {
+  border-color: rgba(255, 210, 140, 0.45);
+}
+
+#ax-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  align-items: end;
+  justify-items: center;
+  padding: 0.75rem;
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  background: rgba(2, 10, 15, 0.5);
+  backdrop-filter: blur(4px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+
+#ax-sheet.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ax-panel {
+  width: min(420px, 96vw);
+  max-height: min(72vh, 34rem);
+  overflow-y: auto;
+  padding: 1rem 1.1rem 1.2rem;
+  border-radius: 16px 16px 14px 14px;
+  border: 1px solid rgba(150, 220, 235, 0.22);
+  background: linear-gradient(180deg, rgba(7, 28, 37, 0.97), rgba(4, 17, 24, 0.98));
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  color: #d6eaf4;
+  transform: translateY(12px);
+  transition: transform 0.22s ease;
+}
+
+#ax-sheet.open .ax-panel {
+  transform: none;
+}
+
+.ax-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  margin-bottom: 0.55rem;
+}
+
+.ax-head h2 {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #a8e4f2;
+}
+
+.ax-close {
+  border: 0;
+  background: none;
+  color: rgba(214, 234, 244, 0.7);
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.1rem 0.4rem;
+}
+
+.ax-close:hover {
+  color: #fff;
+}
+
+.ax-empty {
+  margin: 0;
+  padding: 0.35rem 0.1rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: rgba(214, 234, 244, 0.55);
+}
+
+.ax-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.65rem;
+}
+
+.ax-group:last-child {
+  margin-bottom: 0;
+}
+
+.ax-label {
+  font-size: 0.55rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(168, 228, 242, 0.45);
+}
+
+.ax-row {
+  display: grid;
+  grid-template-columns: 1.4rem 1fr auto;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(150, 220, 235, 0.22);
+  background: rgba(10, 48, 62, 0.55);
+  color: #cfeef8;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+#ax-sheet.touch .ax-row {
+  grid-template-columns: 1fr auto;
+  min-height: 2.85rem;
+  padding: 0.75rem 0.85rem;
+}
+
+.ax-row:hover {
+  background: rgba(18, 78, 98, 0.75);
+}
+
+.ax-row:active {
+  transform: scale(0.98);
+}
+
+.ax-key {
+  font: inherit;
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+  padding: 0.08rem 0;
+  text-align: center;
+  border-radius: 4px;
+  border: 1px solid rgba(168, 228, 242, 0.35);
+  color: rgba(168, 228, 242, 0.85);
+  background: rgba(4, 20, 28, 0.45);
+}
+
+.ax-key-blank {
+  border-color: transparent;
+  background: transparent;
+}
+
+.ax-verb {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.ax-cost {
+  font-size: 0.62rem;
+  color: rgba(214, 234, 244, 0.55);
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
 }
 
 #op-menu {
