@@ -55,6 +55,8 @@ export type SavedBuild = {
   /** Fish waiting in a trap. */
   fish?: number
   hold?: SavedHold
+  /** Smoked fish stowed in a crate / raft locker. */
+  holdSmoked?: number
   /** Raft drift velocity. */
   vx?: number
   vz?: number

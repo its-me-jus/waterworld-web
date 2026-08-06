@@ -26,6 +26,8 @@ export type StashKind =
   | 'leaf'
   | 'nut'
   | 'shell'
+  /** Filled tin or bottle — portable water for a hill walk. */
+  | 'flask'
 export type Stash = Record<StashKind, number>
 
 const STASH_LABEL: Record<StashKind, { one: string; many: string }> = {
@@ -39,6 +41,7 @@ const STASH_LABEL: Record<StashKind, { one: string; many: string }> = {
   leaf: { one: 'Frond', many: 'Fronds' },
   nut: { one: 'Coconut', many: 'Coconuts' },
   shell: { one: 'Shell', many: 'Shells' },
+  flask: { one: 'Flask', many: 'Flasks' },
 }
 
 /** How far a drifter gets before it counts as left behind. */
@@ -261,6 +264,7 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     leaf: 0,
     nut: 0,
     shell: 0,
+    flask: 0,
   }
   const finds: Find[] = []
   const up = new THREE.Vector3(0, 1, 0)
