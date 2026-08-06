@@ -71,6 +71,12 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
   const woundVeil = document.createElement('div')
   woundVeil.id = 'wound-veil'
   app.appendChild(woundVeil)
+  const sleepVeil = document.createElement('div')
+  sleepVeil.id = 'sleep-veil'
+  sleepVeil.innerHTML = '<i class="sleep-lid sleep-lid-top"></i><i class="sleep-lid sleep-lid-bot"></i>'
+  app.appendChild(sleepVeil)
+  const sleepLidTop = sleepVeil.querySelector('.sleep-lid-top') as HTMLElement
+  const sleepLidBot = sleepVeil.querySelector('.sleep-lid-bot') as HTMLElement
 
   const breath = root.querySelector('#breath') as SVGSVGElement
   const breathFill = root.querySelector('.breath-fill') as SVGCircleElement
@@ -120,6 +126,9 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
   let lastPrompt = ''
   let lastPromptMore = -1
   let lastStash = ''
+  /** 0 open … 1 eyes shut — Rest/Sleep close-eyes sequence. */
+  let sleepAmt = 0
+  let sleepTarget = 0
   let lastDay = 0
   let lastCraft = ''
 
@@ -251,6 +260,29 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     veilWound = damp(veilWound, woundAmt, vitals.wounded ? 5 : 1.2, dt)
     woundVeil.style.opacity = veilWound.toFixed(3)
     woundVeil.classList.toggle('bleeding', vitals.wounded)
+
+    // Close-eyes Rest — lids meet in the middle, world goes dark
+    sleepAmt = damp(sleepAmt, sleepTarget, sleepTarget > sleepAmt ? 7 : 4.2, dt)
+    const lid = Math.min(1, Math.max(0, sleepAmt))
+    sleepLidTop.style.transform = `translateY(${(-50 + lid * 50).toFixed(2)}%)`
+    sleepLidBot.style.transform = `translateY(${(50 - lid * 50).toFixed(2)}%)`
+    sleepVeil.style.opacity = lid > 0.02 ? '1' : '0'
+    sleepVeil.classList.toggle('on', lid > 0.02)
+  }
+
+  /** Drive the sleep lids: 0 = open, 1 = shut. */
+  function setSleepVeil(amount: number) {
+    sleepTarget = Math.min(1, Math.max(0, amount))
+  }
+
+  /** Instant snap (reset / death). */
+  function clearSleepVeil() {
+    sleepTarget = 0
+    sleepAmt = 0
+    sleepLidTop.style.transform = 'translateY(-50%)'
+    sleepLidBot.style.transform = 'translateY(50%)'
+    sleepVeil.style.opacity = '0'
+    sleepVeil.classList.remove('on')
   }
 
   /** The one scoreboard the game keeps: which day of the run you're on. */
@@ -288,6 +320,7 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     whisperQueue.length = 0
     whisperT = 0
     lastDay = 0
+    clearSleepVeil()
     setCraft(null)
   }
 
@@ -300,6 +333,8 @@ export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: (
     setDay,
     setDead,
     clearDead,
+    setSleepVeil,
+    clearSleepVeil,
     get promptShowing() {
       return promptBox.classList.contains('on')
     },

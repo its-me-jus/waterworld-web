@@ -225,14 +225,26 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   ok('fire on the deck', (await page.evaluate(counts)).fire === 1)
 
   // Sleep: look down at the floor of a roofed, walled tile
+  // Top up tanks — a long carpentry run can leave you too empty to sleep
+  await page.evaluate(() => {
+    const v = window.ww.vitals
+    v.food = Math.max(v.food, 0.6)
+    v.water = Math.max(v.water, 0.6)
+  })
   ok(
     'slept in the self-built room',
     await faceAndPressF(page, { yaw: 0, pitch: -1.1 }, /sleep under roof/i),
   )
-  await page.waitForFunction(() => document.querySelector('#day')?.textContent === 'Day 2', null, {
-    timeout: 15000,
-  }).catch(() => {})
+  await page
+    .waitForFunction(() => !window.ww.improvise.sleeping, null, { timeout: 20000 })
+    .catch(() => {})
+  await page
+    .waitForFunction(() => document.querySelector('#day')?.textContent === 'Day 2', null, {
+      timeout: 10000,
+    })
+    .catch(() => {})
   ok('woke to Day 2', (await page.evaluate(dayChip)) === 'Day 2')
+  ok('sleep sequence finished', await page.evaluate(() => !window.ww.improvise.sleeping))
 
   // Walls block: outside, push in until stuck — the plane holds
   const [tile] = await page.evaluate(snap, 'platform')
@@ -460,6 +472,42 @@ const ctxB = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   // Anchor from aboard — Pack → Camp carries the verb too
   ok('Drop Anchor available', await waitRecipe(page, 'Anchor', 'Drop'))
   ok('anchor down', (await page.evaluate(snap, 'raft'))[0].anchored === true)
+
+  // POLE/HELM chrome must stay while aboard — even with the stone down
+  await page.waitForTimeout(200)
+  const driveLabelAnchored = await page.evaluate(() => {
+    const btn = document.querySelector('.touch-dive')
+    return {
+      text: (btn?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+      drive: btn?.classList.contains('drive') ?? false,
+    }
+  })
+  ok(
+    `drive button stays labeled while anchored (${driveLabelAnchored.text})`,
+    driveLabelAnchored.drive && /POLE|HELM/.test(driveLabelAnchored.text),
+  )
+
+  // Voyage stores — cask recipe when a barrel is in the stash
+  await page.evaluate(() => {
+    window.ww.salvage.stash.barrel += 1
+    window.ww.salvage.stash.rope += 1
+  })
+  await page.waitForTimeout(300)
+  ok('Lash Cask available aboard', await waitRecipe(page, 'Cask'))
+  ok('cask lashed', (await page.evaluate(snap, 'raft'))[0].cask === true)
+  await page.evaluate(() => {
+    window.ww.forage.setFish(2, 3)
+  })
+  await page.waitForTimeout(200)
+  ok('Stow Food available', await waitRecipe(page, 'Food', 'Stow'))
+  const prov = await page.evaluate(() => {
+    const [r] = window.ww.improvise.snapshot().filter((b) => b.kind === 'raft')
+    return r.provisions
+  })
+  ok(
+    `food stowed (${prov?.smoked ?? 0} smoked, ${prov?.raw ?? 0} raw)`,
+    (prov?.smoked ?? 0) + (prov?.raw ?? 0) >= 3,
+  )
 
   // She holds against the helm while the stone is down
   const anchoredAt = await page.evaluate(() => {
