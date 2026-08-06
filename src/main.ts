@@ -98,7 +98,8 @@ const skyRig = createSky(scene, 30, 38, {
 scene.background = skyRig.horizonColor.clone()
 
 const { mesh: ocean, material: oceanMat, follow, syncWaves } = createOcean({
-  size: lowPower ? 420 : 700,
+  // Big enough that fog + radial rim fade eat the edge before a square shows
+  size: lowPower ? 900 : 1400,
   segments: lowPower ? 150 : 300,
   detailOctaves: lowPower ? 2 : 4,
 })

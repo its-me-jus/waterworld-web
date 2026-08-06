@@ -122,6 +122,7 @@ uniform vec3 uHorizonColor;
 uniform float uUnderwater;
 uniform float uTime;
 uniform float uChopScale;
+uniform float uHalfExtent;
 // Same lee as the vertex stage: xy = centre, z = calm radius, w = open radius
 uniform vec4 uShelter;
 // Island shelf for shallows: xy = centre, z = ankle-deep radius, w = deep-again
@@ -213,7 +214,11 @@ void main() {
     col += uSunColor * ggx(Nd, -I, L, 0.45) * 0.25 * snell;
     col = mix(col, murk, smoothstep(8.0, 60.0, dist));
 
-    gl_FragColor = vec4(col, 0.95);
+    float planarU = length(vWorldPos.xz - uCameraPos.xz);
+    float rimU = 1.0 - smoothstep(uHalfExtent * 0.52, uHalfExtent * 0.97, planarU);
+    col = mix(col, murk * 0.7, 1.0 - rimU);
+    gl_FragColor = vec4(col, 0.95 * rimU);
+
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     return;
@@ -275,13 +280,17 @@ void main() {
   foam *= 1.0 - 0.85 * shelf; // no whitecaps in the lap
   color = mix(color, vec3(0.88, 0.94, 0.97), foam * (0.5 + uChopScale * 0.12));
 
-  // Blend to horizon so the mesh edge disappears
-  float far = smoothstep(220.0, 430.0, dist);
-  color = mix(color, uHorizonColor * 0.85, far * 0.6);
+  // Blend toward the sky near the mesh rim so a finite square doesn't silhouette
+  float planar = length(vWorldPos.xz - uCameraPos.xz);
+  float rim = 1.0 - smoothstep(uHalfExtent * 0.52, uHalfExtent * 0.97, planar);
+  float far = 1.0 - rim;
+  color = mix(color, uHorizonColor * 0.85, far * 0.92);
 
   // Soft edge: only the last few metres over the beach go translucent, so sand
   // peeks through without turning the whole shelf into grey mud.
   float alpha = mix(1.0, 0.52, shelf * shelf * shelf);
+  // Radial fade kills the square corners against the horizon
+  alpha *= rim;
 
   gl_FragColor = vec4(color, alpha);
 
@@ -325,6 +334,7 @@ export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: O
       uSunDir: { value: new THREE.Vector3(0.45, 0.35, 0.3).normalize() },
       uCameraPos: { value: new THREE.Vector3() },
       uUnderwater: { value: 0 },
+      uHalfExtent: { value: size * 0.5 },
     },
     vertexShader,
     fragmentShader: fragmentShader.replaceAll('DETAIL_OCT', String(detailOctaves)),
