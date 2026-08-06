@@ -30,6 +30,8 @@ export type Island = {
   heightAt: (x: number, z: number) => number
   /** Keeps the swimmer out of the rock and lets them wade up the beach. */
   resolve: (p: { x: number; y: number; z: number }) => void
+  /** How many boulder / stone ellipsoids are live. */
+  readonly rockColliders: number
   /** Beach-level world positions, for anything that wants to sit on the sand. */
   shore: THREE.Vector3[]
   /**
@@ -911,6 +913,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const wrackParts: THREE.BufferGeometry[] = []
   const reedParts: THREE.BufferGeometry[] = []
   // Saplings share the broadleaf batches — same bark / canopy materials
+  /** Hillside boulders + chunky beach stones — ellipsoid push like the wreck reef. */
+  const rockBlockers: { centre: THREE.Vector3; axes: THREE.Vector3 }[] = []
 
   const palmWanted = low ? 32 : 72
   const rockWanted = low ? 90 : 200
@@ -1018,10 +1022,25 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     lx: number,
     h: number,
     lz: number,
+    /** When set, register an ellipsoid blocker (boulders + big beach stones). */
+    collide = false,
   ) => {
     const baked = bakeFor(stone.geo, seed, SPECIES.rock)
     shadeStone(baked, seed)
     list.push(placeAt(baked, lx, h, lz, stone.sink))
+    if (!collide) return
+    stone.geo.computeBoundingBox()
+    const box = stone.geo.boundingBox
+    if (!box) return
+    const rx = Math.max((box.max.x - box.min.x) * 0.45, 0.45)
+    const ry = Math.max((box.max.y - box.min.y) * 0.45, 0.4)
+    const rz = Math.max((box.max.z - box.min.z) * 0.45, 0.45)
+    // Hair under the visual — same trick as the wreck reef, so you clip a bump
+    // rather than bounce off an invisible shell.
+    rockBlockers.push({
+      centre: new THREE.Vector3(opts.x + lx, h + ry * 0.55, opts.z + lz),
+      axes: new THREE.Vector3(rx * 0.92, ry * 0.88, rz * 0.92),
+    })
   }
 
   /** Trunk, crown and nuts share one placement and one whole-plant height, so
@@ -1175,7 +1194,14 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // Skip if buried under a palm trunk
     if (shore.some((s) => Math.hypot(s.x - opts.x - lx, s.z - opts.z - lz) < 3.2)) continue
     const stone = stoneGeometry(i + 40, 0.75 + fbm((i + 40) * 9.1, (i + 40) * 5.3) * 1.5, 2)
-    plantStone(rocks, stone, i + 40, lx, h, lz)
+    // Only the bigger beach stones block — grit underfoot stays walkable
+    const span = stone.geo.boundingBox
+      ? Math.max(
+          stone.geo.boundingBox.max.x - stone.geo.boundingBox.min.x,
+          stone.geo.boundingBox.max.z - stone.geo.boundingBox.min.z,
+        )
+      : 0
+    plantStone(rocks, stone, i + 40, lx, h, lz, span > 2.2)
   }
 
   // Mid-slope boulders — the thing that stops a green cone reading as a cone
@@ -1189,7 +1215,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
     // Prefer a bit of pitch — boulders collect where the ground tips
     if (slope < 1.2 || slope > 11) continue
-    plantStone(boulderParts, boulder(i + 1500), i + 1500, lx, h, lz)
+    plantStone(boulderParts, boulder(i + 1500), i + 1500, lx, h, lz, true)
   }
 
   // Driftwood — mid-beach, sparse, sells the wash-up
@@ -1651,6 +1677,22 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // Eye height above the sand. The swim controller still owns the body here,
     // so wading is approximate until there's a real walk mode to take over.
     if (p.y < h + 1.45) p.y = h + 1.45
+
+    // Boulders / big stones — same ellipsoid push as the wreck reef. Skip when
+    // you're clearly above the crown (ridge walks) or well below (diving past).
+    for (const b of rockBlockers) {
+      if (p.y > b.centre.y + b.axes.y + 1.1) continue
+      if (p.y < b.centre.y - b.axes.y - 1.2) continue
+      const dx = (p.x - b.centre.x) / b.axes.x
+      const dy = (p.y - b.centre.y) / b.axes.y
+      const dz = (p.z - b.centre.z) / b.axes.z
+      const d = Math.hypot(dx, dy, dz)
+      if (d >= 1 || d < 1e-4) continue
+      const push = 1.002 / d
+      p.x = b.centre.x + dx * push * b.axes.x
+      p.y = b.centre.y + dy * push * b.axes.y
+      p.z = b.centre.z + dz * push * b.axes.z
+    }
   }
 
   const centre = new THREE.Vector3(opts.x, 0, opts.z)
@@ -2102,5 +2144,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     update,
     setHaze,
     setWeather,
+    /** How many boulder / stone ellipsoids are live — tests / tuning. */
+    get rockColliders() {
+      return rockBlockers.length
+    },
   }
 }

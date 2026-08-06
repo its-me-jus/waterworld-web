@@ -144,15 +144,18 @@ export function createOceanAudio() {
   let shoreNoise: { gain: GainNode } | null = null
   let rainNoise: { gain: GainNode } | null = null
   let windNoise: { gain: GainNode } | null = null
+  let landNoise: { gain: GainNode } | null = null
   let surfaceFilter: BiquadFilterNode | null = null
   let underFilter: BiquadFilterNode | null = null
   let bobFilter: BiquadFilterNode | null = null
   let shoreFilter: BiquadFilterNode | null = null
   let rainFilter: BiquadFilterNode | null = null
   let windFilter: BiquadFilterNode | null = null
+  let landFilter: BiquadFilterNode | null = null
   let underRumble: OscillatorNode | null = null
   let rumbleGain: GainNode | null = null
   let bubbleTimer = 0
+  let chirpTimer = 18 + Math.random() * 20
 
   // Optional baked beds / one-shots
   let surfaceBed: { gain: GainNode } | null = null
@@ -198,6 +201,7 @@ export function createOceanAudio() {
   let gShore = 0
   let gRain = 0
   let gWind = 0
+  let gLand = 0
   let gMaster = 0
   let gSurfaceBed = 0
   let gUnderBed = 0
@@ -293,6 +297,15 @@ export function createOceanAudio() {
     windFilter.Q.value = 0.45
     windFilter.connect(weatherBus)
     windNoise = startNoise(ctx, noise, windFilter)
+
+    // —— inland hush: soft canopy / leaf bed (hills, not beach) ————
+    // Kept very quiet on purpose — the island can stay contemplative.
+    landFilter = ctx.createBiquadFilter()
+    landFilter.type = 'bandpass'
+    landFilter.frequency.value = 2100
+    landFilter.Q.value = 0.55
+    landFilter.connect(ambientBus)
+    landNoise = startNoise(ctx, noise, landFilter)
 
     // —— proximity dread: two detuned lows beating against each other ————
     dangerGain = ctx.createGain()
@@ -967,6 +980,40 @@ export function createOceanAudio() {
     src.start(0)
   }
 
+  /**
+   * A sparse inland chirp — short sine with a little bend so it reads as a bird
+   * without looping. Gain stays tiny; storms and the beach stay quiet.
+   */
+  function tickChirp() {
+    if (!ctx || !master || !ambientBus) return
+    const duration = 0.09 + Math.random() * 0.14
+    const length = Math.floor(ctx.sampleRate * duration)
+    const buffer = ctx.createBuffer(1, length, ctx.sampleRate)
+    const data = buffer.getChannelData(0)
+    const f0 = 1800 + Math.random() * 2200
+    const bend = 0.7 + Math.random() * 0.9
+    for (let i = 0; i < length; i++) {
+      const t = i / ctx.sampleRate
+      const env = Math.sin(Math.PI * Math.min(1, t / duration)) ** 1.6
+      const freq = f0 * (1 + bend * t)
+      data[i] = Math.sin(2 * Math.PI * freq * t) * env * 0.55
+      // Soft second partial — less whistle, more throat
+      data[i] += Math.sin(2 * Math.PI * freq * 1.5 * t) * env * 0.12
+    }
+    const src = ctx.createBufferSource()
+    src.buffer = buffer
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.frequency.value = f0
+    filter.Q.value = 4
+    const gain = ctx.createGain()
+    gain.gain.value = 0.045 + Math.random() * 0.05
+    src.connect(filter)
+    filter.connect(gain)
+    gain.connect(ambientBus)
+    src.start(0)
+  }
+
   function update(frame: AudioFrame) {
     const {
       dt,
@@ -1094,6 +1141,14 @@ export function createOceanAudio() {
     gShore = damp(gShore, shoreW * 0.38 * (0.7 + seaLoud * 0.3), 3.2, dt)
     gRain = damp(gRain, rainAir * 0.32, 2.4, dt)
     gWind = damp(gWind, windAir * 0.28 * (0.5 + seaLoud * 0.5), 2.2, dt)
+    // Inland only — scrub/rock hills get a soft canopy bed; beach stays ocean-led.
+    const inland =
+      onLand &&
+      underW < 0.15 &&
+      shore < 0.35 &&
+      storm < 0.45 &&
+      (ground === 'scrub' || ground === 'rock')
+    gLand = damp(gLand, inland ? 0.07 + (1 - shore) * 0.04 : 0, 2.6, dt)
     gMaster = damp(gMaster, (0.9 + storm * 0.08) * (1 - dimLevel * 0.85), 2.2, dt)
     gSurfaceBed = damp(gSurfaceBed, surfaceW * 0.55 * (1 + storm * 0.2), 2.5, dt)
     gUnderBed = damp(gUnderBed, underW * 0.6, 2.5, dt)
@@ -1115,6 +1170,7 @@ export function createOceanAudio() {
     if (shoreNoise) shoreNoise.gain.gain.setTargetAtTime(gShore, now, 0.05)
     if (rainNoise) rainNoise.gain.gain.setTargetAtTime(gRain, now, 0.06)
     if (windNoise) windNoise.gain.gain.setTargetAtTime(gWind, now, 0.06)
+    if (landNoise) landNoise.gain.gain.setTargetAtTime(gLand, now, 0.08)
     master.gain.setTargetAtTime(gMaster, now, 0.05)
     if (musicBus) musicBus.gain.setTargetAtTime(gMusic, now, 0.08)
     // Dive muffles the world through your ears for a beat
@@ -1172,6 +1228,9 @@ export function createOceanAudio() {
     if (windFilter) {
       windFilter.frequency.setTargetAtTime(260 + storm * 220 + Math.sin(now * 0.2) * 40, now, 0.1)
     }
+    if (landFilter) {
+      landFilter.frequency.setTargetAtTime(1800 + Math.sin(now * 0.15) * 280, now, 0.15)
+    }
 
     if (underW > 0.35) {
       bubbleTimer -= dt
@@ -1181,6 +1240,17 @@ export function createOceanAudio() {
       }
     } else {
       bubbleTimer = 0.4
+    }
+
+    // Sparse bird chirps inland — long gaps so the hill can stay contemplative
+    if (gLand > 0.04 && underW < 0.1 && storm < 0.4) {
+      chirpTimer -= dt
+      if (chirpTimer <= 0) {
+        tickChirp()
+        chirpTimer = 14 + Math.random() * 28
+      }
+    } else {
+      chirpTimer = Math.max(chirpTimer, 8)
     }
   }
 
