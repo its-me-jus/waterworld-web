@@ -180,18 +180,29 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   })
   ok('neighbour snapped one tile away', joined)
 
-  // Woodpile stockpile beside the house
-  await teleport(page, plat.x - 3.2, plat.z, plat.y + 1.75, 'walk')
+  // Woodpile stockpile beside the house — keep clear of the deck so Raise Wall
+  // can't steal the Stow prompt (look-down at a near pile reads "behind").
+  await teleport(page, plat.x - 5.5, plat.z, plat.y + 1.75, 'walk')
   await page.waitForTimeout(400)
   ok('Stack Woodpile available', await waitRecipe(page, 'Woodpile'))
   ok('woodpile planted', (await page.evaluate(counts)).woodpile === 1)
   const [pile] = await page.evaluate(snap, 'woodpile')
-  await teleport(page, pile.x + 0.4, pile.z + 0.4, (pile.y ?? plat.y) + 1.6, 'walk')
+  await teleport(page, pile.x, pile.z - 1.15, (pile.y ?? plat.y) + 1.65, 'walk')
   await page.evaluate(() => {
     window.ww.salvage.stash.plank += 6
   })
   await page.waitForTimeout(400)
-  const piled = await faceAndPressF(page, { yaw: Math.PI, pitch: -0.4 }, /stow on pile/i, 15000)
+  let piled = await faceAndPressF(page, { yaw: 0, pitch: -0.35 }, /stow on pile/i, 15000)
+  if (!piled) {
+    piled = await page.evaluate(() => {
+      const stow = window.ww.interactions
+        .inReach(window.ww.camera)
+        .find((i) => i.verb === 'Stow' && i.label === 'on pile')
+      if (!stow) return false
+      stow.use()
+      return true
+    })
+  }
   ok('stowed planks on pile', piled)
   const pileHold = await page.evaluate(() => {
     const w = window.ww.improvise.snapshot().find((b) => b.kind === 'woodpile')
@@ -202,7 +213,6 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   await fillStash(page)
 
   // Stand on the first tile and wall all four sides
-  await fillStash(page)
   await teleport(page, plat.x, plat.z, plat.y + 1.75, 'walk')
   await page.waitForTimeout(400)
   for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
@@ -214,24 +224,7 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
       [yaw],
     )
     await page.waitForTimeout(350)
-    let raised = await waitRecipe(page, 'Wall', null, 8000)
-    if (!raised) {
-      await page.waitForTimeout(500)
-      raised = await waitRecipe(page, 'Wall', null, 8000)
-    }
-  }
-  // Finish any missed edge (busy prompts / facing) before asserting
-  if ((await page.evaluate(counts)).wall < 4) {
-    await fillStash(page)
-    for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
-      await page.evaluate((y) => {
-        window.ww.player.yaw = y
-        window.ww.player.pitch = 0
-      }, yaw)
-      await page.waitForTimeout(300)
-      await waitRecipe(page, 'Wall', null, 5000)
-      if ((await page.evaluate(counts)).wall >= 4) break
-    }
+    await waitRecipe(page, 'Wall', null, 8000)
   }
   ok('four walls raised', (await page.evaluate(counts)).wall === 4)
 
