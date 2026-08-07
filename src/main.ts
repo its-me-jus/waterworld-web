@@ -1058,6 +1058,7 @@ function frame() {
     weather.daylight * (0.55 - weather.storm * 0.45),
     skyRig.sunDir,
     keyLight,
+    oceanState.tide,
   )
 
   oceanMat.uniforms.uTime.value = t

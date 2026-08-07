@@ -72,6 +72,7 @@ export type Island = {
     cloudShadow: number,
     sunDir: THREE.Vector3,
     sunColor: THREE.Color,
+    tide?: number,
   ) => void
 }
 
@@ -807,10 +808,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
 
   // Sand, scrub and basalt painted per vertex — one material, one draw call
   const normal = geometry.attributes.normal
-  const seabed = new THREE.Color('#5b6d52')
-  const tide = new THREE.Color('#8a7550')
-  const wetSand = new THREE.Color('#c2a878')
-  const drySand = new THREE.Color('#efdcb2')
+  const seabed = new THREE.Color('#4f6458')
+  const tide = new THREE.Color('#7a6648')
+  const wetSand = new THREE.Color('#b89468')
+  const drySand = new THREE.Color('#f2e2b4')
   const moss = new THREE.Color('#5a8a3e')
   const fern = new THREE.Color('#3f6b2b')
   const scrub = new THREE.Color('#77a04c')
@@ -831,8 +832,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const grit = fbm(x * 0.09 - 1.4, z * 0.09 + 3.7)
     const gully = fbm(x * 0.006 - 8.2, z * 0.006 + 4.4)
 
-    // Underwater shelf → wet sand → dry beach. The tide band sits right at the
-    // waterline so the beach reads as recently washed, not one flat tan.
+    // Underwater shelf → wet sand → dry beach. Live tide darkens this further
+    // in the ground shader; this bake is the resting palette.
     shade.copy(seabed).lerp(wetSand, THREE.MathUtils.smoothstep(y, -9, -0.6))
     const wetBand =
       THREE.MathUtils.smoothstep(y, -1.1, 0.2) * (1 - THREE.MathUtils.smoothstep(y, 0.5, 2.6))
@@ -2126,8 +2127,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     cloudShadow: number,
     sunDir: THREE.Vector3,
     sunColor: THREE.Color,
+    tide = 0,
   ) {
-    foliage.update(time, wind, WIND_HEADING, cloudShadow)
+    foliage.update(time, wind, WIND_HEADING, cloudShadow, tide)
     foliage.setSun(sunDir, sunColor)
   }
 

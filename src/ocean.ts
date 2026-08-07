@@ -250,15 +250,19 @@ void main() {
     float rd = length(vWorldPos.xz - uShelf.xy);
     shelf = 1.0 - smoothstep(uShelf.z, uShelf.w, rd);
   }
-  vec3 sandTint = vec3(0.45, 0.72, 0.7);
-  body = mix(body, mix(uShallowColor * 1.55, sandTint, 0.4), shelf * 0.75);
+  // Warmer turquoise over the sand — beach shallows, not pool chlorine
+  vec3 sandTint = vec3(0.52, 0.8, 0.74);
+  vec3 beachShallow = mix(uShallowColor * 1.65, sandTint, 0.48);
+  body = mix(body, beachShallow, shelf * 0.82);
 
   // Subsurface glow where the sun shines through a wave back
   float sss = pow(max(dot(-L, V) * 0.5 + 0.5, 0.0), 3.0) * (1.0 - facing);
   body += vec3(0.05, 0.3, 0.24) * sss * 0.8;
+  // Extra glow in the shallows — light bouncing off sand underfoot
+  body += beachShallow * shelf * 0.08 * facing;
 
   // Shallows give the sand more of a say — less mirror, more body colour
-  fres *= 1.0 - 0.45 * shelf;
+  fres *= 1.0 - 0.5 * shelf;
 
   vec3 color = mix(body, sky, fres);
 
@@ -269,16 +273,26 @@ void main() {
   // Sun glitter: sharp near, broader far — dialled back over the shelf so it
   // doesn't glitter like open ocean on ankle-deep water
   float rough = mix(0.05, 0.2, clamp(dist * 0.006, 0.0, 1.0));
-  rough = mix(rough, 0.22, shelf);
-  color += uSunColor * ggx(N, V, L, rough) * mix(1.6, 0.7, shelf);
+  rough = mix(rough, 0.24, shelf);
+  color += uSunColor * ggx(N, V, L, rough) * mix(1.6, 0.55, shelf);
 
   // Whitecaps on crests + a little foam streaking in the chop
   float streak = fbm(vWorldPos.xz * 0.9 + vec2(uTime * 0.25, -uTime * 0.2), 3);
   float foam = clamp(vCrest * smoothstep(0.45, 0.95, streak), 0.0, 1.0);
   foam *= smoothstep(0.35, 0.8, facing);
   foam = min(1.0, foam * (1.0 + uChopScale * 0.55));
-  foam *= 1.0 - 0.85 * shelf; // no whitecaps in the lap
+  foam *= 1.0 - 0.9 * shelf; // no open-ocean whitecaps in the lap
   color = mix(color, vec3(0.88, 0.94, 0.97), foam * (0.5 + uChopScale * 0.12));
+
+  // Soft lace of white at the waterline — complements shore.ts foam flakes
+  float laceNoise = fbm(vWorldPos.xz * 1.6 + vec2(uTime * 0.4, -uTime * 0.28), 3);
+  float lacePulse = 0.55 + 0.45 * sin(uTime * 1.2 + laceNoise * 6.0);
+  float shoreLace =
+    pow(shelf, 2.4) *
+    smoothstep(0.28, 0.82, laceNoise) *
+    lacePulse *
+    (0.35 + 0.65 * (1.0 - facing));
+  color = mix(color, vec3(0.93, 0.97, 0.99), shoreLace * 0.42);
 
   // Blend toward the sky near the mesh rim so a finite square doesn't silhouette
   float planar = length(vWorldPos.xz - uCameraPos.xz);
@@ -286,9 +300,11 @@ void main() {
   float far = 1.0 - rim;
   color = mix(color, uHorizonColor * 0.85, far * 0.92);
 
-  // Soft edge: only the last few metres over the beach go translucent, so sand
-  // peeks through without turning the whole shelf into grey mud.
-  float alpha = mix(1.0, 0.52, shelf * shelf * shelf);
+  // Soft edge: last metres over the beach go translucent so sand peeks through
+  // with a wet sheen, without turning the whole shelf into grey mud.
+  float alpha = mix(1.0, 0.38, shelf * shelf);
+  // A little more see-through right at the cut where the lace sits
+  alpha *= 1.0 - shoreLace * 0.18;
   // Radial fade kills the square corners against the horizon
   alpha *= rim;
 
