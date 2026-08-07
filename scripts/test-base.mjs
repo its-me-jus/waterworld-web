@@ -452,24 +452,34 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
     ),
   )
 
-  // Joined roofs: pitch a lid on the ground neighbour bay so the ridge meets
-  const neighbour = await page.evaluate((origin) => {
+  // Joined roofs: pitch a lid on the other ground bay so the ridge meets
+  const neighbour = await page.evaluate(() => {
     const plats = window.ww.improvise.snapshot().filter((b) => b.kind === 'platform')
-    // Prefer the lowest deck at the origin cell, then its ground-level neighbour
-    const groundHere = plats
-      .filter((p) => Math.abs(p.x - origin.x) < 0.05 && Math.abs(p.z - origin.z) < 0.05)
-      .sort((a, b) => (a.y ?? 0) - (b.y ?? 0))[0]
-    const base = groundHere ?? origin
-    return (
-      plats.find((p) => {
-        if (Math.abs((p.y ?? 0) - (base.y ?? 0)) > 0.5) return false
-        if (Math.abs(p.x - base.x) < 0.05 && Math.abs(p.z - base.z) < 0.05) return false
-        const dx = Math.abs(p.x - base.x)
-        const dz = Math.abs(p.z - base.z)
-        return (dx < 0.05 && Math.abs(dz - 2.4) < 0.05) || (dz < 0.05 && Math.abs(dx - 2.4) < 0.05)
-      }) ?? null
-    )
-  }, plat)
+    const roofs = window.ww.improvise.snapshot().filter((b) => b.kind === 'roof')
+    // Lowest platform per cell (= ground bay)
+    const byCell = new Map()
+    for (const p of plats) {
+      const key = `${p.x.toFixed(2)},${p.z.toFixed(2)}`
+      const cur = byCell.get(key)
+      if (!cur || (p.y ?? 0) < (cur.y ?? 0)) byCell.set(key, p)
+    }
+    const grounds = [...byCell.values()]
+    // Prefer an unroofed neighbour of a roofed bay
+    for (const g of grounds) {
+      const roofed = roofs.some((r) => Math.abs(r.x - g.x) < 0.1 && Math.abs(r.z - g.z) < 0.1)
+      if (roofed) continue
+      const besideRoofed = grounds.some((o) => {
+        if (o === g) return false
+        const otherRoofed = roofs.some((r) => Math.abs(r.x - o.x) < 0.1 && Math.abs(r.z - o.z) < 0.1)
+        if (!otherRoofed) return false
+        const dx = Math.abs(o.x - g.x)
+        const dz = Math.abs(o.z - g.z)
+        return (dx < 0.1 && Math.abs(dz - 2.4) < 0.1) || (dz < 0.1 && Math.abs(dx - 2.4) < 0.1)
+      })
+      if (besideRoofed) return g
+    }
+    return grounds.find((g) => !roofs.some((r) => Math.abs(r.x - g.x) < 0.1 && Math.abs(r.z - g.z) < 0.1)) ?? null
+  })
   ok('neighbour bay for joined roof', !!neighbour)
   if (neighbour) {
     await fillStash(page)
