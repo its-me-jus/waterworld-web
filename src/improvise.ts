@@ -5186,9 +5186,20 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         nearestOfKind(player.x, player.z, 'platform', 2.5, player.y)
       if (struck) setAnchor(strikePos, struck.x, struck.z, struck.deckY + 0.9)
       else strikePos.copy(eatPos)
-      const plat = nearestOfKind(player.x, player.z, 'platform', 3.0, player.y)
-      if (plat) setAnchor(climbPlatPos, plat.x, plat.z, plat.deckY + 0.4)
-      else climbPlatPos.copy(eatPos)
+      // Story Climb: aim the destination deck so looking up/down faces the
+      // prompt — a ground-level anchor reads as "behind" when the camera tilts.
+      {
+        const here = platformAt(player.x, player.z, 0.06, player.y)
+        const up = here && lookPitch >= STACK_LOOK_UP ? platformAbove(here) : null
+        const down = here && lookPitch <= -0.35 ? platformBelow(here) : null
+        const dest = up ?? down
+        if (dest) setAnchor(climbPlatPos, dest.x, dest.z, dest.deckY + 0.35)
+        else {
+          const plat = nearestOfKind(player.x, player.z, 'platform', 3.0, player.y)
+          if (plat) setAnchor(climbPlatPos, plat.x, plat.z, plat.deckY + 0.4)
+          else climbPlatPos.copy(eatPos)
+        }
+      }
       const pile = nearestOfKind(player.x, player.z, 'woodpile', 3.0)
       if (pile) setAnchor(woodpilePos, pile.x, pile.z, pile.deckY + 0.45)
       else woodpilePos.copy(eatPos)
