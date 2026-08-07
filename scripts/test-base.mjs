@@ -202,6 +202,7 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   await fillStash(page)
 
   // Stand on the first tile and wall all four sides
+  await fillStash(page)
   await teleport(page, plat.x, plat.z, plat.y + 1.75, 'walk')
   await page.waitForTimeout(400)
   for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
@@ -212,8 +213,25 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
       },
       [yaw],
     )
-    await page.waitForTimeout(300)
-    await waitRecipe(page, 'Wall')
+    await page.waitForTimeout(350)
+    let raised = await waitRecipe(page, 'Wall', null, 8000)
+    if (!raised) {
+      await page.waitForTimeout(500)
+      raised = await waitRecipe(page, 'Wall', null, 8000)
+    }
+  }
+  // Finish any missed edge (busy prompts / facing) before asserting
+  if ((await page.evaluate(counts)).wall < 4) {
+    await fillStash(page)
+    for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      await page.evaluate((y) => {
+        window.ww.player.yaw = y
+        window.ww.player.pitch = 0
+      }, yaw)
+      await page.waitForTimeout(300)
+      await waitRecipe(page, 'Wall', null, 5000)
+      if ((await page.evaluate(counts)).wall >= 4) break
+    }
   }
   ok('four walls raised', (await page.evaluate(counts)).wall === 4)
 
