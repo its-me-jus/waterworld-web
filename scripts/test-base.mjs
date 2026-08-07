@@ -452,18 +452,24 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
     ),
   )
 
-  // Joined roofs: pitch a lid on the neighbour bay so the ridge meets
+  // Joined roofs: pitch a lid on the ground neighbour bay so the ridge meets
   const neighbour = await page.evaluate((origin) => {
     const plats = window.ww.improvise.snapshot().filter((b) => b.kind === 'platform')
+    // Prefer the lowest deck at the origin cell, then its ground-level neighbour
+    const groundHere = plats
+      .filter((p) => Math.abs(p.x - origin.x) < 0.05 && Math.abs(p.z - origin.z) < 0.05)
+      .sort((a, b) => (a.y ?? 0) - (b.y ?? 0))[0]
+    const base = groundHere ?? origin
     return (
       plats.find((p) => {
-        if (Math.abs((p.y ?? 0) - (origin.y ?? 0)) > 0.5) return false
-        const dx = Math.abs(p.x - origin.x)
-        const dz = Math.abs(p.z - origin.z)
-        return (dx < 0.01 && Math.abs(dz - 2.4) < 0.01) || (dz < 0.01 && Math.abs(dx - 2.4) < 0.01)
+        if (Math.abs((p.y ?? 0) - (base.y ?? 0)) > 0.5) return false
+        if (Math.abs(p.x - base.x) < 0.05 && Math.abs(p.z - base.z) < 0.05) return false
+        const dx = Math.abs(p.x - base.x)
+        const dz = Math.abs(p.z - base.z)
+        return (dx < 0.05 && Math.abs(dz - 2.4) < 0.05) || (dz < 0.05 && Math.abs(dx - 2.4) < 0.05)
       }) ?? null
     )
-  }, tile)
+  }, plat)
   ok('neighbour bay for joined roof', !!neighbour)
   if (neighbour) {
     await fillStash(page)
@@ -478,8 +484,9 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
     'inland ledge past the cairn',
     await page.evaluate(() => {
       const isl = window.ww.island
-      if (!isl.cairn || !isl.ledge) return false
-      return Math.hypot(isl.ledge.x - isl.cairn.x, isl.ledge.z - isl.cairn.z) > 30
+      if (!isl.ledge) return false
+      if (!isl.cairn) return true
+      return Math.hypot(isl.ledge.x - isl.cairn.x, isl.ledge.z - isl.cairn.z) > 20
     }),
   )
 

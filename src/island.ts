@@ -1946,24 +1946,36 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const perpZ = dirX
 
     const candidates: { lx: number; lz: number; h: number; slope: number }[] = []
-    for (let extra = 40; extra <= 120; extra += 3) {
-      for (let spread = -3; spread <= 3; spread++) {
-        const lx = clx + dirX * extra + perpX * spread * 7
-        const lz = clz + dirZ * extra + perpZ * spread * 7
+    for (let extra = 28; extra <= 160; extra += 2) {
+      for (let spread = -5; spread <= 5; spread++) {
+        const lx = clx + dirX * extra + perpX * spread * 6
+        const lz = clz + dirZ * extra + perpZ * spread * 6
         const h = surface(lx, lz)
-        if (h < ch - 5 || h > ch + 12) continue
+        if (h < Math.max(6, ch - 8) || h > ch + 18) continue
         const slope =
           Math.abs(surface(lx + 3, lz) - h) +
           Math.abs(surface(lx - 3, lz) - h) +
           Math.abs(surface(lx, lz + 3) - h) +
           Math.abs(surface(lx, lz - 3) - h)
-        if (slope > 3.0) continue
-        if (Math.hypot(lx - clx, lz - clz) < 35) continue
+        if (slope > 4.5) continue
+        if (Math.hypot(lx - clx, lz - clz) < 25) continue
         candidates.push({ lx, lz, h, slope })
       }
     }
     candidates.sort((a, b) => a.slope - b.slope || b.h - a.h)
-    const spot = candidates[0]
+    let spot = candidates[0]
+    // Fallback: any walkable cell farther inland than the cairn — the micro-site
+    // should almost always exist once the cairn does.
+    if (!spot) {
+      for (let extra = 35; extra <= 140; extra += 4) {
+        const lx = clx + dirX * extra
+        const lz = clz + dirZ * extra
+        const h = surface(lx, lz)
+        if (h < 5 || h > 45) continue
+        spot = { lx, lz, h, slope: 99 }
+        break
+      }
+    }
     if (spot) {
       const { lx, lz, h } = spot
       const ledgeGroup = new THREE.Group()
