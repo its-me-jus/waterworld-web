@@ -295,6 +295,10 @@ function cliffRelief(lx: number, lz: number) {
   if (drop > 0.5) {
     drop +=
       (noise2(lx * 0.028 + 4.2, lz * 0.028 - 7.6) - 0.5) * Math.min(drop, 18) * 0.18
+    // Mid-frequency ledges — without this a linear grade across two mesh cells
+    // reads as one flat shear plane from the water
+    drop +=
+      (noise2(lx * 0.09 - 1.7, lz * 0.09 + 6.3) - 0.5) * Math.min(drop, 22) * 0.22
   }
   // Overlapping faces can stack past what the mesh can hold — cap so a
   // headland stays a wall above the water, not a trench through the shelf
@@ -1435,6 +1439,30 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const stone = stoneGeometry(i + 3200, 0.55 + fbm((i + 3200) * 8.2, (i + 3200) * 4.1) * 1.1, 1)
     plantStone(rocks, stone, i + 3200, lx, h, lz, true)
     scree++
+  }
+
+  // Cliff outcrops — larger broken faces perched on steep rock so the carved
+  // walls read as geology from the water, not only a dark painted slope
+  const outcropWanted = low ? 18 : 40
+  let outcrops = 0
+  for (let i = 0; i < 1200 && outcrops < outcropWanted; i++) {
+    const angle = i * 2.883
+    const radius = 130 + ((i * 29) % 160)
+    const lx = Math.cos(angle) * radius + (scatter(i, 13.3) - 0.5) * 8
+    const lz = Math.sin(angle) * radius + (scatter(i, 14.4) - 0.5) * 8
+    const h = surface(lx, lz)
+    if (h < 4 || h > 70) continue
+    const dhx = surface(lx + 5, lz) - surface(lx - 5, lz)
+    const dhz = surface(lx, lz + 5) - surface(lx, lz - 5)
+    const slope = Math.hypot(dhx, dhz) / 10
+    if (slope < 1.15) continue
+    const stone = stoneGeometry(i + 4100, 2.4 + fbm((i + 4100) * 7.1, (i + 4100) * 3.8) * 3.2, low ? 1 : 2)
+    // Tip the outcrop to sit against the face rather than perch upright
+    const facing = Math.atan2(dhz, dhx)
+    stone.geo.rotateZ(-0.55 - fbm(i, 2.2) * 0.35)
+    stone.geo.rotateY(facing + Math.PI)
+    plantStone(boulderParts, stone, i + 4100, lx, h, lz, true)
+    outcrops++
   }
 
   // Driftwood — mid-beach, sparse, sells the wash-up
