@@ -144,6 +144,8 @@ const TO_WRECK = Math.atan2(576, -1018)
  * the horizontal span of the drop — keep it short so the mesh reads vertical.
  *
  * Soft cones alone make a green dumpling. These faces are the geology.
+ * Returns `{ drop, raise }` — raise builds a rocky shelf behind the lip so the
+ * wall has a crown you can see from the water, not only a notch cut downhill.
  */
 function cliffFace(
   lx: number,
@@ -165,31 +167,42 @@ function cliffFace(
   const out = dx * nx + dz * nz
   const along = -dx * nz + dz * nx
   const alongMask =
-    1 - THREE.MathUtils.smoothstep(Math.abs(along), halfLen * 0.62, halfLen)
-  if (alongMask <= 0) return 0
-  // Drop across a short run — steep enough that walk mode refuses (~50°) and
-  // the vertex paint reads basalt instead of grass
-  const drop = THREE.MathUtils.smoothstep(out, -run * 0.12, run * 0.88)
+    1 - THREE.MathUtils.smoothstep(Math.abs(along), halfLen * 0.55, halfLen)
+  if (alongMask <= 0) return { drop: 0, raise: 0 }
   // Jag the lip so it isn't a drawn-compass wall
   const jag =
-    (noise2(along * 0.045 + cx * 0.01, out * 0.08 + cz * 0.01) - 0.5) * 0.22 +
-    (noise2(along * 0.11 - 2.4, out * 0.14 + 5.1) - 0.5) * 0.12
-  return amount * alongMask * THREE.MathUtils.clamp(drop + jag, 0, 1.15)
+    (noise2(along * 0.045 + cx * 0.01, out * 0.08 + cz * 0.01) - 0.5) * 0.18 +
+    (noise2(along * 0.11 - 2.4, out * 0.14 + 5.1) - 0.5) * 0.1
+  // Linear grade across a short run — steeper (and more even) than smoothstep,
+  // which only pins the mesh for a cell or two in its middle
+  const t = THREE.MathUtils.clamp((out + run * 0.08) / run + jag, 0, 1)
+  const drop = amount * alongMask * t
+  // Shelf behind the lip: a few metres of raised rock so the face has a crown
+  const shelf =
+    THREE.MathUtils.smoothstep(out, -run * 2.8, -run * 0.35) *
+    (1 - THREE.MathUtils.smoothstep(out, -run * 0.2, run * 0.15))
+  const raise = amount * 0.28 * alongMask * shelf
+  return { drop, raise }
 }
 
 /**
  * Rocky cliffs and headlands carved into the soft cone mass.
  *
- * Returns metres to subtract. The landing cove is protected — landfall has to
- * stay a beach — but its shoulders and the far/side coasts get vertical rock
- * so the silhouette reads as a place you could explore, not a painted hill.
+ * Returns `{ drop, raise }` metres. The landing cove is protected — landfall
+ * has to stay a beach — but its shoulders and the far/side coasts get vertical
+ * rock so the silhouette reads as a place you could explore, not a painted hill.
  */
-function cliffDrop(lx: number, lz: number) {
+function cliffRelief(lx: number, lz: number) {
   const coveDist = Math.hypot(lx - COVE_X, lz - COVE_Z)
   // Only the wadable cove floor is sacred — headland shoulders cliff freely
   const coveProtect = 1 - THREE.MathUtils.smoothstep(coveDist, 28, 88)
 
   let drop = 0
+  let raise = 0
+  const add = (face: { drop: number; raise: number }) => {
+    drop += face.drop
+    raise += face.raise
+  }
 
   // —— Cove headlands —————————————————————————————————————————
   // Two rocky points framing the beach: classic natural-harbour silhouette.
@@ -197,15 +210,15 @@ function cliffDrop(lx: number, lz: number) {
   // waterline and the seaward drop reads as basalt, not a hole in the shelf.
   {
     for (const side of [-1, 1] as const) {
-      const bearing = COVE_BEARING + side * 0.52
-      const radius = 198
+      const bearing = COVE_BEARING + side * 0.48
+      const radius = 185
       const hx = Math.cos(bearing) * radius
       const hz = Math.sin(bearing) * radius
       // Face seaward, cupped slightly toward the cove mouth
-      const turn = side * 0.32
+      const turn = side * 0.28
       const fx = Math.cos(bearing + turn)
       const fz = Math.sin(bearing + turn)
-      drop += cliffFace(lx, lz, hx, hz, fx, fz, 58, 13, 34)
+      add(cliffFace(lx, lz, hx, hz, fx, fz, 72, 11, 42))
     }
   }
 
@@ -215,27 +228,32 @@ function cliffDrop(lx: number, lz: number) {
   {
     const faces: { bearing: number; radius: number; halfLen: number; run: number; amount: number }[] = [
       // Flank readable past the cove's right shoulder from the approach
-      { bearing: COVE_BEARING + 1.15, radius: 188, halfLen: 72, run: 13, amount: 32 },
+      { bearing: COVE_BEARING + 1.05, radius: 178, halfLen: 85, run: 11, amount: 40 },
       // Other approach shoulder
-      { bearing: COVE_BEARING - 1.2, radius: 192, halfLen: 68, run: 13, amount: 30 },
+      { bearing: COVE_BEARING - 1.1, radius: 182, halfLen: 80, run: 11, amount: 38 },
       // Far side — opposite the wreck approach; the island's back wall
-      { bearing: COVE_BEARING + Math.PI * 0.92, radius: 175, halfLen: 90, run: 12, amount: 38 },
+      { bearing: COVE_BEARING + Math.PI * 0.92, radius: 165, halfLen: 100, run: 10, amount: 48 },
       // East lobe — breaks the long green shoulder into a headland
-      { bearing: 0.15, radius: 185, halfLen: 60, run: 13, amount: 28 },
+      { bearing: 0.2, radius: 175, halfLen: 70, run: 11, amount: 36 },
+      // Extra near-cove spur so the swim-in silhouette isn't soft on both sides
+      { bearing: COVE_BEARING + 0.75, radius: 200, halfLen: 48, run: 10, amount: 30 },
+      { bearing: COVE_BEARING - 0.8, radius: 205, halfLen: 48, run: 10, amount: 28 },
     ]
     for (const f of faces) {
       const cx = Math.cos(f.bearing) * f.radius
       const cz = Math.sin(f.bearing) * f.radius
-      drop += cliffFace(
-        lx,
-        lz,
-        cx,
-        cz,
-        Math.cos(f.bearing),
-        Math.sin(f.bearing),
-        f.halfLen,
-        f.run,
-        f.amount,
+      add(
+        cliffFace(
+          lx,
+          lz,
+          cx,
+          cz,
+          Math.cos(f.bearing),
+          Math.sin(f.bearing),
+          f.halfLen,
+          f.run,
+          f.amount,
+        ),
       )
     }
   }
@@ -245,30 +263,34 @@ function cliffDrop(lx: number, lz: number) {
   // green bands. Exploration needs somewhere the ground changes character.
   {
     const scarps: { bearing: number; radius: number; halfLen: number; run: number; amount: number }[] = [
-      { bearing: COVE_BEARING + 0.55, radius: 130, halfLen: 52, run: 11, amount: 18 },
-      { bearing: COVE_BEARING - 0.7, radius: 118, halfLen: 46, run: 11, amount: 16 },
-      { bearing: 1.9, radius: 100, halfLen: 58, run: 11, amount: 20 },
-      { bearing: -0.85, radius: 140, halfLen: 48, run: 11, amount: 17 },
+      { bearing: COVE_BEARING + 0.55, radius: 125, halfLen: 58, run: 10, amount: 22 },
+      { bearing: COVE_BEARING - 0.7, radius: 112, halfLen: 52, run: 10, amount: 20 },
+      { bearing: 1.9, radius: 95, halfLen: 64, run: 10, amount: 24 },
+      { bearing: -0.85, radius: 135, halfLen: 55, run: 10, amount: 20 },
     ]
     for (const s of scarps) {
       const cx = Math.cos(s.bearing) * s.radius
       const cz = Math.sin(s.bearing) * s.radius
-      drop += cliffFace(
-        lx,
-        lz,
-        cx,
-        cz,
-        Math.cos(s.bearing),
-        Math.sin(s.bearing),
-        s.halfLen,
-        s.run,
-        s.amount,
+      add(
+        cliffFace(
+          lx,
+          lz,
+          cx,
+          cz,
+          Math.cos(s.bearing),
+          Math.sin(s.bearing),
+          s.halfLen,
+          s.run,
+          s.amount,
+        ),
       )
     }
   }
 
   // Never carve the wadable cove floor into a cliff — landfall is a beach
-  drop *= 1 - coveProtect * 0.92
+  const protect = 1 - coveProtect * 0.92
+  drop *= protect
+  raise *= protect
   // Extra jaggedness on whatever we did carve, so faces aren't planar slabs
   if (drop > 0.5) {
     drop +=
@@ -276,7 +298,10 @@ function cliffDrop(lx: number, lz: number) {
   }
   // Overlapping faces can stack past what the mesh can hold — cap so a
   // headland stays a wall above the water, not a trench through the shelf
-  return THREE.MathUtils.clamp(drop, 0, 40)
+  return {
+    drop: THREE.MathUtils.clamp(drop, 0, 46),
+    raise: THREE.MathUtils.clamp(raise, 0, 14),
+  }
 }
 
 /** Height above mean sea level, in island-local coordinates. */
@@ -330,8 +355,12 @@ function ground(lx: number, lz: number) {
 
   // Rocky cliffs — after the beach softener, or the cove lerp sands the
   // headlands back into a green dumpling. The softener already protected the
-  // wadable floor; cliffDrop skips the cove centre on its own.
-  h -= cliffDrop(lx, lz)
+  // wadable floor; cliffRelief skips the cove centre on its own.
+  {
+    const cliff = cliffRelief(lx, lz)
+    h += cliff.raise
+    h -= cliff.drop
+  }
   // How much this sample faces the wreck crossing (1 on the approach, 0 opposite)
   let approach = Math.cos(bearing - TO_WRECK)
   approach = Math.max(0, approach)
@@ -908,7 +937,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   scene.add(group)
 
   // —— terrain ————————————————————————————————————————————————
-  const segments = low ? 120 : 184
+  // A touch denser than before so carved cliff faces (≈10–12 m run) span more
+  // than a cell or two and actually read as walls instead of soft ramps.
+  const segments = low ? 140 : 220
   const step = (SPAN * 2) / segments
 
   /**
@@ -1011,16 +1042,23 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     growth.lerp(litter, THREE.MathUtils.smoothstep(gully, 0.55, 0.8) * 0.45)
     shade.lerp(growth, THREE.MathUtils.smoothstep(y, 4, 15))
     // Steep faces shed soil — bare rock on the cliffs and up around the crater.
-    // MathUtils.smoothstep has no inverted range, so the slope ramp is flipped
-    // by hand rather than passing min > max (which silently returns 1).
-    // Two tiers: near-vertical faces go full basalt; mid-steep scarps keep a
-    // lichen mix so cliffs read as geology rather than a grey wash.
+    // Mesh normals alone under-read carved faces (a cliff spans ~2 cells), so
+    // slope comes from the height grid the mesh was built from.
     stone.copy(rock).lerp(basalt, 0.35 + mottle * 0.65)
-    const steep = 1 - THREE.MathUtils.smoothstep(normal.getY(i), 0.28, 0.58)
-    const sheer = 1 - THREE.MathUtils.smoothstep(normal.getY(i), 0.12, 0.38)
+    const gi = Math.round((x + SPAN) / step)
+    const gj = Math.round((z + SPAN) / step)
+    const dhx = (gridHeight(gi + 1, gj) - gridHeight(gi - 1, gj)) / (2 * step)
+    const dhz = (gridHeight(gi, gj + 1) - gridHeight(gi, gj - 1)) / (2 * step)
+    const slope = Math.hypot(dhx, dhz)
+    const steep = THREE.MathUtils.smoothstep(slope, 0.55, 1.35)
+    const sheer = THREE.MathUtils.smoothstep(slope, 1.1, 2.2)
+    const fromNormal = 1 - THREE.MathUtils.smoothstep(normal.getY(i), 0.22, 0.55)
     shade.lerp(
       stone,
-      Math.max(THREE.MathUtils.smoothstep(y, 108, 172), steep * 0.72 + sheer * 0.45),
+      Math.max(
+        THREE.MathUtils.smoothstep(y, 108, 172),
+        steep * 0.82 + sheer * 0.55 + fromNormal * 0.35,
+      ),
     )
     shade.multiplyScalar(0.9 + mottle * 0.2)
 
