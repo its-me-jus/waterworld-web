@@ -281,6 +281,7 @@ const salvage = createSalvage(scene, {
   shore: island.shore,
   pools: island.pools,
   cairn: island.cairn,
+  knowsLog: () => wreck.snapshot().logTaken,
   whisper: (text) => hud.whisper(text),
 })
 

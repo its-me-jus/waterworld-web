@@ -62,6 +62,8 @@ export type SavedBuild = {
   vz?: number
   /** Soft-fail fill while a foul sea works the rig. */
   failMeter?: number
+  /** Signal smoke got a distant answer once. */
+  answered?: boolean
   /** Fish smoking/drying on this fire or rack. */
   curing?: SavedCuring[]
   /** This fire is in the player's hand, not planted in the world. */

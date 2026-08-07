@@ -5,7 +5,7 @@ import type { Interactable, Interactions } from './interact'
 import type { PlayerFrame } from './player'
 import type { Salvage, StashKind } from './salvage'
 import type { SavedBuild, SavedHold, SavedRoof } from './persist'
-import { eat, rest, type Vitals } from './survival'
+import { bindWound, eat, rest, type Vitals } from './survival'
 import { sampleOcean, oceanState } from './waves'
 import { stashCount } from './logistics'
 import { barrelObject, crateObject, plankObject } from './wreck'
@@ -174,6 +174,10 @@ type Build = {
   flooded?: boolean
   /** Soft-fail fill 0..1 while a foul sea works the rig. */
   failMeter?: number
+  /** Signal smoke got a distant answer once. */
+  answered?: boolean
+  /** Runtime seconds a signal has been smoking — soft payoff timer. */
+  age?: number
   /** Carpentry piece variant — a wall can be hung as a door you walk through. */
   variant?: 'door'
   /** Extra hotspots this build registered (drink, etc.) — cleared on reset. */
@@ -204,6 +208,8 @@ const LOCKER_COST: Cost = { crate: 1 }
 const SEAT_COST: Cost = { plank: 1 }
 const RACK_COST: Cost = { plank: 1, rope: 1 }
 const SIGNAL_COST: Cost = { plank: 1, canvas: 1 }
+/** Bind an open wound — canvas as bandage. */
+const BIND_COST: Cost = { canvas: 1 }
 const EXPAND_COST: Cost = { plank: 2 }
 const OAR_COST: Cost = { plank: 1, rope: 1 }
 const FLOAT_COST: Cost = { plastic: 2 }
@@ -3356,6 +3362,23 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
+  // Shark soft-fail answer — canvas as a bandage when you're bleeding
+  addCamp('camp', {
+    position: eatPos,
+    verb: 'Bind',
+    label: 'Wound',
+    cost: BIND_COST,
+    radius: 1.8,
+    priority: 3.5,
+    available: () =>
+      deps.vitals.alive && deps.vitals.wounded && deps.salvage.has(BIND_COST),
+    use: () => {
+      if (!deps.vitals.wounded) return
+      if (!deps.salvage.spend(BIND_COST)) return
+      bindWound(deps.vitals, deps.hud.whisper)
+    },
+  })
+
   addCamp('raft', {
     position: raftPos,
     verb: 'Lash',
@@ -5630,6 +5653,18 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           child.scale.setScalar(0.6 + life * 2.2)
           ;(child.material as THREE.MeshBasicMaterial).opacity = 0.22 * (1 - life)
         }
+        // Soft payoff — after a while the dark answers once. Never a waypoint.
+        if (!b.answered) {
+          b.age = (b.age ?? 0) + dt
+          const storm = deps.storm?.() ?? 0
+          // Foul weather makes the smoke travel farther; the answer comes sooner
+          if (b.age > 200 - storm * 50) {
+            b.answered = true
+            deps.hud.whisper(
+              'Far to seaward a light answers once — then the dark takes it back.',
+            )
+          }
+        }
       }
       if (b.kind === 'catch' || b.kind === 'pit' || b.kind === 'drip' || b.kind === 'cistern') {
         const storm = deps.storm?.() ?? 0
@@ -5870,6 +5905,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       vx: b.vx,
       vz: b.vz,
       failMeter: b.failMeter,
+      answered: b.answered || undefined,
       curing: b.smoking?.map((fish) => ({
         readyIn: Math.max(0, fish.readyAt - time),
       })),
@@ -5964,7 +6000,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       } else if (kind === 'rack') {
         build = addBuild('rack', rackMesh(m), x, z, deps.groundAt(x, z), 2.0, 0, { smoking: [] })
       } else if (kind === 'signal') {
-        build = addBuild('signal', signalMesh(m), x, z, deps.groundAt(x, z), 1.6, 0)
+        build = addBuild('signal', signalMesh(m), x, z, deps.groundAt(x, z), 1.6, 0, {
+          answered: !!s.answered,
+        })
       } else if (kind === 'pit') {
         build = addBuild('pit', digPitMesh(m), x, z, deps.groundAt(x, z), 1.6, 0, {
           water: s.water ?? 0,

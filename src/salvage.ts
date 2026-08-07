@@ -176,6 +176,21 @@ function canvasObject(mat: Mats) {
   return group
 }
 
+/** Folded working chart — oilskin and graphite, not a meal. */
+function chartObject(mat: Mats) {
+  const group = new THREE.Group()
+  const sheet = new THREE.Mesh(new THREE.PlaneGeometry(0.32, 0.4), mat.cloth)
+  sheet.rotation.x = -Math.PI / 2
+  sheet.position.y = 0.02
+  group.add(sheet)
+  const fold = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.4), mat.cloth)
+  fold.rotation.x = -Math.PI / 2
+  fold.rotation.z = 0.08
+  fold.position.set(0.06, 0.035, 0.02)
+  group.add(fold)
+  return group
+}
+
 /** A washed-up plastic bottle — ugly, sealed, and it floats. */
 function plasticBottleObject(mat: Mats) {
   const group = new THREE.Group()
@@ -242,6 +257,8 @@ export type SalvageOptions = {
   pools: THREE.Vector3[]
   /** Inland rock stack — one takeable find, no marker. */
   cairn: THREE.Vector3 | null
+  /** True once the master's log has been read — deepens the cairn chart. */
+  knowsLog?: () => boolean
   /** Soft line when a find is more than materials. */
   whisper?: (text: string) => void
 }
@@ -458,7 +475,8 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
 
   // —— inland cairn ————————————————————————————————————————————————
   // Someone stacked these stones and left rope under the top course. Finding
-  // it is walking inland — no marker, same as the pools.
+  // it is walking inland — no marker, same as the pools. Under the rope, a
+  // folded chart: the memory spine's third beat, for whoever climbs the hill.
   if (opts.cairn) {
     const at = opts.cairn.clone()
     at.y += 0.55
@@ -471,6 +489,32 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
       (find) => {
         take(find, 'rope')
         opts.whisper?.('Someone stacked these. The rope still holds.')
+      },
+      2.8,
+    )
+    const chartAt = opts.cairn.clone()
+    chartAt.y += 0.42
+    chartAt.x += 0.35
+    chartAt.z -= 0.2
+    const chart = dropAt(chartObject(mat), chartAt)
+    chart.scale.setScalar(0.95)
+    register(
+      chart,
+      'Unfold',
+      'Chart',
+      (find) => {
+        retire(find)
+        opts.whisper?.('Folded oilskin under the top stone. Not the master’s book — a working chart.')
+        opts.whisper?.('The reef approach is marked in a hand you know. Yours, from before.')
+        if (opts.knowsLog?.()) {
+          opts.whisper?.(
+            'The master’s last page and this chart disagree. He never came about; you already had the line.',
+          )
+        } else {
+          opts.whisper?.(
+            'A name for this island is scratched in the margin. Not on any chart the ship carried.',
+          )
+        }
       },
       2.8,
     )

@@ -176,9 +176,10 @@ markers in-world, no "correct" build order.
 | **Shove off** | — | Beached raft | Push her clear of the shelf into deep water — then pole |
 | **Seat** | 1 plank | Dry ground | Driftwood seat. **Sit** to get stamina (and a little warmth) back |
 | **Drying rack** | 1 plank + 1 rope | Dry ground | Hang fish without a fire — ~48s per fish, up to 3. **Hang** / **Take** |
-| **Signal** | 1 plank + 1 canvas | Higher dry ground | Smoke column on the ridge — readable from the water. One per ~40 m |
+| **Signal** | 1 plank + 1 canvas | Higher dry ground | Smoke column on the ridge — readable from the water. After a while a distant light may answer once (never a waypoint). One per ~40 m |
 | **Dig hollow** | hands (look down) | Soft sand | A rain-holding pit. Slow refill; brackish but drinkable |
 | **Tin drip** | 1 can + 1 rope | Dry ground | A can on a stake that catches rain by the mouthful |
+| **Bind wound** | 1 canvas | Anywhere (bleeding) | Closes a shark bite so a second hit is no longer certain death |
 
 ### Carpentry (freeform)
 
@@ -261,8 +262,8 @@ Take the **helm** from the stern to steer under canvas, and **Drop anchor** when
 the set would carry her off. Stow gear you cannot swim with. A camp on the
 island is another — seat, drying
 rack, signal smoke, dug hollows, tin drips, rain pools, shore crabs on the wash,
-palms you can fell, grass you can twist, and one inland cairn with rope left
-under the stones. Working the spire with a lean-to and a fire is a third. And
+palms you can fell, grass you can twist, and one inland cairn with rope — and a
+folded chart under the stones — left for whoever walks inland. Working the spire with a lean-to and a fire is a third. And
 past all three there is the architect's path: platform tiles over the shallows,
 walls and a door of your own placing, a roof you pitched, and a bed that is
 simply the floor of the room you made. The sandbox is the point.
@@ -272,17 +273,22 @@ simply the floor of the room you made. The sandbox is the point.
 Armed with the mate's spear, an encounter can tighten into a run: the circle
 closes, it banks and aims (**It turns on you.**), then commits (**It comes.**).
 Jab answers the telegraph or the rush. A bite opens a **Bleeding** meter that
-taxes strength until it clots; a second bite while open ends the run.
+taxes strength until it clots; a second bite while open ends the run. **Bind
+Wound** (1 canvas) closes it now — the soft-fail answer ashore.
 
 ---
 
 ## Backlog (nothing committed)
 
-- **Memory spine** — the log was one beat. More papers, a name, a reason.
-- **More soft fails** — beyond sail-tear / locker flood, only if runs feel cruel.
+- **Memory spine** — pouch → log → cairn chart shipped; still room for a name / reason beat.
+- **More soft fails** — beyond sail-tear / locker flood / bindable wound, only if runs feel cruel.
+- **Inland second act** — a dry micro-site (ledge, drip, windbreak) past the cairn.
+- **Shelter discoverability** — lean-to vs carpentry still compete; copy/priority polish.
 
 ~~Night economy / wreck lantern~~ — shipped: sealed diving lantern in the gear
 locker beside the suit; local beam underwater at night, no warmth/breath buff.
+~~Signal soft payoff~~ — shipped: distant light answers once after the smoke has worked.
+~~Bind wound~~ — shipped: canvas closes a shark bite.
 Save fidelity now covers littoral, seals, salvage finds, wreck progression,
 weather, sea glass-offs, smoking/drying, carried fire, and raft wash/fail state.
 Rod/net carry first-person cast/scoop feedback.

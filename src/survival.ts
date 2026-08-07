@@ -316,6 +316,20 @@ export function bite(v: Vitals, whisper?: (text: string) => void) {
   whisper?.('Its teeth rake your side. The water tastes of iron.')
 }
 
+/**
+ * Bind an open wound with canvas — the player answer to the shark soft-fail.
+ * Closes the bleed now so a second bite is no longer certain death.
+ */
+export function bindWound(v: Vitals, whisper?: (text: string) => void) {
+  if (!v.alive || !v.wounded) return false
+  v.wounded = false
+  v.woundClock = 0
+  v.saidBleeding = false
+  v.stamina = Math.min(1, v.stamina + 0.1)
+  whisper?.('Canvas bound tight. The iron taste fades.')
+  return true
+}
+
 /** Pull the immersion suit on. One way — you don't take it off out here. */
 export function wearSuit(v: Vitals, whisper?: (text: string) => void) {
   if (v.suited) return false
