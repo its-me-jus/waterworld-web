@@ -295,7 +295,7 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
     window.ww.player.pitch = 0.15
     window.ww.player.yaw = 0
   })
-  const climbedLadder = await faceAndPressF(page, { yaw: 0, pitch: 0.15 }, /climb ladder/i, 12000)
+  const climbedLadder = await faceAndPressF(page, { yaw: 0, pitch: 0.35 }, /climb ladder/i, 12000)
   ok('climbed via ladder', climbedLadder)
   const onUpperViaLadder = await page.evaluate(() => {
     const plats = window.ww.improvise

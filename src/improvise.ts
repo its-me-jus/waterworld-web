@@ -4621,7 +4621,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const upper = platformAtDeck(ladder.x, ladder.z, ladder.deckY + STORY_RISE, 0.9)
       if (!lower || !upper) return false
       const here = platformAt(px, pz, 0.06, live.y)
-      return here === lower || here === upper
+      // Look toward the trip: up from below, down from above — so Sleep
+      // (look at the floor) isn't stolen by Climb Ladder.
+      if (here === lower) return lookPitch >= 0.18
+      if (here === upper) return lookPitch <= -0.18
+      return false
     },
     use: () => {
       if (!live) return
