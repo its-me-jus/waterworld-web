@@ -5,7 +5,7 @@ import type { Interactable, Interactions } from './interact'
 import type { PlayerFrame } from './player'
 import type { Salvage, StashKind } from './salvage'
 import type { SavedBuild, SavedHold, SavedRoof } from './persist'
-import { eat, rest, type Vitals } from './survival'
+import { bindWound, eat, rest, type Vitals } from './survival'
 import { sampleOcean, oceanState } from './waves'
 import { stashCount } from './logistics'
 import { barrelObject, crateObject, plankObject } from './wreck'
@@ -45,10 +45,14 @@ export type ImproviseDeps = {
   rawFish: () => number
   eatRawFish: () => boolean
   cookFish: () => boolean
-  /** Hang one raw fish over the fire — returns false if none left. */
+  /** Hang one raw fish over the smoke — returns false if none left. */
   takeRawForSmoke: () => boolean
   /** Finish a smoke cycle into the Pack. */
   addSmoked: (n?: number) => void
+  /** How many smoked fish are in the arms. */
+  smokedFish?: () => number
+  /** Move smoked fish out of the arms (crate Stow) — returns how many taken. */
+  takeSmoked?: (n: number) => number
   /** Trap-caught fish land in the hand the same way grabbed ones do. */
   grantFish: (n?: number) => void
   /** Fashion a fishing rod from plank + rope. */
@@ -156,6 +160,8 @@ type Build = {
   hasMat?: boolean
   /** Materials stowed in the deck locker. */
   hold?: Hold
+  /** Smoked fish stowed with the materials — travels when you Fetch. */
+  holdSmoked?: number
   /** Stern scratched with the mate's mark. */
   marked?: boolean
   /** Grounded on a beach — no drift until Shove. */
@@ -168,6 +174,10 @@ type Build = {
   flooded?: boolean
   /** Soft-fail fill 0..1 while a foul sea works the rig. */
   failMeter?: number
+  /** Signal smoke got a distant answer once. */
+  answered?: boolean
+  /** Runtime seconds a signal has been smoking — soft payoff timer. */
+  age?: number
   /** Carpentry piece variant — a wall can be hung as a door you walk through. */
   variant?: 'door'
   /** Extra hotspots this build registered (drink, etc.) — cleared on reset. */
@@ -198,6 +208,8 @@ const LOCKER_COST: Cost = { crate: 1 }
 const SEAT_COST: Cost = { plank: 1 }
 const RACK_COST: Cost = { plank: 1, rope: 1 }
 const SIGNAL_COST: Cost = { plank: 1, canvas: 1 }
+/** Bind an open wound — canvas as bandage. */
+const BIND_COST: Cost = { canvas: 1 }
 const EXPAND_COST: Cost = { plank: 2 }
 const OAR_COST: Cost = { plank: 1, rope: 1 }
 const FLOAT_COST: Cost = { plastic: 2 }
@@ -330,6 +342,7 @@ const emptyHold = (): Hold => ({
   leaf: 0,
   nut: 0,
   shell: 0,
+  flask: 0,
 })
 
 function holdCount(h: Hold) {
@@ -1829,6 +1842,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let saidHelmHint = false
   let saidFail = false
   let saidBeach = false
+  /** Soft-sand Dig / Fill Flask nudge when thirst bites inland. */
+  let saidDig = false
   let swimming = false
   let onRaftDeck = false
   /** Standing on a platform tile — fires, sleep and wall work read it. */
@@ -2615,6 +2630,58 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     return null
   }
 
+  /** Water you can pour into a carried tin/bottle for the hill walk. */
+  function nearestFlaskSource(): Build | 'pool' | null {
+    const catchBuild = nearestOfKind(px, pz, 'catch', 3.2)
+    if (catchBuild && (catchBuild.water ?? 0) > 0.12) return catchBuild
+    const pit = nearestOfKind(px, pz, 'pit', 2.8)
+    if (pit && (pit.water ?? 0) > 0.12) return pit
+    const drip = nearestOfKind(px, pz, 'drip', 2.8)
+    if (drip && (drip.water ?? 0) > 0.12) return drip
+    const cistern = nearestOfKind(px, pz, 'cistern', 3.0)
+    if (cistern && (cistern.water ?? 0) > 0.12) return cistern
+    const shelter = nearestShelter(3.0)
+    if (shelter?.hasBarrel && (shelter.water ?? 0) > 0.12) return shelter
+    if (deps.salvage.poolNear(px, pz)) return 'pool'
+    return null
+  }
+
+  function tryFillFlask(): boolean {
+    const source = nearestFlaskSource()
+    if (!source) return false
+    const s = deps.salvage.stash
+    if (s.can <= 0 && s.plastic <= 0) return false
+    if (s.flask >= 4) {
+      deps.hud.whisper('Arms full of flasks. Drink one, or Stow.')
+      return false
+    }
+    const fromCan = s.can > 0
+    if (fromCan) s.can -= 1
+    else s.plastic -= 1
+
+    if (source === 'pool') {
+      const got = deps.salvage.drawFromPool(px, pz, 0.38)
+      if (got < 0.08) {
+        // Refund vessel — pool was a tease
+        if (fromCan) s.can += 1
+        else s.plastic += 1
+        return false
+      }
+    } else {
+      const take = Math.min(0.38, source.water ?? 0)
+      source.water = (source.water ?? 0) - take
+      const waterMesh = source.object.getObjectByName('water')
+      if (waterMesh) waterMesh.visible = (source.water ?? 0) > 0.08
+    }
+    s.flask += 1
+    deps.hud.whisper(
+      fromCan
+        ? 'Tin filled. Fresh water that walks with you.'
+        : 'Bottle filled. It will keep for the climb.',
+    )
+    return true
+  }
+
   function tryFillBarrel(target: Build): boolean {
     const room = 1 - (target.water ?? 0)
     if (room < 0.08) return false
@@ -2671,6 +2738,24 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
+  // Portable water — spend an empty can or bottle at a filled catch / hollow / pool
+  addCamp('camp', {
+    position: leanPos,
+    verb: 'Fill',
+    label: 'Flask',
+    radius: 3.0,
+    available: () => {
+      if (!deps.vitals.alive || !onLand) return false
+      const s = deps.salvage.stash
+      if (s.can <= 0 && s.plastic <= 0) return false
+      if (s.flask >= 4) return false
+      return !!nearestFlaskSource()
+    },
+    use: () => {
+      tryFillFlask()
+    },
+  })
+
   // Standalone cistern — a barrel planted open to the sky, no shelter needed
   addCamp('camp', {
     position: leanPos,
@@ -2721,8 +2806,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         if (stock) stock.visible = false
         deps.hud.whisper(
           n > 1
-            ? 'Two fish knocking about in the bottle. Breakfast and a spare.'
-            : 'A fish in the trap. It stops being hungry work today.',
+            ? 'Two fish knocking about in the bottle. Smoke one for the hill walk — raw will not keep.'
+            : 'A fish in the trap. Cook it, or hang it to smoke before you walk inland.',
         )
       },
     })
@@ -2937,8 +3022,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     available: () => {
       const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
       if (!locker?.hold || !deps.vitals.alive) return false
-      const s = deps.salvage.stash
-      return stashCount(s) > 0
+      return stashCount(deps.salvage.stash) > 0 || (deps.smokedFish?.() ?? 0) > 0
     },
     use: () => {
       const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
@@ -2951,9 +3035,20 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         moved += s[k]
         s[k] = 0
       }
+      const smoked = deps.takeSmoked?.(deps.smokedFish?.() ?? 0) ?? 0
+      if (smoked > 0) {
+        locker.holdSmoked = (locker.holdSmoked ?? 0) + smoked
+        moved += smoked
+      }
       if (moved <= 0) return
       deps.hud.whisper(
-        moved === 1 ? 'One piece in the crate.' : `${moved} pieces stowed ashore.`,
+        smoked > 0 && moved === smoked
+          ? smoked === 1
+            ? 'Smoked fish in the crate — ready for the next walk.'
+            : `${smoked} smoked fish stowed for the road.`
+          : moved === 1
+            ? 'One piece in the crate.'
+            : `${moved} pieces stowed ashore.`,
       )
     },
   })
@@ -2965,8 +3060,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     radius: 2.5,
     available: () => {
       const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
-      if (!locker?.hold || !deps.vitals.alive) return false
-      return holdCount(locker.hold) > 0
+      if (!locker || !deps.vitals.alive) return false
+      return holdCount(locker.hold ?? emptyHold()) > 0 || (locker.holdSmoked ?? 0) > 0
     },
     use: () => {
       const locker = nearestOfKind(px, pz, 'camp-locker', 2.5)
@@ -2979,8 +3074,20 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         moved += locker.hold[k]
         locker.hold[k] = 0
       }
+      const smoked = locker.holdSmoked ?? 0
+      if (smoked > 0) {
+        deps.addSmoked(smoked)
+        locker.holdSmoked = 0
+        moved += smoked
+      }
       if (moved <= 0) return
-      deps.hud.whisper(moved === 1 ? 'Back in the hands.' : 'The crate empties into your arms.')
+      deps.hud.whisper(
+        smoked > 0 && moved === smoked
+          ? 'Smoked fish back in the arms.'
+          : moved === 1
+            ? 'Back in the hands.'
+            : 'The crate empties into your arms.',
+      )
     },
   })
 
@@ -3252,6 +3359,23 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const z = signalPos.z
       addBuild('signal', signalMesh(m), x, z, deps.groundAt(x, z), 1.6, 0)
       deps.hud.whisper('Smoke on the ridge. You can read it from the water.')
+    },
+  })
+
+  // Shark soft-fail answer — canvas as a bandage when you're bleeding
+  addCamp('camp', {
+    position: eatPos,
+    verb: 'Bind',
+    label: 'Wound',
+    cost: BIND_COST,
+    radius: 1.8,
+    priority: 3.5,
+    available: () =>
+      deps.vitals.alive && deps.vitals.wounded && deps.salvage.has(BIND_COST),
+    use: () => {
+      if (!deps.vitals.wounded) return
+      if (!deps.salvage.spend(BIND_COST)) return
+      bindWound(deps.vitals, deps.hud.whisper)
     },
   })
 
@@ -3749,10 +3873,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     available: () => {
       const raft = nearestRaftOnDeck()
       if (!raft?.locker || !deps.vitals.alive) return false
-      const s = deps.salvage.stash
-      return (
-        stashCount(s) > 0
-      )
+      return stashCount(deps.salvage.stash) > 0 || (deps.smokedFish?.() ?? 0) > 0
     },
     use: () => {
       const raft = nearestRaftOnDeck()
@@ -3765,9 +3886,18 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         moved += s[k]
         s[k] = 0
       }
+      const smoked = deps.takeSmoked?.(deps.smokedFish?.() ?? 0) ?? 0
+      if (smoked > 0) {
+        raft.holdSmoked = (raft.holdSmoked ?? 0) + smoked
+        moved += smoked
+      }
       if (moved <= 0) return
       deps.hud.whisper(
-        moved === 1 ? 'One piece in the locker.' : `${moved} pieces stowed. The swim lightens.`,
+        smoked > 0 && moved === smoked
+          ? 'Smoked fish in the locker — dry for the crossing.'
+          : moved === 1
+            ? 'One piece in the locker.'
+            : `${moved} pieces stowed. The swim lightens.`,
       )
     },
   })
@@ -3779,8 +3909,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     radius: 2.6,
     available: () => {
       const raft = nearestRaftOnDeck()
-      if (!raft?.locker || !raft.hold || !deps.vitals.alive) return false
-      return holdCount(raft.hold) > 0
+      if (!raft?.locker || !deps.vitals.alive) return false
+      return holdCount(raft.hold ?? emptyHold()) > 0 || (raft.holdSmoked ?? 0) > 0
     },
     use: () => {
       const raft = nearestRaftOnDeck()
@@ -3793,8 +3923,20 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         moved += raft.hold[k]
         raft.hold[k] = 0
       }
+      const smoked = raft.holdSmoked ?? 0
+      if (smoked > 0) {
+        deps.addSmoked(smoked)
+        raft.holdSmoked = 0
+        moved += smoked
+      }
       if (moved <= 0) return
-      deps.hud.whisper(moved === 1 ? 'Back in the hands.' : 'The locker empties into your arms.')
+      deps.hud.whisper(
+        smoked > 0 && moved === smoked
+          ? 'Smoked fish back aboard.'
+          : moved === 1
+            ? 'Back in the arms.'
+            : 'The locker empties into your arms.',
+      )
     },
   })
 
@@ -4335,6 +4477,29 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
+  // Filled tin / bottle — the expedition answer to thirst
+  deps.interactions.add({
+    position: eatPos,
+    verb: 'Drink',
+    label: 'Flask',
+    radius: 1.8,
+    available: () =>
+      deps.vitals.alive &&
+      deps.salvage.stash.flask > 0 &&
+      deps.vitals.water < 0.95 &&
+      !craftPending(),
+    use: () => {
+      if (deps.salvage.stash.flask <= 0) return
+      deps.salvage.stash.flask -= 1
+      eat(deps.vitals, 0.04, 0.58)
+      deps.hud.whisper(
+        deps.salvage.stash.flask > 0
+          ? 'Rain from the tin. The hill still has a way to go.'
+          : 'The last flask. Fill another before you go farther.',
+      )
+    },
+  })
+
   deps.interactions.add({
     position: cookPos,
     verb: 'Cook',
@@ -4726,6 +4891,19 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     const digY = deps.groundAt(digAt.x, digAt.z)
     if (onLand && digY > 0.3) setAnchor(digPos, digAt.x, digAt.z, digY + 0.35)
     else setAnchor(digPos, player.x, player.z, player.y)
+    // First thirst on soft sand — Dig and portable water, not only the trap line
+    if (
+      !saidDig &&
+      onLand &&
+      digReady() &&
+      deps.vitals.alive &&
+      deps.vitals.water < 0.55
+    ) {
+      saidDig = true
+      deps.hud.whisper(
+        'Thirsty sand. Dig a hollow for rain — or Fill a Flask at a pool before you climb.',
+      )
+    }
 
     const dripAt = offset(player, facingYaw, 1.15, 0.55)
     const dripY = deps.groundAt(dripAt.x, dripAt.z)
@@ -5475,6 +5653,18 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           child.scale.setScalar(0.6 + life * 2.2)
           ;(child.material as THREE.MeshBasicMaterial).opacity = 0.22 * (1 - life)
         }
+        // Soft payoff — after a while the dark answers once. Never a waypoint.
+        if (!b.answered) {
+          b.age = (b.age ?? 0) + dt
+          const storm = deps.storm?.() ?? 0
+          // Foul weather makes the smoke travel farther; the answer comes sooner
+          if (b.age > 200 - storm * 50) {
+            b.answered = true
+            deps.hud.whisper(
+              'Far to seaward a light answers once — then the dark takes it back.',
+            )
+          }
+        }
       }
       if (b.kind === 'catch' || b.kind === 'pit' || b.kind === 'drip' || b.kind === 'cistern') {
         const storm = deps.storm?.() ?? 0
@@ -5655,6 +5845,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     saidHelmHint = false
     saidFail = false
     saidBeach = false
+    saidDig = false
     washMeter = 0
     boardGrace = 0
     washGrace = 0
@@ -5710,9 +5901,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       hasBarrel: b.hasBarrel,
       hasMat: b.hasMat,
       hold: b.hold ? { ...b.hold } : undefined,
+      holdSmoked: b.holdSmoked,
       vx: b.vx,
       vz: b.vz,
       failMeter: b.failMeter,
+      answered: b.answered || undefined,
       curing: b.smoking?.map((fish) => ({
         readyIn: Math.max(0, fish.readyAt - time),
       })),
@@ -5807,7 +6000,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       } else if (kind === 'rack') {
         build = addBuild('rack', rackMesh(m), x, z, deps.groundAt(x, z), 2.0, 0, { smoking: [] })
       } else if (kind === 'signal') {
-        build = addBuild('signal', signalMesh(m), x, z, deps.groundAt(x, z), 1.6, 0)
+        build = addBuild('signal', signalMesh(m), x, z, deps.groundAt(x, z), 1.6, 0, {
+          answered: !!s.answered,
+        })
       } else if (kind === 'pit') {
         build = addBuild('pit', digPitMesh(m), x, z, deps.groundAt(x, z), 1.6, 0, {
           water: s.water ?? 0,
@@ -5826,6 +6021,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       } else if (kind === 'camp-locker') {
         build = addBuild('camp-locker', campLockerMesh(m), x, z, deps.groundAt(x, z), 1.6, 0.08, {
           hold: fillHold(s.hold),
+          holdSmoked: Math.max(0, Math.floor(s.holdSmoked ?? 0)),
         })
       } else if (kind === 'woodpile') {
         const hold = fillHold(s.hold)
@@ -5864,6 +6060,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           failMeter: s.failMeter ?? 0,
           yaw: s.yaw ?? 0,
           hold: fillHold(s.hold),
+          holdSmoked: Math.max(0, Math.floor(s.holdSmoked ?? 0)),
           mast: !!s.mast,
           rail: !!s.rail,
           locker: !!s.locker,

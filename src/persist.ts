@@ -55,11 +55,15 @@ export type SavedBuild = {
   /** Fish waiting in a trap. */
   fish?: number
   hold?: SavedHold
+  /** Smoked fish stowed in a crate / raft locker. */
+  holdSmoked?: number
   /** Raft drift velocity. */
   vx?: number
   vz?: number
   /** Soft-fail fill while a foul sea works the rig. */
   failMeter?: number
+  /** Signal smoke got a distant answer once. */
+  answered?: boolean
   /** Fish smoking/drying on this fire or rack. */
   curing?: SavedCuring[]
   /** This fire is in the player's hand, not planted in the world. */

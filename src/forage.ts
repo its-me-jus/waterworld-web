@@ -491,6 +491,13 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     smokedFish += Math.max(0, n)
   }
 
+  /** Pull smoked fish out of the arms for crate Stow. */
+  function takeSmoked(n: number) {
+    const take = Math.min(smokedFish, Math.max(0, Math.floor(n)))
+    smokedFish -= take
+    return take
+  }
+
   function eatSmoked() {
     if (smokedFish <= 0) return false
     smokedFish -= 1
@@ -588,6 +595,7 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     cook,
     takeRawForSmoke,
     addSmoked,
+    takeSmoked,
     eatSmoked,
   }
 }

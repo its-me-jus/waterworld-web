@@ -221,10 +221,17 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     const rows = (Object.keys(stash) as StashKind[]).map((key) => {
       const n = stash[key]
       const name = n === 1 ? labels[key].one : labels[key].many
-      const drinkable = key === 'nut' && n > 0
+      const drinkNut = key === 'nut' && n > 0
+      const drinkFlask = key === 'flask' && n > 0
+      const drinkable = drinkNut || drinkFlask
+      const drinkAttr = drinkNut
+        ? ' data-drink-nut="1"'
+        : drinkFlask
+          ? ' data-drink-flask="1"'
+          : ''
       return (
         `<div class="op-cell${n ? '' : ' empty'}${drinkable ? ' op-use' : ''}"` +
-        `${drinkable ? ' data-drink-nut="1"' : ''}>` +
+        `${drinkAttr}>` +
         `<span class="n">${n}</span>` +
         `<span class="k">${name}${drinkable ? ' · drink' : ''}</span></div>`
       )
@@ -423,6 +430,14 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
       return
     }
 
+    const drinkFlask = (e.target as HTMLElement).closest<HTMLElement>('[data-drink-flask]')
+    if (drinkFlask && deps.salvage.stash.flask > 0) {
+      deps.salvage.stash.flask -= 1
+      eat(deps.vitals, 0.04, 0.58)
+      render()
+      return
+    }
+
     const equipEl = (e.target as HTMLElement).closest<HTMLElement>('[data-equip]')
     if (equipEl?.dataset.equip === 'rod' || equipEl?.dataset.equip === 'net') {
       deps.equipTool?.(equipEl.dataset.equip)
@@ -452,6 +467,7 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
         deps.salvage.stash.crate += 1
         deps.salvage.stash.plastic += 3
         deps.salvage.stash.can += 2
+        deps.salvage.stash.flask += 2
         deps.salvage.stash.leaf += 4
         deps.salvage.stash.nut += 3
         deps.salvage.stash.shell += 4

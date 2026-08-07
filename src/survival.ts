@@ -52,12 +52,13 @@ const WARMTH_IN_WATER = 900
 const WARMTH_ON_LAND = 3000
 const WARMTH_REFILL = 420
 /**
- * Thirst / hunger are paced for island walks — base up the hill, fishing in
- * the wash, and back again shouldn't empty both tanks every trip. Roughly
- * an hour of easy thirst and ~90 minutes of hunger from full.
+ * Thirst / hunger are paced for island walks and a prepared expedition —
+ * base up the hill, fishing in the wash, and back again shouldn't empty both
+ * tanks every trip. Roughly ~75 minutes of easy thirst and ~110 minutes of
+ * hunger from full; fill a flask and smoke fish before a long push inland.
  */
-const THIRST = 3600
-const HUNGER = 5400
+const THIRST = 4500
+const HUNGER = 6600
 /** A full day awake spends the tank; working hard spends it up to twice as fast. */
 const ENERGY_WAKE = 430
 
@@ -313,6 +314,20 @@ export function bite(v: Vitals, whisper?: (text: string) => void) {
   v.stamina = Math.min(v.stamina, 0.5)
   v.health = Math.min(v.health, 0.55)
   whisper?.('Its teeth rake your side. The water tastes of iron.')
+}
+
+/**
+ * Bind an open wound with canvas — the player answer to the shark soft-fail.
+ * Closes the bleed now so a second bite is no longer certain death.
+ */
+export function bindWound(v: Vitals, whisper?: (text: string) => void) {
+  if (!v.alive || !v.wounded) return false
+  v.wounded = false
+  v.woundClock = 0
+  v.saidBleeding = false
+  v.stamina = Math.min(1, v.stamina + 0.1)
+  whisper?.('Canvas bound tight. The iron taste fades.')
+  return true
 }
 
 /** Pull the immersion suit on. One way — you don't take it off out here. */

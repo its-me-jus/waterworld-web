@@ -281,6 +281,7 @@ const salvage = createSalvage(scene, {
   shore: island.shore,
   pools: island.pools,
   cairn: island.cairn,
+  knowsLog: () => wreck.snapshot().logTaken,
   whisper: (text) => hud.whisper(text),
 })
 
@@ -415,6 +416,8 @@ const improvise = createImprovise(scene, camera, {
   cookFish: () => forage.cook(),
   takeRawForSmoke: () => forage.takeRawForSmoke(),
   addSmoked: (n) => forage.addSmoked(n),
+  smokedFish: () => forage.smokedFish,
+  takeSmoked: (n) => forage.takeSmoked(n),
   grantFish: (n) => forage.grant(n),
   fashionRod: () => forage.fashionRod(),
   fashionNet: () => forage.fashionNet(),

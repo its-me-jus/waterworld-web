@@ -50,7 +50,19 @@ await page.evaluate(() => {
   if (salvage.fixedTaken.length) salvage.fixedTaken[0] = true
   if (salvage.poolFull.length) salvage.poolFull[0] = 0.35
   ww.salvage.restore(salvage, ww.camera.position)
-  ww.salvage.setStash({ plank: 4, rope: 2, canvas: 0, barrel: 0, crate: 0, leaf: 0, plastic: 0, can: 0 })
+  ww.salvage.setStash({
+    plank: 4,
+    rope: 2,
+    canvas: 0,
+    barrel: 0,
+    crate: 0,
+    leaf: 0,
+    plastic: 0,
+    can: 0,
+    nut: 0,
+    shell: 0,
+    flask: 0,
+  })
 
   ww.wreck.restore({
     provisionTaken: true,
