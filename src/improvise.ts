@@ -6346,7 +6346,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     // Carpentry shelters depend on neighbours — recompute once everything is up
     for (const b of builds) {
       if (b.kind === 'platform') recomputeTileShelter(b)
-      if (b.kind === 'wall' && platformAt(b.x, b.z, 0.9)) b.shelter = 0
+      if (b.kind === 'wall' && platformAtDeck(b.x, b.z, b.deckY, 0.9)) b.shelter = 0
     }
   }
 
