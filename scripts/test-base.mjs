@@ -674,8 +674,30 @@ const ctxB = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   )
   ok(`hull still drove with planted feet (${plantResult.moved.toFixed(2)} m)`, plantResult.moved > 0.8)
 
+  // Re-seat aboard with a clean hull — headless drive can soft-beach her and
+  // hide Drop Anchor. Restore unbeached from a live snapshot.
+  await page.evaluate(() => {
+    const snap = window.ww.improvise.snapshot()
+    const raft = snap.find((b) => b.kind === 'raft')
+    if (raft) {
+      raft.beached = false
+      raft.anchored = false
+    }
+    window.ww.improvise.restore(snap)
+    const [r] = window.ww.improvise.snapshot().filter((b) => b.kind === 'raft')
+    if (!r) return
+    const p = window.ww.player
+    p.x = r.x
+    p.z = r.z
+    p.y = 3.2
+    p.vy = 0
+    p.mode = 'walk'
+    p.pitch = -0.55
+  })
+  await page.waitForTimeout(500)
+
   // Anchor from aboard — Pack → Camp carries the verb too
-  ok('Drop Anchor available', await waitRecipe(page, 'Anchor', 'Drop'))
+  ok('Drop Anchor available', await waitRecipe(page, 'Anchor', 'Drop', 20000))
   ok('anchor down', (await page.evaluate(snap, 'raft'))[0].anchored === true)
 
   // She holds against the helm while the stone is down
