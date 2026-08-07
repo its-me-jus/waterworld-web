@@ -408,11 +408,15 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   const c = await page.evaluate(counts)
   ok(
     `base restored (platform ${c.platform}, walls ${c.wall}, roof ${c.roof}, woodpile ${c.woodpile})`,
-    c.platform === 2 && c.wall === 4 && c.roof === 1 && c.woodpile === 1,
+    c.platform === 3 && c.wall === 4 && c.roof === 1 && c.woodpile === 1,
   )
-  const [plat] = await page.evaluate(snap, 'platform')
-  const stand = await page.evaluate((p) => window.ww.improvise.standAt(p.x, p.z), plat)
-  ok(`deck walkable after reload (${stand.toFixed(2)})`, Math.abs(stand - plat.y) < 0.05)
+  const plats = await page.evaluate(snap, 'platform')
+  const ground = plats.reduce((a, b) => ((a.y ?? 0) <= (b.y ?? 0) ? a : b))
+  const stand = await page.evaluate(
+    (p) => window.ww.improvise.standAt(p.x, p.z, (p.y ?? 0) + 1.62),
+    ground,
+  )
+  ok(`deck walkable after reload (${stand.toFixed(2)})`, Math.abs(stand - (ground.y ?? 0)) < 0.05)
   ok('still Day 2 after reload', (await page.evaluate(dayChip)) === 'Day 2')
   await page.close()
 }

@@ -2056,20 +2056,24 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   ): { x: number; z: number; deckY: number; expanding: boolean; stacking: boolean } {
     const eyeY = live?.y
     const under = platformAt(px, pz, 0.06, eyeY)
-    // Look up on a roofed tile — raise the next story instead of growing out
-    if (
-      under &&
-      lookPitch >= STACK_LOOK_UP &&
-      tileRoof(under) &&
-      !platformAbove(under) &&
-      storyIndex(under) < MAX_STORY
-    ) {
+    // Look up: raise the next story, or stay put so Climb isn't stolen by a
+    // sideways Lay aimed at an empty neighbour.
+    if (under && lookPitch >= STACK_LOOK_UP) {
+      if (tileRoof(under) && !platformAbove(under) && storyIndex(under) < MAX_STORY) {
+        return {
+          x: under.x,
+          z: under.z,
+          deckY: under.deckY + STORY_RISE,
+          expanding: false,
+          stacking: true,
+        }
+      }
       return {
         x: under.x,
         z: under.z,
-        deckY: under.deckY + STORY_RISE,
+        deckY: under.deckY,
         expanding: false,
-        stacking: true,
+        stacking: false,
       }
     }
     if (under) {
@@ -4485,6 +4489,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     verb: 'Climb',
     label: 'Platform',
     radius: 3.6,
+    // Beat sideways carpentry when looking up/down between stories
+    priority: 2.8,
     available: () => {
       if (!deps.vitals.alive || !live) return false
       const here = platformAt(px, pz, 0.06, live.y)
