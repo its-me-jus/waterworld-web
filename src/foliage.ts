@@ -18,7 +18,13 @@ import * as THREE from 'three'
 
 export type FoliageRig = {
   /** Shared clock, wind and cloud deck — one write per frame drives every batch. */
-  update: (time: number, strength: number, headingRad: number, cloudShadow: number) => void
+  update: (
+    time: number,
+    strength: number,
+    headingRad: number,
+    cloudShadow: number,
+    tide?: number,
+  ) => void
   /** The key light the leaf backlight reads from. */
   setSun: (dir: THREE.Vector3, color: THREE.Color) => void
   /**
@@ -363,7 +369,31 @@ const groundColorBody = /* glsl */ `
       shading += (blade - 0.5) * 0.22 * bladeFade;
     #endif
     diffuseColor.rgb = patched * shading;
+
+    // Live tide wetness — the painted beach was a fixed band; the foreshore
+    // now darkens and cools where the water actually sits, and sheens a touch.
+    float relative = vGroundPos.y - uTide;
+    float sandMask = 1.0 - smoothstep(3.5, 11.0, vGroundPos.y);
+    float awash =
+      (1.0 - smoothstep(-0.35, 1.55, relative)) *
+      smoothstep(-7.0, -0.15, relative);
+    // Soft lace of darker sand just above the lip — recently washed
+    float swash = smoothstep(0.05, 0.55, relative) * (1.0 - smoothstep(0.9, 2.2, relative));
+    float wetNoise = 0.72 + 0.28 * gNoise(gp * 0.85 + vec2(uTide * 0.4, 0.0));
+    gWetness = clamp((awash * 0.92 + swash * 0.55) * sandMask * wetNoise, 0.0, 1.0);
+    vec3 wetTint = diffuseColor.rgb * vec3(0.52, 0.58, 0.64);
+    diffuseColor.rgb = mix(diffuseColor.rgb, wetTint, gWetness * 0.78);
   }
+`
+
+const groundWetPars = /* glsl */ `
+uniform float uTide;
+float gWetness = 0.0;
+`
+
+const groundWetBody = /* glsl */ `
+  roughnessFactor = mix(roughnessFactor, 0.22, gWetness * 0.92);
+  metalnessFactor = mix(metalnessFactor, 0.06, gWetness * 0.55);
 `
 
 export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = {}): FoliageRig {
@@ -377,6 +407,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
   const uHaze = { value: haze }
   const uCloudDrift = { value: new THREE.Vector2() }
   const uCloudShadow = { value: 0.45 }
+  const uTide = { value: 0 }
   const depthMaterials = new WeakMap<THREE.Material, THREE.MeshDepthMaterial>()
 
   function material(params: FoliageParams) {
@@ -446,6 +477,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
         ${translucency > 0 ? leafFragmentPars : ''}
         ${noiseFragmentPars}
         ${cloudShadowPars}
+        ${ground ? groundWetPars : ''}
         ${shader.fragmentShader}
       `.replace(
         '#include <lights_fragment_end>',
@@ -453,11 +485,16 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       )
 
       if (ground) {
+        shader.uniforms.uTide = uTide
         shader.fragmentShader = shader.fragmentShader
           .replace('#include <color_fragment>', `#include <color_fragment>\n${groundColorBody}`)
           .replace(
             '#include <normal_fragment_begin>',
             `#include <normal_fragment_begin>\n${groundNormalBody}`,
+          )
+          .replace(
+            '#include <metalnessmap_fragment>',
+            `#include <metalnessmap_fragment>\n${groundWetBody}`,
           )
       }
 
@@ -499,7 +536,13 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     return mat
   }
 
-  function update(time: number, strength: number, headingRad: number, cloudShadow: number) {
+  function update(
+    time: number,
+    strength: number,
+    headingRad: number,
+    cloudShadow: number,
+    tide = 0,
+  ) {
     uTime.value = time
     uWindStrength.value = strength
     uWindDir.value.set(Math.cos(headingRad), Math.sin(headingRad))
@@ -509,6 +552,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       Math.sin(headingRad) * time * 0.0042,
     )
     uCloudShadow.value = cloudShadow
+    uTide.value = tide
   }
 
   function setSun(dir: THREE.Vector3, color: THREE.Color) {
