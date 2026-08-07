@@ -433,7 +433,7 @@ const improvise = createImprovise(scene, camera, {
   touch: mobile,
   setDriveMode: (mode) => touch.setDriveMode(mode),
 })
-raftAt = improvise.standAt
+raftAt = (x, z) => improvise.standAt(x, z, player.y)
 
 function restart() {
   clearSave()

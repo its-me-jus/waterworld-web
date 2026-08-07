@@ -220,6 +220,94 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   ok('Pitch Roof available', await waitRecipe(page, 'Roof'))
   ok('roof pitched', (await page.evaluate(counts)).roof === 1)
 
+  // Second story: look up on the roofed bay and Lay Platform again
+  await fillStash(page)
+  await teleport(page, plat.x, plat.z, plat.y + 1.75, 'walk')
+  await page.evaluate(() => {
+    window.ww.player.yaw = 0
+    window.ww.player.pitch = 0.7
+  })
+  await page.waitForTimeout(400)
+  ok('stack Lay Platform available (look up)', await waitRecipe(page, 'Platform', null, 8000))
+  ok('second-story platform laid', (await page.evaluate(counts)).platform === 3)
+  const stories = await page.evaluate(() => {
+    const plats = window.ww.improvise.snapshot().filter((b) => b.kind === 'platform')
+    const ground = plats.find((p) => Math.abs(p.x - window.ww.player.x) < 1.3 && Math.abs(p.z - window.ww.player.z) < 1.3)
+    // Prefer the lowest at this cell, then its stacked neighbour
+    const here = plats
+      .filter((p) => Math.abs(p.x - plats[0].x) < 0.01 && Math.abs(p.z - plats[0].z) < 0.01)
+      .sort((a, b) => (a.y ?? 0) - (b.y ?? 0))
+    // Find any stacked pair sharing x/z
+    for (const a of plats) {
+      const above = plats.find(
+        (b) => b !== a && Math.abs(b.x - a.x) < 0.01 && Math.abs(b.z - a.z) < 0.01 && (b.y ?? 0) > (a.y ?? 0) + 1.5,
+      )
+      if (above) return { low: a.y, high: above.y, dx: 0, dz: 0 }
+    }
+    return { low: ground?.y, high: null, count: plats.length }
+  })
+  ok(
+    `stacked decks share a footprint (${stories.low?.toFixed?.(2)} → ${stories.high?.toFixed?.(2)})`,
+    stories.high != null && stories.low != null && stories.high > stories.low + 1.5,
+  )
+
+  // Climb up: look up and Climb Platform
+  await teleport(page, plat.x, plat.z, plat.y + 1.75, 'walk')
+  await page.evaluate(() => {
+    window.ww.player.yaw = 0
+    window.ww.player.pitch = 0.7
+  })
+  const climbed = await faceAndPressF(page, { yaw: 0, pitch: 0.7 }, /climb platform/i, 12000)
+  ok('climbed to the second story', climbed)
+  const onUpper = await page.evaluate(() => {
+    const plats = window.ww.improvise
+      .snapshot()
+      .filter((b) => b.kind === 'platform')
+      .sort((a, b) => (b.y ?? 0) - (a.y ?? 0))
+    const top = plats[0]
+    return Math.abs(window.ww.player.y - ((top.y ?? 0) + 1.62)) < 0.35
+  })
+  ok('standing on the upper deck', onUpper)
+
+  // Ground floor still walkable under the stack (height-aware standAt)
+  const floors = await page.evaluate(() => {
+    const plats = window.ww.improvise.snapshot().filter((b) => b.kind === 'platform')
+    let low = null
+    let high = null
+    for (const a of plats) {
+      const above = plats.find(
+        (b) => b !== a && Math.abs(b.x - a.x) < 0.01 && Math.abs(b.z - a.z) < 0.01 && (b.y ?? 0) > (a.y ?? 0) + 1.5,
+      )
+      if (above) {
+        low = a
+        high = above
+        break
+      }
+    }
+    if (!low || !high) return null
+    const atLow = window.ww.improvise.standAt(low.x, low.z, (low.y ?? 0) + 1.62)
+    const atHigh = window.ww.improvise.standAt(high.x, high.z, (high.y ?? 0) + 1.62)
+    return {
+      lowY: low.y,
+      highY: high.y,
+      standLow: atLow,
+      standHigh: atHigh,
+    }
+  })
+  ok(
+    'standAt keeps you on the story you are on',
+    !!floors &&
+      Math.abs(floors.standLow - floors.lowY) < 0.15 &&
+      Math.abs(floors.standHigh - floors.highY) < 0.15,
+  )
+
+  // Back to the ground bay for fire / sleep
+  await teleport(page, plat.x, plat.z, plat.y + 1.75, 'walk')
+  await page.evaluate(() => {
+    window.ww.player.pitch = 0
+  })
+  await page.waitForTimeout(300)
+
   // A fire on the wooden deck
   ok('Kindle Fire on deck available', await waitRecipe(page, 'Fire'))
   ok('fire on the deck', (await page.evaluate(counts)).fire === 1)
