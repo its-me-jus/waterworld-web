@@ -82,6 +82,8 @@ export type SavedSalvage = {
   fixedTaken: boolean[]
   /** Rain-pool fullness 0..1, in creation order. */
   poolFull: number[]
+  /** Inland ledge seep fullness 0..1 when the island hosts one. */
+  ledgeFull?: number | null
 }
 
 export type SavedLittoral = {

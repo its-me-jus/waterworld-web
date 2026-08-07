@@ -272,7 +272,7 @@ export function createOpMenu(app: HTMLElement, deps: OpMenuDeps) {
     const recipes = deps.campRecipes()
     if (!recipes.length) {
       paint(
-        '<p class="op-camp-empty">Stand where a build would work, with the materials on you — then it shows up here. Carpentry: face the next empty square to Lay a platform, then Raise walls and Pitch a roof. Pack stays open as a second way in when the world prompt is busy.</p>',
+        '<p class="op-camp-empty">Stand where a build would work, with the materials on you — then it shows up here. With two planks, face clear ground and Lay a Platform first; Raise walls, Hang a door or window, then Pitch a roof. Pack stays open as a second way in when the world prompt is busy.</p>',
       )
       return
     }

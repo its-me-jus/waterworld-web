@@ -179,8 +179,8 @@ type Build = {
   answered?: boolean
   /** Runtime seconds a signal has been smoking — soft payoff timer. */
   age?: number
-  /** Carpentry piece variant — a wall can be hung as a door you walk through. */
-  variant?: 'door'
+  /** Carpentry piece variant — door (walk-through) or window (framed opening). */
+  variant?: 'door' | 'window'
   /** Extra hotspots this build registered (drink, etc.) — cleared on reset. */
   items: Interactable[]
 }
@@ -218,7 +218,15 @@ const DRIP_COST: Cost = { can: 1, rope: 1 }
 const PLATFORM_COST: Cost = { plank: 2 }
 const WALL_COST: Cost = { plank: 1 }
 const DOOR_COST: Cost = { plank: 1 }
+/** Framed window panel — same stick as a door, finishes a box into a hut. */
+const WINDOW_COST: Cost = { plank: 1 }
 const ROOF_COST: Cost = { plank: 1, leaf: 1 }
+
+/** Solid wall, walk-through door, or framed window opening. */
+type WallVariant = 'solid' | 'door' | 'window'
+
+/** Which cardinal neighbours share a roof at the same deck — joins the ridge. */
+type RoofJoins = { px: boolean; nx: boolean; pz: boolean; nz: boolean }
 /** Ladder up a story — one plank for rails, rope for the rungs. */
 const LADDER_COST: Cost = { plank: 1, rope: 1 }
 /** First sticks of a shore woodpile — the rest Stow in. */
@@ -1564,11 +1572,11 @@ function platformPostLen(deckY: number, groundY: number, upper: boolean) {
 }
 
 /**
- * Deck-edge wall (or a free-standing windbreak). The door hangs two narrow
- * panels with a gap you walk through — it keeps the wind's count for the
- * tile without boxing you in.
+ * Deck-edge wall (or a free-standing windbreak). A door hangs two narrow
+ * panels with a gap you walk through; a window keeps the sill and cheeks and
+ * opens the middle — light and air without boxing the hut into a blank crate.
  */
-function wallMesh(m: ReturnType<typeof mats>, door: boolean) {
+function wallMesh(m: ReturnType<typeof mats>, variant: WallVariant = 'solid') {
   const g = new THREE.Group()
   g.name = 'wall'
   const H = WALL_HEIGHT
@@ -1584,20 +1592,38 @@ function wallMesh(m: ReturnType<typeof mats>, door: boolean) {
   const railLow = plankObject(W + 0.1, 0.09, m.wood)
   railLow.position.set(0, 0.12, 0)
   g.add(railLow)
-  const slat = (x: number, w: number) => {
-    const s = new THREE.Mesh(new THREE.BoxGeometry(w, H - 0.28, 0.05), m.wood)
-    s.position.set(x, H / 2 - 0.02, 0)
+  const slat = (x: number, w: number, h: number, y: number) => {
+    const s = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.05), m.wood)
+    s.position.set(x, y, 0)
     g.add(s)
   }
-  if (door) {
+  if (variant === 'door') {
     // Two cheeks and a lintel — a man-shaped gap between
-    slat(-W / 2 + 0.45, 0.72)
-    slat(W / 2 - 0.45, 0.72)
+    slat(-W / 2 + 0.45, 0.72, H - 0.28, H / 2 - 0.02)
+    slat(W / 2 - 0.45, 0.72, H - 0.28, H / 2 - 0.02)
     const lintel = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.34, 0.05), m.wood)
     lintel.position.set(0, H - 0.32, 0)
     g.add(lintel)
+  } else if (variant === 'window') {
+    // Sill, cheeks, lintel — an open square the light comes through
+    const sillH = 0.78
+    const openH = 0.72
+    const lintelY = sillH + openH + 0.14
+    slat(0, W - 0.08, sillH - 0.18, sillH / 2 + 0.06)
+    slat(-W / 2 + 0.38, 0.58, openH + 0.08, sillH + openH / 2)
+    slat(W / 2 - 0.38, 0.58, openH + 0.08, sillH + openH / 2)
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(W - 0.2, 0.28, 0.05), m.wood)
+    lintel.position.set(0, lintelY, 0)
+    g.add(lintel)
+    // Thin mullion — reads as a window, not a missing panel
+    const mullion = new THREE.Mesh(new THREE.BoxGeometry(0.07, openH - 0.06, 0.04), m.brand)
+    mullion.position.set(0, sillH + openH / 2, 0.02)
+    g.add(mullion)
+    const cross = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.06, 0.04), m.brand)
+    cross.position.set(0, sillH + openH / 2, 0.02)
+    g.add(cross)
   } else {
-    for (let i = 0; i < 5; i++) slat((i - 2) * (W / 5), W / 5 - 0.06)
+    for (let i = 0; i < 5; i++) slat((i - 2) * (W / 5), W / 5 - 0.06, H - 0.28, H / 2 - 0.02)
   }
   for (const x of [-W / 2 + 0.06, W / 2 - 0.06]) {
     const lash = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.02, 4, 8), m.rope)
@@ -1635,41 +1661,98 @@ function ladderMesh(m: ReturnType<typeof mats>) {
   return g
 }
 
-/** Shed roof — plank courses under a thatch of fronds, tilted to shed rain. */
-function roofMesh(m: ReturnType<typeof mats>) {
+/**
+ * Shed roof — plank courses under a thatch of fronds. Alone it tilts to shed
+ * rain; beside a neighbour it rises to a shared ridge so adjacent bays read
+ * as one lid, not separate hatches.
+ */
+function roofMesh(m: ReturnType<typeof mats>, joins: RoofJoins = { px: false, nx: false, pz: false, nz: false }) {
   const g = new THREE.Group()
   g.name = 'roof'
+  const joined = joins.px || joins.nx || joins.pz || joins.nz
+  // Prefer a ridge along the longer joined run (X neighbours → ridge runs Z)
+  const ridgeAlongZ = joins.px || joins.nx
   const panel = new THREE.Group()
-  for (let i = 0; i < 6; i++) {
-    const plank = plankObject(TILE - 0.02, 0.36, m.wood)
-    plank.position.set(0, 0.05, (i - 2.5) * 0.4)
-    panel.add(plank)
+  const spanX = TILE - 0.02 + (joins.px ? 0.12 : 0) + (joins.nx ? 0.12 : 0)
+  const spanZ = TILE - 0.02 + (joins.pz ? 0.12 : 0) + (joins.nz ? 0.12 : 0)
+  const shiftX = ((joins.px ? 1 : 0) - (joins.nx ? 1 : 0)) * 0.06
+  const shiftZ = ((joins.pz ? 1 : 0) - (joins.nz ? 1 : 0)) * 0.06
+
+  if (joined) {
+    // Two courses meeting at a centre ridge — one roof over several bays
+    const half = ridgeAlongZ ? spanX / 2 : spanZ / 2
+    for (const side of [-1, 1] as const) {
+      const wing = new THREE.Group()
+      for (let i = 0; i < 4; i++) {
+        const plank = plankObject(half - 0.04, ridgeAlongZ ? spanZ - 0.08 : 0.34, m.wood)
+        if (ridgeAlongZ) {
+          plank.position.set(side * (half / 2), 0.05, (i - 1.5) * ((spanZ - 0.1) / 4))
+        } else {
+          plank.rotation.y = Math.PI / 2
+          plank.position.set((i - 1.5) * ((spanX - 0.1) / 4), 0.05, side * (half / 2))
+        }
+        wing.add(plank)
+      }
+      for (let i = 0; i < 4; i++) {
+        const frond = new THREE.Mesh(
+          new THREE.PlaneGeometry(half - 0.08, ridgeAlongZ ? spanZ - 0.12 : 0.42, 1, 2),
+          m.leaf,
+        )
+        frond.rotation.x = -Math.PI / 2
+        if (ridgeAlongZ) {
+          frond.position.set(side * (half / 2), 0.16, (i - 1.5) * 0.48)
+        } else {
+          frond.rotation.z = Math.PI / 2
+          frond.position.set((i - 1.5) * 0.48, 0.16, side * (half / 2))
+        }
+        wing.add(frond)
+      }
+      // Pitch each wing up toward the shared ridge
+      if (ridgeAlongZ) wing.rotation.z = side * 0.16
+      else wing.rotation.x = -side * 0.16
+      panel.add(wing)
+    }
+    const ridge = plankObject(ridgeAlongZ ? spanZ - 0.05 : spanX - 0.05, 0.11, m.brand)
+    if (ridgeAlongZ) ridge.rotation.y = Math.PI / 2
+    ridge.position.set(0, 0.28, 0)
+    panel.add(ridge)
+    panel.position.set(shiftX, 0.06, shiftZ)
+  } else {
+    for (let i = 0; i < 6; i++) {
+      const plank = plankObject(TILE - 0.02, 0.36, m.wood)
+      plank.position.set(0, 0.05, (i - 2.5) * 0.4)
+      panel.add(plank)
+    }
+    for (let i = 0; i < 6; i++) {
+      const frond = new THREE.Mesh(new THREE.PlaneGeometry(0.5, TILE - 0.1, 1, 2), m.leaf)
+      frond.rotation.x = -Math.PI / 2
+      frond.rotation.z = ((i % 3) - 1) * 0.05
+      frond.position.set((i - 2.5) * 0.38, 0.16, 0)
+      panel.add(frond)
+    }
+    for (const x of [-0.9, 0.9]) {
+      const batten = plankObject(TILE - 0.1, 0.08, m.brand)
+      batten.rotation.y = Math.PI / 2
+      batten.position.set(x, 0.12, 0)
+      panel.add(batten)
+    }
+    // Shed tilt — high edge faces the build's +z
+    panel.rotation.x = -0.14
   }
-  for (let i = 0; i < 6; i++) {
-    const frond = new THREE.Mesh(new THREE.PlaneGeometry(0.5, TILE - 0.1, 1, 2), m.leaf)
-    frond.rotation.x = -Math.PI / 2
-    frond.rotation.z = ((i % 3) - 1) * 0.05
-    frond.position.set((i - 2.5) * 0.38, 0.16, 0)
-    panel.add(frond)
-  }
-  for (const x of [-0.9, 0.9]) {
-    const batten = plankObject(TILE - 0.1, 0.08, m.brand)
-    batten.rotation.y = Math.PI / 2
-    batten.position.set(x, 0.12, 0)
-    panel.add(batten)
-  }
-  // Shed tilt — high edge faces the build's +z
-  panel.rotation.x = -0.14
   g.add(panel)
-  // Stub posts that read as resting on the wall top plates
+  // Stub posts that read as resting on the wall top plates — omit on joined edges
   for (const [x, z] of [
     [-1.0, -1.0],
     [1.0, -1.0],
     [-1.0, 1.0],
     [1.0, 1.0],
   ] as const) {
+    if (x > 0 && joins.px) continue
+    if (x < 0 && joins.nx) continue
+    if (z > 0 && joins.pz) continue
+    if (z < 0 && joins.nz) continue
     const stub = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.5, 0.09), m.brand)
-    stub.position.set(x, -0.22, z)
+    stub.position.set(x, joined ? -0.08 : -0.22, z)
     g.add(stub)
   }
   return g
@@ -1902,6 +1985,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let saidBeach = false
   /** Soft-sand Dig / Fill Flask nudge when thirst bites inland. */
   let saidDig = false
+  /** First night asleep in a room you built — the "this is home" beat. */
+  let saidHome = false
+  /** Soft nudge toward Lay Platform once planks are in hand. */
+  let saidPlatform = false
   let swimming = false
   let onRaftDeck = false
   /** Standing on a platform tile — fires, sleep and wall work read it. */
@@ -2212,13 +2299,59 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     return !!tileRoof(tile) || !!platformAbove(tile)
   }
 
-  /** A tile's shelter is the sum of what's hung on it — walls, door, roof. */
+  /** A tile's shelter is the sum of what's hung on it — walls, door, window, roof. */
   function recomputeTileShelter(tile: Build) {
     let s = 0.18
-    for (const w of tilePieces(tile, 'wall')) s += w.variant === 'door' ? 0.08 : 0.11
+    for (const w of tilePieces(tile, 'wall')) {
+      s +=
+        w.variant === 'door' ? 0.08 : w.variant === 'window' ? 0.09 : 0.11
+    }
     if (tileRoof(tile)) s += 0.26
     if (tile.deckY > 2) s += 0.08
     tile.shelter = s
+  }
+
+  /** Neighbour roofs at the same deck — drives joined ridge geometry. */
+  function roofJoinsAt(tile: Build): RoofJoins {
+    const neighbourRoofed = (x: number, z: number) => {
+      const n = platformAtDeck(x, z, tile.deckY)
+      return !!n && !!tileRoof(n)
+    }
+    return {
+      px: neighbourRoofed(tile.x + TILE, tile.z),
+      nx: neighbourRoofed(tile.x - TILE, tile.z),
+      pz: neighbourRoofed(tile.x, tile.z + TILE),
+      nz: neighbourRoofed(tile.x, tile.z - TILE),
+    }
+  }
+
+  function refitRoofMesh(roof: Build) {
+    const host = platformAtDeck(roof.x, roof.z, roof.deckY - ROOF_RISE, 0.9)
+    const joins = host ? roofJoinsAt(host) : { px: false, nx: false, pz: false, nz: false }
+    const next = roofMesh(m, joins)
+    next.position.copy(roof.object.position)
+    next.rotation.y = roof.yaw ?? 0
+    scene.remove(roof.object)
+    disposeBuildObject(roof.object)
+    roof.object = next
+    scene.add(next)
+  }
+
+  /** After a lid goes up or comes down, retarget this bay and its neighbours. */
+  function refitJoinedRoofs(tile: Build | null) {
+    if (!tile) return
+    const hosts = [
+      tile,
+      platformAtDeck(tile.x + TILE, tile.z, tile.deckY),
+      platformAtDeck(tile.x - TILE, tile.z, tile.deckY),
+      platformAtDeck(tile.x, tile.z + TILE, tile.deckY),
+      platformAtDeck(tile.x, tile.z - TILE, tile.deckY),
+    ]
+    for (const host of hosts) {
+      if (!host) continue
+      const roof = tileRoof(host)
+      if (roof) refitRoofMesh(roof)
+    }
   }
 
   function refund(cost: Cost) {
@@ -2269,6 +2402,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         0.9,
       )
       if (host && host !== tile) recomputeTileShelter(host)
+      if (b.kind === 'roof') refitJoinedRoofs(host ?? tile)
     }
     deps.hud.whisper(line)
     tap('wood', 0.6)
@@ -2319,6 +2453,14 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
   function canHangDoor() {
     if (!deps.vitals.alive || !deps.salvage.has(DOOR_COST)) return false
+    if (!onLand && !onPlatformDeck) return false
+    const tile = wallTargetTile()
+    if (!tile) return false
+    return !wallOnEdge(tile, tileSide(tile))
+  }
+
+  function canHangWindow() {
+    if (!deps.vitals.alive || !deps.salvage.has(WINDOW_COST)) return false
     if (!onLand && !onPlatformDeck) return false
     const tile = wallTargetTile()
     if (!tile) return false
@@ -2385,16 +2527,29 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     ghostRoot.visible = true
   }
 
-  function showGhostWall(x: number, z: number, y: number, yaw: number, door: boolean) {
+  function showGhostWall(x: number, z: number, y: number, yaw: number, variant: WallVariant) {
     clearGhost()
     const W = TILE - 0.24
-    if (door) {
+    if (variant === 'door') {
       const left = new THREE.Mesh(new THREE.BoxGeometry(0.72, WALL_HEIGHT - 0.2, 0.06), ghostMat)
       left.position.set(-W / 2 + 0.45, WALL_HEIGHT / 2, 0)
       ghostRoot.add(left)
       const right = new THREE.Mesh(new THREE.BoxGeometry(0.72, WALL_HEIGHT - 0.2, 0.06), ghostMat)
       right.position.set(W / 2 - 0.45, WALL_HEIGHT / 2, 0)
       ghostRoot.add(right)
+    } else if (variant === 'window') {
+      const sill = new THREE.Mesh(new THREE.BoxGeometry(W - 0.1, 0.7, 0.06), ghostMat)
+      sill.position.set(0, 0.42, 0)
+      ghostRoot.add(sill)
+      const left = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.75, 0.06), ghostMat)
+      left.position.set(-W / 2 + 0.35, 1.15, 0)
+      ghostRoot.add(left)
+      const right = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.75, 0.06), ghostMat)
+      right.position.set(W / 2 - 0.35, 1.15, 0)
+      ghostRoot.add(right)
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(W - 0.2, 0.28, 0.06), ghostMat)
+      lintel.position.set(0, 1.65, 0)
+      ghostRoot.add(lintel)
     } else {
       const panel = new THREE.Mesh(new THREE.BoxGeometry(W, WALL_HEIGHT - 0.15, 0.06), ghostMat)
       panel.position.y = WALL_HEIGHT / 2
@@ -2425,9 +2580,13 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       showGhostPlatform(platSnapX, platSnapZ, platSnapY)
       return
     }
-    if (canRaiseWall() || canHangDoor()) {
+    if (canRaiseWall() || canHangDoor() || canHangWindow()) {
       const tile = wallTargetTile()
-      const door = !canRaiseWall() && canHangDoor()
+      const variant: WallVariant = canRaiseWall()
+        ? 'solid'
+        : canHangDoor()
+          ? 'door'
+          : 'window'
       if (tile) {
         const side = tileSide(tile)
         const mid = tileEdgeMid(tile, side)
@@ -2436,11 +2595,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           mid.z,
           tile.deckY,
           side.dx !== 0 ? Math.PI / 2 : 0,
-          door,
+          variant,
         )
       } else {
         const snapped = Math.round(yaw / (Math.PI / 2)) * (Math.PI / 2)
-        showGhostWall(wallPos.x, wallPos.z, deps.groundAt(wallPos.x, wallPos.z), snapped, false)
+        showGhostWall(wallPos.x, wallPos.z, deps.groundAt(wallPos.x, wallPos.z), snapped, 'solid')
       }
       return
     }
@@ -2536,7 +2695,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         water: 0,
       })
       recomputeShelter(build)
-      deps.hud.whisper('Posts in the sand. Walls and a roof still to fashion.')
+      deps.hud.whisper(
+        'Posts in the sand. For a lasting floor later, Lay a Platform — stilts beat a lean-to when you mean to stay.',
+      )
     },
   })
 
@@ -4432,7 +4593,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (tile) {
         const side = tileSide(tile)
         const mid = tileEdgeMid(tile, side)
-        addBuild('wall', wallMesh(m, false), mid.x, mid.z, tile.deckY, 1.6, 0, {
+        addBuild('wall', wallMesh(m, 'solid'), mid.x, mid.z, tile.deckY, 1.6, 0, {
           yaw: side.dx !== 0 ? Math.PI / 2 : 0,
         })
         recomputeTileShelter(tile)
@@ -4442,7 +4603,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         const z = wallPos.z
         const y = deps.groundAt(x, z)
         const snapped = Math.round(yaw / (Math.PI / 2)) * (Math.PI / 2)
-        addBuild('wall', wallMesh(m, false), x, z, y, 1.7, WALL_SHELTER, { yaw: snapped })
+        addBuild('wall', wallMesh(m, 'solid'), x, z, y, 1.7, WALL_SHELTER, { yaw: snapped })
         deps.hud.whisper('A windbreak. Thin — but the gusts notice.')
       }
       tap('wood', 0.7)
@@ -4463,12 +4624,36 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (!tile) return
       const side = tileSide(tile)
       const mid = tileEdgeMid(tile, side)
-      addBuild('wall', wallMesh(m, true), mid.x, mid.z, tile.deckY, 1.6, 0, {
+      addBuild('wall', wallMesh(m, 'door'), mid.x, mid.z, tile.deckY, 1.6, 0, {
         yaw: side.dx !== 0 ? Math.PI / 2 : 0,
         variant: 'door',
       })
       recomputeTileShelter(tile)
       deps.hud.whisper('A door hung. In and out — and the wind, mostly out.')
+      tap('wood', 0.7)
+      tap('lash', 0.45)
+    },
+  })
+
+  addCamp('build', {
+    position: wallPos,
+    verb: 'Hang',
+    label: 'Window',
+    cost: WINDOW_COST,
+    radius: REACH,
+    available: canHangWindow,
+    use: () => {
+      if (!deps.salvage.spend(WINDOW_COST)) return
+      const tile = wallTargetTile()
+      if (!tile) return
+      const side = tileSide(tile)
+      const mid = tileEdgeMid(tile, side)
+      addBuild('wall', wallMesh(m, 'window'), mid.x, mid.z, tile.deckY, 1.6, 0, {
+        yaw: side.dx !== 0 ? Math.PI / 2 : 0,
+        variant: 'window',
+      })
+      recomputeTileShelter(tile)
+      deps.hud.whisper('A window hung. Light in — and the hut stops reading as a box.')
       tap('wood', 0.7)
       tap('lash', 0.45)
     },
@@ -4484,8 +4669,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     use: () => {
       const tile = wallTargetTile()
       if (!tile || !deps.salvage.spend(ROOF_COST)) return
-      addBuild('roof', roofMesh(m), tile.x, tile.z, tile.deckY + ROOF_RISE, 1.8, 0, { yaw: 0 })
+      addBuild('roof', roofMesh(m, roofJoinsAt(tile)), tile.x, tile.z, tile.deckY + ROOF_RISE, 1.8, 0, {
+        yaw: 0,
+      })
       recomputeTileShelter(tile)
+      refitJoinedRoofs(tile)
       const neighbours = [
         platformAtDeck(tile.x + TILE, tile.z, tile.deckY),
         platformAtDeck(tile.x - TILE, tile.z, tile.deckY),
@@ -4495,7 +4683,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const roofedBay = neighbours.some((n) => n && tileRoof(n))
       deps.hud.whisper(
         roofedBay
-          ? 'Another bay under cover. Keep joining decks — each lid its own planks and fronds.'
+          ? 'The lids meet on a ridge. Adjacent bays under one cover.'
           : storyIndex(tile) > 0
             ? 'A lid on the upper bay. Hang a Ladder below — or Sleep if it’s closed in.'
             : 'A lid on it. Rain sheds. Look up for a second floor, or Hang a Ladder once you raise one.',
@@ -4723,7 +4911,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       )
     }
     // Carpentry ready suppresses the raw-fish prompt the same as any build
-    if (canLayPlatform() || canRaiseWall() || canHangDoor() || canPitchRoof() || canHangLadder()) return true
+    if (canLayPlatform() || canRaiseWall() || canHangDoor() || canHangWindow() || canPitchRoof() || canHangLadder()) return true
     if (onRaftDeck) {
       const raft = nearestOfKind(px, pz, 'raft', 3.2)
       if (raft && !raft.mast && deps.salvage.has(MAST_COST)) return true
@@ -5102,13 +5290,22 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         warmthDay: 0.2,
         warmthFire: 0.15,
         warmthExtra: tile.shelter >= 0.85 ? 0.06 : 0,
-        restQuality: tile.shelter >= 0.85 ? 1.15 : 1,
+        restQuality:
+          (tile.shelter >= 0.85 ? 1.15 : 1) + (storyIndex(tile) > 0 ? 0.08 : 0),
       })
       sleepPlatPos.set(tile.x, tile.deckY + 0.6, tile.z)
 
+      const upper = storyIndex(tile) > 0
       if (smokedDone > 0) {
         deps.hud.whisper(
           smokedDone > 1 ? 'The smoke rack is done. Fish for the road.' : 'Smoked fish waits in the Pack.',
+        )
+      } else if (night && !saidHome) {
+        saidHome = true
+        deps.hud.whisper(
+          upper
+            ? 'Dawn upstairs, in a room you raised. This is home.'
+            : 'Dawn in a room you made. This is home.',
         )
       } else if (night && storm > 0.55) {
         deps.hud.whisper(
@@ -5118,14 +5315,20 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         )
       } else if (night) {
         deps.hud.whisper(
-          nearFire
-            ? 'Dawn. Embers in the corner of a room you built.'
-            : 'Dawn, under a roof of your own making.',
+          upper
+            ? nearFire
+              ? 'Dawn upstairs. Embers, and the shore a floor below.'
+              : 'Dawn upstairs. Your own floor over the one you built first.'
+            : nearFire
+              ? 'Dawn. Embers in the corner of a room you built.'
+              : 'Dawn, under a roof of your own making.',
         )
       } else if (storm > 0.5) {
         deps.hud.whisper('You rest while the front works the roof you pitched.')
       } else {
-        deps.hud.whisper('You rest. Your own roof over you.')
+        deps.hud.whisper(
+          upper ? 'A nap upstairs. The hut holds under you.' : 'You rest. Your own roof over you.',
+        )
       }
     },
   })
@@ -5274,6 +5477,20 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         'Thirsty sand. Dig a hollow for rain — or Fill a Flask at a pool before you climb.',
       )
     }
+    // Two planks in hand and no deck yet — nudge carpentry over the lean-to habit
+    if (
+      !saidPlatform &&
+      onLand &&
+      deps.vitals.alive &&
+      deps.salvage.stash.plank >= 2 &&
+      !builds.some((b) => b.kind === 'platform') &&
+      canLayPlatform()
+    ) {
+      saidPlatform = true
+      deps.hud.whisper(
+        'Two planks make a floor. Lay a Platform — stilts beat a lean-to when you mean to stay.',
+      )
+    }
 
     const dripAt = offset(player, facingYaw, 1.15, 0.55)
     const dripY = deps.groundAt(dripAt.x, dripAt.z)
@@ -5333,11 +5550,14 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         Math.max(platSnapY + 0.5, platGround + 0.6, platSea + 0.7),
       )
     }
-    // Expand / stack priority only while aboard a deck — near a tile on the sand
-    // (woodpile, walls) must not let Lay steal Stow / Raise.
+    // First platform wins over Raise Frame on the sand; expand/stack still win aboard
     layPlatformItem &&
-      (layPlatformItem.priority =
-        (platExpanding || platStacking) && onPlatformDeck && canLayPlatform() ? 2.6 : 0)
+      (layPlatformItem.priority = (() => {
+        if (!canLayPlatform()) return 0
+        if ((platExpanding || platStacking) && onPlatformDeck) return 2.6
+        if (!builds.some((b) => b.kind === 'platform')) return 2.35
+        return 0
+      })())
     const wallAt = offset(player, facingYaw, 1.5, 0)
     setAnchor(wallPos, wallAt.x, wallAt.z, deps.groundAt(wallAt.x, wallAt.z) + 1.0)
     {
@@ -6142,6 +6362,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         if (Math.abs(lx) > TILE / 2 + 0.15 || Math.abs(lz) > 0.18) continue
         // A door blocks its cheeks and lets the middle through
         if (b.variant === 'door' && Math.abs(lx) <= 0.5) continue
+        // A window keeps the sill — you look through, you don't walk through
         const out = (lz >= 0 ? 1 : -1) * 0.18
         player.x = b.x + lx * wc + out * ws
         player.z = b.z - lx * ws + out * wc
@@ -6258,6 +6479,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     saidFail = false
     saidBeach = false
     saidDig = false
+    saidHome = false
+    saidPlatform = false
     washMeter = 0
     boardGrace = 0
     washGrace = 0
@@ -6465,11 +6688,12 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           { yaw: 0 },
         )
       } else if (kind === 'wall') {
-        const door = s.variant === 'door'
+        const variant: WallVariant =
+          s.variant === 'door' ? 'door' : s.variant === 'window' ? 'window' : 'solid'
         const y = s.y ?? deps.groundAt(x, z)
-        build = addBuild('wall', wallMesh(m, door), x, z, y, 1.7, WALL_SHELTER, {
+        build = addBuild('wall', wallMesh(m, variant), x, z, y, 1.7, WALL_SHELTER, {
           yaw: s.yaw ?? 0,
-          variant: door ? 'door' : undefined,
+          variant: variant === 'solid' ? undefined : variant,
         })
       } else if (kind === 'roof') {
         const y = s.y ?? deps.groundAt(x, z) + ROOF_RISE
@@ -6564,6 +6788,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     for (const b of builds) {
       if (b.kind === 'platform') recomputeTileShelter(b)
       if (b.kind === 'wall' && platformAtDeck(b.x, b.z, b.deckY, 0.9)) b.shelter = 0
+    }
+    for (const b of builds) {
+      if (b.kind === 'platform') refitJoinedRoofs(b)
     }
   }
 
@@ -6667,6 +6894,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       platform: PLATFORM_COST,
       wall: WALL_COST,
       door: DOOR_COST,
+      window: WINDOW_COST,
       roof: ROOF_COST,
       ladder: LADDER_COST,
       woodpile: WOODPILE_COST,

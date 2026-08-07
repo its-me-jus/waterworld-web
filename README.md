@@ -112,11 +112,14 @@ grid so you can architect your own base instead of inheriting one:
   stands free as a windbreak. Solid: it stops the wind and it stops you.
 - **Hang door** — the wall you walk through. It blocks its cheeks and lets
   the middle pass, and still counts toward a closed-in room.
-- **Pitch roof** — plank-and-frond lid over a tile. A roofed, walled tile is
-  a bedroom: **Sleep** there and the night skips to dawn like any lean-to —
-  which is how the day counter turns. Bigger houses are more bays — each
-  platform still takes its own lid — and a second story starts the same way
-  upstairs. **Hang Ladder** (plank + rope) on a roofed bay once the upper
+- **Hang window** — framed opening with a sill and mullion. Light in, body
+  still out — the piece that stops a hut reading as a blank box.
+- **Pitch roof** — plank-and-frond lid over a tile. Alone it sheds; beside
+  another roofed bay the lids meet on a shared ridge. A roofed, walled tile
+  is a bedroom: **Sleep** there and the night skips to dawn like any lean-to —
+  which is how the day counter turns. First night in a room you built names
+  it home. Bigger houses are more bays, and a second story starts the same
+  way upstairs. **Hang Ladder** (plank + rope) on a roofed bay once the upper
   floor is laid (or before), then **Climb Ladder** between stories.
 - **Stack woodpile** — shore stockpile for planks (Stow / Fetch) so a long
   build doesn't depend on swimming every stick.
@@ -151,7 +154,8 @@ of the swim into a walk — slope-aware, with real gravity off the ledges. Cliff
 past ~50° refuse you; a storm face that closes over your head knocks you back
 into the sea. Coconuts lie on the sand, crabs scuttle the wash (grab one when
 you're quick enough), rain stands in hollows in the rock above the beach, and
-inland a small cairn holds rope someone left under the stones. Driftwood
+inland a small cairn holds rope someone left under the stones, and past it a dry
+ledge drips cool water under an overhang. Driftwood
 breaks into planks, palms fell once you have the knife, and long grass twists
 into rope. Gulls, lizards and butterflies keep the place from reading empty.
 Bring salvage ashore and you can improvise a frame and fashion it into a

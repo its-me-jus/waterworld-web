@@ -50,6 +50,11 @@ export type Island = {
    */
   cairn: THREE.Vector3 | null
   /**
+   * Dry ledge past the cairn — natural drip + windbreak niche. Null if terrain
+   * couldn't host one.
+   */
+  ledge: THREE.Vector3 | null
+  /**
    * Shore crabs that scuttle the wet sand. Grab one when you're close enough —
    * same rule as fish and shellfish, nothing points at them.
    */
@@ -1859,6 +1864,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   // walked inland and left rope. Salvage hangs a takeable find on the world
   // position; this mesh is the thing you notice first.
   let cairn: THREE.Vector3 | null = null
+  let cairnSpot: { lx: number; lz: number; h: number } | null = null
   {
     const stoneMat = foliage.material({ color: 0x6a6358, roughness: 0.97, ...skylight })
     const candidates: { lx: number; lz: number; h: number; slope: number }[] = []
@@ -1910,7 +1916,102 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       stick.rotation.z = 0.12
       stack.add(stick)
       group.add(stack)
+      cairnSpot = { lx, lz, h }
       cairn = new THREE.Vector3(opts.x + lx, h, opts.z + lz)
+    }
+  }
+
+  // —— inland ledge ————————————————————————————————————————————
+  // Dry shelf past the cairn: flat rock, a seep under an overhang, stones
+  // cut the wind. No marker — you keep walking inland after the stack.
+  let ledge: THREE.Vector3 | null = null
+  if (cairnSpot) {
+    const stoneMat = foliage.material({ color: 0x6a6358, roughness: 0.97, ...skylight })
+    const darkStone = foliage.material({ color: 0x5a5448, roughness: 0.98, ...skylight })
+    const dripWater = new THREE.MeshStandardMaterial({
+      color: 0x3f757b,
+      roughness: 0.28,
+      metalness: 0.05,
+      emissive: 0x27505a,
+      emissiveIntensity: 0.85,
+      transparent: true,
+      opacity: 0.92,
+    })
+
+    const { lx: clx, lz: clz, h: ch } = cairnSpot
+    const cairnDist = Math.hypot(clx, clz)
+    const dirX = cairnDist > 1 ? clx / cairnDist : 1
+    const dirZ = cairnDist > 1 ? clz / cairnDist : 0
+    const perpX = -dirZ
+    const perpZ = dirX
+
+    const candidates: { lx: number; lz: number; h: number; slope: number }[] = []
+    for (let extra = 40; extra <= 120; extra += 3) {
+      for (let spread = -3; spread <= 3; spread++) {
+        const lx = clx + dirX * extra + perpX * spread * 7
+        const lz = clz + dirZ * extra + perpZ * spread * 7
+        const h = surface(lx, lz)
+        if (h < ch - 5 || h > ch + 12) continue
+        const slope =
+          Math.abs(surface(lx + 3, lz) - h) +
+          Math.abs(surface(lx - 3, lz) - h) +
+          Math.abs(surface(lx, lz + 3) - h) +
+          Math.abs(surface(lx, lz - 3) - h)
+        if (slope > 3.0) continue
+        if (Math.hypot(lx - clx, lz - clz) < 35) continue
+        candidates.push({ lx, lz, h, slope })
+      }
+    }
+    candidates.sort((a, b) => a.slope - b.slope || b.h - a.h)
+    const spot = candidates[0]
+    if (spot) {
+      const { lx, lz, h } = spot
+      const ledgeGroup = new THREE.Group()
+      ledgeGroup.position.set(lx, h, lz)
+      const faceYaw = Math.atan2(dirX, dirZ)
+
+      const shelf = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.22, 2.4), stoneMat)
+      shelf.position.set(0, 0.11, 0)
+      shelf.rotation.y = faceYaw
+      ledgeGroup.add(shelf)
+
+      const face = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.6, 0.45), darkStone)
+      face.position.set(-dirX * 0.9, 0.95, -dirZ * 0.9)
+      face.rotation.y = faceYaw
+      ledgeGroup.add(face)
+
+      const lip = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.28, 1.1), darkStone)
+      lip.position.set(-dirX * 0.55, 1.55, -dirZ * 0.55)
+      lip.rotation.y = faceYaw
+      lip.rotation.x = 0.18
+      ledgeGroup.add(lip)
+
+      const dripX = -dirX * 1.1
+      const dripZ = -dirZ * 1.1
+      const bead = new THREE.Mesh(new THREE.CircleGeometry(0.28, 12), dripWater)
+      bead.rotation.x = -Math.PI / 2
+      bead.position.set(dripX, 0.08, dripZ)
+      ledgeGroup.add(bead)
+
+      for (let i = 0; i < 4; i++) {
+        const stone = new THREE.Mesh(
+          new THREE.BoxGeometry(0.35, 0.55 + i * 0.08, 0.28),
+          stoneMat,
+        )
+        const sideX = perpX * (1.1 + i * 0.15)
+        const sideZ = perpZ * (1.1 + i * 0.15)
+        stone.position.set(sideX, 0.35, sideZ)
+        stone.rotation.y = faceYaw + (i - 1.5) * 0.12
+        ledgeGroup.add(stone)
+      }
+
+      const alcove = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.9, 0.35), darkStone)
+      alcove.position.set(-dirX * 1.35 + perpX * 0.5, 0.55, -dirZ * 1.35 + perpZ * 0.5)
+      alcove.rotation.y = faceYaw + 0.4
+      ledgeGroup.add(alcove)
+
+      group.add(ledgeGroup)
+      ledge = new THREE.Vector3(opts.x + lx + dripX, h + 0.08, opts.z + lz + dripZ)
     }
   }
 
@@ -2388,6 +2489,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     shore,
     pools,
     cairn,
+    ledge,
     crabs: crabsApi,
     update,
     setHaze,

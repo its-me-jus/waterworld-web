@@ -257,6 +257,8 @@ export type SalvageOptions = {
   pools: THREE.Vector3[]
   /** Inland rock stack — one takeable find, no marker. */
   cairn: THREE.Vector3 | null
+  /** Dry ledge past the cairn — drinkable rock seep. */
+  ledge: THREE.Vector3 | null
   /** True once the master's log has been read — deepens the cairn chart. */
   knowsLog?: () => boolean
   /** Soft line when a find is more than materials. */
@@ -430,6 +432,29 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     })
   }
 
+  // —— ledge drip ————————————————————————————————————————————————
+  // One seep under stone, farther inland than the rain pools. Same refill
+  // clock — damp rock until weather puts something back.
+  const ledgeDrip = opts.ledge ? { at: opts.ledge, full: 1 } : null
+  let ledgeWhispered = false
+  if (ledgeDrip) {
+    interactions.add({
+      position: ledgeDrip.at.clone().setY(ledgeDrip.at.y + 0.85),
+      verb: 'Drink from',
+      label: 'the rock seep',
+      radius: 3.2,
+      available: () => vitals.alive && ledgeDrip.full > 0.45,
+      use: () => {
+        eat(vitals, 0, ledgeDrip.full * 0.85)
+        ledgeDrip.full = 0
+        if (!ledgeWhispered) {
+          ledgeWhispered = true
+          opts.whisper?.('Seep from the rock. Cooler than the shore pools.')
+        }
+      },
+    })
+  }
+
   /**
    * Draw fresh water from the nearest rain pool into a barrel/cistern.
    * Returns how much was taken (0 if none in reach / too empty).
@@ -514,6 +539,9 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
           opts.whisper?.(
             'A name for this island is scratched in the margin. Not on any chart the ship carried.',
           )
+        }
+        if (opts.ledge) {
+          opts.whisper?.('Past the cairn the chart scratches a dry ledge — drip under stone.')
         }
       },
       2.8,
@@ -600,6 +628,9 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     for (const pool of pools) {
       if (pool.full < 1) pool.full = Math.min(1, pool.full + (dt / POOL_REFILL) * rainBoost)
     }
+    if (ledgeDrip && ledgeDrip.full < 1) {
+      ledgeDrip.full = Math.min(1, ledgeDrip.full + (dt / POOL_REFILL) * rainBoost)
+    }
 
     const drop: Find[] = []
     for (const find of finds) {
@@ -681,6 +712,8 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
   function reset(viewer: THREE.Vector3) {
     for (const key of Object.keys(stash) as StashKind[]) stash[key] = 0
     for (const pool of pools) pool.full = 1
+    if (ledgeDrip) ledgeDrip.full = 1
+    ledgeWhispered = false
     for (let i = finds.length - 1; i >= 0; i--) {
       if (finds[i].jettisoned) disposeFind(finds[i])
     }
@@ -698,11 +731,12 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     return {
       fixedTaken: finds.filter((f) => !f.drift).map((f) => f.taken),
       poolFull: pools.map((p) => p.full),
+      ledgeFull: ledgeDrip?.full ?? null,
     }
   }
 
   function restore(
-    saved: { fixedTaken: boolean[]; poolFull: number[] } | undefined,
+    saved: { fixedTaken: boolean[]; poolFull: number[]; ledgeFull?: number | null } | undefined,
     viewer: THREE.Vector3,
   ) {
     reset(viewer)
@@ -715,6 +749,9 @@ export function createSalvage(scene: THREE.Scene, opts: SalvageOptions) {
     pools.forEach((pool, i) => {
       pool.full = Math.min(1, Math.max(0, saved.poolFull[i] ?? 1))
     })
+    if (ledgeDrip && saved.ledgeFull != null) {
+      ledgeDrip.full = Math.min(1, Math.max(0, saved.ledgeFull))
+    }
   }
 
   function setStash(next: Stash) {

@@ -420,6 +420,69 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   await page.keyboard.up('KeyW')
   ok(`walked out through the door (${outX.toFixed(2)})`, Math.abs(outX - tile.x) > 1.35)
 
+  // Hang a window on another edge — hut stops reading as a blank box
+  await teleport(page, tile.x, tile.z, tile.y + 1.75, 'walk')
+  await page.waitForTimeout(300)
+  // Strike a solid wall (not the door) so Hang Window has an edge
+  let windowHung = false
+  for (const yaw of [0, Math.PI, Math.PI / 2, -Math.PI / 2]) {
+    await page.evaluate((y) => {
+      window.ww.player.yaw = y
+      window.ww.player.pitch = 0.1
+    }, yaw)
+    await page.waitForTimeout(250)
+    const struck = await faceAndPressF(page, { yaw, pitch: 0.1 }, /strike wall/i, 4000)
+    if (!struck) continue
+    await teleport(page, tile.x, tile.z, tile.y + 1.75, 'walk')
+    await page.evaluate((y) => {
+      window.ww.player.yaw = y
+      window.ww.player.pitch = 0
+    }, yaw)
+    await page.waitForTimeout(300)
+    if (await waitRecipe(page, 'Window', null, 6000)) {
+      windowHung = true
+      break
+    }
+  }
+  ok('Hang Window available after strike', windowHung)
+  ok(
+    'window hung',
+    await page.evaluate(() =>
+      window.ww.improvise.snapshot().some((b) => b.kind === 'wall' && b.variant === 'window'),
+    ),
+  )
+
+  // Joined roofs: pitch a lid on the neighbour bay so the ridge meets
+  const neighbour = await page.evaluate((origin) => {
+    const plats = window.ww.improvise.snapshot().filter((b) => b.kind === 'platform')
+    return (
+      plats.find((p) => {
+        if (Math.abs((p.y ?? 0) - (origin.y ?? 0)) > 0.5) return false
+        const dx = Math.abs(p.x - origin.x)
+        const dz = Math.abs(p.z - origin.z)
+        return (dx < 0.01 && Math.abs(dz - 2.4) < 0.01) || (dz < 0.01 && Math.abs(dx - 2.4) < 0.01)
+      }) ?? null
+    )
+  }, tile)
+  ok('neighbour bay for joined roof', !!neighbour)
+  if (neighbour) {
+    await fillStash(page)
+    await teleport(page, neighbour.x, neighbour.z, (neighbour.y ?? tile.y) + 1.75, 'walk')
+    await page.waitForTimeout(400)
+    ok('Pitch Roof on neighbour bay', await waitRecipe(page, 'Roof', null, 8000))
+    ok('two roofs joined', (await page.evaluate(counts)).roof === 2)
+  }
+
+  // Inland ledge past the cairn
+  ok(
+    'inland ledge past the cairn',
+    await page.evaluate(() => {
+      const isl = window.ww.island
+      if (!isl.cairn || !isl.ledge) return false
+      return Math.hypot(isl.ledge.x - isl.cairn.x, isl.ledge.z - isl.cairn.z) > 30
+    }),
+  )
+
   // Force the save (pagehide persists), then read it back
   await page.evaluate(() => window.dispatchEvent(new Event('pagehide')))
   await page.waitForTimeout(300)
@@ -433,6 +496,7 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
       saved.builds.some((b) => b.kind === 'roof'),
   )
   ok('door variant persisted', !!saved && saved.builds.some((b) => b.variant === 'door'))
+  ok('window variant persisted', !!saved && saved.builds.some((b) => b.variant === 'window'))
   ok('run age persisted for the day count', !!saved && typeof saved.runElapsed === 'number')
   await page.close()
 }
@@ -446,7 +510,13 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   const c = await page.evaluate(counts)
   ok(
     `base restored (platform ${c.platform}, walls ${c.wall}, roof ${c.roof}, woodpile ${c.woodpile}, ladder ${c.ladder})`,
-    c.platform === 3 && c.wall === 4 && c.roof === 1 && c.woodpile === 1 && c.ladder === 1,
+    c.platform === 3 && c.wall === 4 && c.roof === 2 && c.woodpile === 1 && c.ladder === 1,
+  )
+  ok(
+    'window restored',
+    await page.evaluate(() =>
+      window.ww.improvise.snapshot().some((b) => b.kind === 'wall' && b.variant === 'window'),
+    ),
   )
   const plats = await page.evaluate(snap, 'platform')
   const ground = plats.reduce((a, b) => ((a.y ?? 0) <= (b.y ?? 0) ? a : b))

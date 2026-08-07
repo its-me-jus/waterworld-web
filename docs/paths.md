@@ -199,10 +199,11 @@ always meet flush; every piece **Strike**s down for a full refund.
    upper deck to grow that floor sideways — each upper tile needs a roofed
    bay under it. **Hang Ladder** on the lower bay, then **Climb Ladder**
    (or look up/down and Climb Platform) to move between stories.
-4. Stand on the tile, face an edge → **Raise Wall** / **Hang Door**. Pitch a
-   **Roof** (1 plank + 1 frond) per tile. A closed-in, roofed tile is a bedroom.
-5. Join more decks the same way. Each bay needs its own lid — bigger houses
-   are more tiles, more walls, more roofs (and more planks).
+4. Stand on the tile, face an edge → **Raise Wall** / **Hang Door** /
+   **Hang Window**. Pitch a **Roof** (1 plank + 1 frond) per tile. A closed-in,
+   roofed tile is a bedroom. Adjacent roofs meet on a shared ridge.
+5. Join more decks the same way. Bigger houses are more tiles, more walls,
+   more roofs (and more planks) — lids on neighbouring bays read as one cover.
 6. Stock materials: **Stack Woodpile** (1 plank to plant) then **Stow on pile**
    / **Fetch from pile**, or **Lash Crate** for mixed salvage.
 
@@ -214,16 +215,18 @@ lists every recipe that's ready right now.
 | **Lay platform** | 2 plank | Land, wash, shallows (to ~2 m), or on a roofed bay (look up) | Stilt deck tile. Walkable; skirts to a ramp on land; **Climb** aboard from the water or between stories. Second floor needs a roofed bay under it |
 | **Raise wall** | 1 plank | Tile edge (or free-standing) | Solid panel — blocks wind and body. Free walls are windbreaks (0.5 shelter) |
 | **Hang door** | 1 plank | Tile edge | Wall with a walk-through gap; blocks its cheeks, passes the middle, counts toward the room |
-| **Pitch roof** | 1 plank + 1 frond | Over a tile | Shed lid. Roofed + walled (shelter ≥ 0.7) makes a bedroom: **Sleep** skips to dawn like the lean-to. Also unlocks raising a second floor |
+| **Hang window** | 1 plank | Tile edge | Framed opening — sill, cheeks, mullion. Light in; still blocks the body; finishes a box into a hut |
+| **Pitch roof** | 1 plank + 1 frond | Over a tile | Shed lid alone; shared ridge when a neighbour is roofed. Roofed + walled (shelter ≥ 0.7) makes a bedroom: **Sleep** skips to dawn like the lean-to. Also unlocks raising a second floor |
 | **Hang ladder** | 1 plank + 1 rope | Roofed bay (edge) | Rails up a story. **Climb Ladder** once the upper floor is laid |
 | **Stack woodpile** | 1 plank | Dry ground or a deck | Shore stockpile (up to 24). **Stow on pile** / **Fetch from pile** (handfuls of 4) |
 | **Strike** | hands | Any piece | Dismantle for a full refund |
 
-A tile's shelter sums what's hung on it: 0.18 base, +0.11 per wall, +0.08 per
-door, +0.26 for the roof — a closed room with a lid reads 0.88, better than
-any lean-to. Fires burn on deck tiles; the day counter turns at world
-midnight, so sleeping the night away in your own room is how a day gets
-banked.
+A tile's shelter sums what's hung on it: 0.18 base, +0.11 per wall, +0.09 per
+window, +0.08 per door, +0.26 for the roof — a closed room with a lid reads
+~0.88, better than any lean-to. First night asleep in a room you built whispers
+home; upstairs sleep reads a floor above the shore. Fires burn on deck tiles;
+the day counter turns at world midnight, so sleeping the night away in your own
+room is how a day gets banked.
 
 Fall off and **Climb** the raft from the water (action button when near). Kindle a fire on the deck if you want heat under sail. Deck fires ride with the raft. An empty raft keeps her heading — she won't spin to chase leftover pole speed. On a phone, **tap POLE** (toggle — it reads POLE ON) and push **MOVE** to drive; tap again to walk and work fittings. Face a fitting on deck for **Rig Sail / Lash Rail / Lash Deck…**, or open **Pack → Camp → Raft** for the full list. On desktop, **look down** (or hold Dive) and walk. A quiet status line confirms when you're poling, at the helm, beached, or anchored. On sand she sits still — **Shove** (action button or Pack → Camp → Raft) clear of the shelf, then pole again. **Haul** her up the beach when you mean to camp. A gale can tear the sail — **Mend** it. **Lash Deck** up to five times for a ferry-sized platform.
 
@@ -268,7 +271,8 @@ the set would carry her off. Stow gear you cannot swim with. A camp on the
 island is another — seat, drying
 rack, signal smoke, dug hollows, tin drips, rain pools, shore crabs on the wash,
 palms you can fell, grass you can twist, and one inland cairn with rope — and a
-folded chart under the stones — left for whoever walks inland. Working the spire with a lean-to and a fire is a third. And
+folded chart under the stones — left for whoever walks inland; farther on, a dry
+ledge with a rock seep and a windbreak niche. Working the spire with a lean-to and a fire is a third. And
 past all three there is the architect's path: platform tiles over the shallows,
 walls and a door of your own placing, a roof you pitched, and a bed that is
 simply the floor of the room you made. The sandbox is the point.
@@ -287,8 +291,10 @@ Wound** (1 canvas) closes it now — the soft-fail answer ashore.
 
 - **Memory spine** — pouch → log → cairn chart shipped; still room for a name / reason beat.
 - **More soft fails** — beyond sail-tear / locker flood / bindable wound, only if runs feel cruel.
-- **Inland second act** — a dry micro-site (ledge, drip, windbreak) past the cairn.
-- **Shelter discoverability** — lean-to vs carpentry still compete; copy/priority polish.
+
+~~Inland second act~~ — shipped: dry ledge past the cairn (rock seep, windbreak niche).
+~~Shelter discoverability~~ — shipped: platform nudge at 2 planks, Lay priority over Raise Frame, Pack empty copy.
+~~Windows / joined roofs / home whisper~~ — shipped with the base-loop polish pass.
 
 ~~Night economy / wreck lantern~~ — shipped: sealed diving lantern in the gear
 locker beside the suit; local beam underwater at night, no warmth/breath buff.
