@@ -197,7 +197,8 @@ always meet flush; every piece **Strike**s down for a full refund.
    hides the prompt on purpose. Roof the bay, **look up**, and Lay again to
    raise a second floor on the same footprint (one story up). Face out on the
    upper deck to grow that floor sideways — each upper tile needs a roofed
-   bay under it. **Climb** Platform looking up or down to move between stories.
+   bay under it. **Hang Ladder** on the lower bay, then **Climb Ladder**
+   (or look up/down and Climb Platform) to move between stories.
 4. Stand on the tile, face an edge → **Raise Wall** / **Hang Door**. Pitch a
    **Roof** (1 plank + 1 frond) per tile. A closed-in, roofed tile is a bedroom.
 5. Join more decks the same way. Each bay needs its own lid — bigger houses
@@ -214,6 +215,7 @@ lists every recipe that's ready right now.
 | **Raise wall** | 1 plank | Tile edge (or free-standing) | Solid panel — blocks wind and body. Free walls are windbreaks (0.5 shelter) |
 | **Hang door** | 1 plank | Tile edge | Wall with a walk-through gap; blocks its cheeks, passes the middle, counts toward the room |
 | **Pitch roof** | 1 plank + 1 frond | Over a tile | Shed lid. Roofed + walled (shelter ≥ 0.7) makes a bedroom: **Sleep** skips to dawn like the lean-to. Also unlocks raising a second floor |
+| **Hang ladder** | 1 plank + 1 rope | Roofed bay (edge) | Rails up a story. **Climb Ladder** once the upper floor is laid |
 | **Stack woodpile** | 1 plank | Dry ground or a deck | Shore stockpile (up to 24). **Stow on pile** / **Fetch from pile** (handfuls of 4) |
 | **Strike** | hands | Any piece | Dismantle for a full refund |
 

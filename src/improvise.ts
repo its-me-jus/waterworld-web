@@ -103,6 +103,7 @@ type BuildKind =
   | 'platform'
   | 'wall'
   | 'roof'
+  | 'ladder'
 
 type SmokeRack = {
   readyAt: number
@@ -218,6 +219,8 @@ const PLATFORM_COST: Cost = { plank: 2 }
 const WALL_COST: Cost = { plank: 1 }
 const DOOR_COST: Cost = { plank: 1 }
 const ROOF_COST: Cost = { plank: 1, leaf: 1 }
+/** Ladder up a story — one plank for rails, rope for the rungs. */
+const LADDER_COST: Cost = { plank: 1, rope: 1 }
 /** First sticks of a shore woodpile — the rest Stow in. */
 const WOODPILE_COST: Cost = { plank: 1 }
 /** Cap on planks sitting in one pile (mansion stockpile, not a cheat crate). */
@@ -1604,6 +1607,34 @@ function wallMesh(m: ReturnType<typeof mats>, door: boolean) {
   return g
 }
 
+/**
+ * Story ladder — two rails and rope-lashed rungs spanning one STORY_RISE.
+ * Sits on the lower deck and reaches the floor above.
+ */
+function ladderMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  g.name = 'ladder'
+  const H = STORY_RISE
+  for (const x of [-0.28, 0.28]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.07, H, 0.07), m.brand)
+    rail.position.set(x, H / 2, 0)
+    g.add(rail)
+  }
+  const rungs = 6
+  for (let i = 0; i < rungs; i++) {
+    const y = 0.22 + (i / (rungs - 1)) * (H - 0.4)
+    const rung = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.05, 0.06), m.wood)
+    rung.position.set(0, y, 0.02)
+    g.add(rung)
+    if (i % 2 === 0) {
+      const lash = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.015, 4, 6), m.rope)
+      lash.position.set(-0.28, y, 0)
+      g.add(lash)
+    }
+  }
+  return g
+}
+
 /** Shed roof — plank courses under a thatch of fronds, tilted to shed rain. */
 function roofMesh(m: ReturnType<typeof mats>) {
   const g = new THREE.Group()
@@ -1819,6 +1850,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const platPos = new THREE.Vector3()
   const wallPos = new THREE.Vector3()
   const roofPos = new THREE.Vector3()
+  const ladderPos = new THREE.Vector3()
   const strikePos = new THREE.Vector3()
   const climbPlatPos = new THREE.Vector3()
   const woodpilePos = new THREE.Vector3()
@@ -2151,12 +2183,33 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     return tilePieces(tile, 'roof')[0] ?? null
   }
 
+  /** Ladder hung on this bay (same story). */
+  function tileLadder(tile: Build) {
+    for (const b of builds) {
+      if (b.kind !== 'ladder') continue
+      if (Math.hypot(b.x - tile.x, b.z - tile.z) >= TILE * 0.68) continue
+      if (Math.abs(b.deckY - tile.deckY) > 0.45) continue
+      return b
+    }
+    return null
+  }
+
   /** The tile the player can hang a piece on: under them, or the one they face. */
   function wallTargetTile() {
     const eyeY = live?.y
     return (
       platformAt(px, pz, 0.06, eyeY) ?? platformAt(wallPos.x, wallPos.z, 0.35, eyeY)
     )
+  }
+
+  function canHangLadder() {
+    if (!deps.vitals.alive || !deps.salvage.has(LADDER_COST)) return false
+    if (!onLand && !onPlatformDeck) return false
+    const tile = wallTargetTile()
+    if (!tile) return false
+    // One ladder per bay — and only once a roof (or upper floor) makes the climb matter
+    if (tileLadder(tile)) return false
+    return !!tileRoof(tile) || !!platformAbove(tile)
   }
 
   /** A tile's shelter is the sum of what's hung on it — walls, door, roof. */
@@ -2180,7 +2233,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
    */
   function clearForFire(x: number, z: number) {
     for (const b of builds) {
-      if (b.kind === 'platform' || b.kind === 'roof') continue
+      if (b.kind === 'platform' || b.kind === 'roof' || b.kind === 'ladder') continue
       // A hearth by the wall is the point of a closed-in tile — just keep the
       // flame out of the wall plane itself
       const min = b.kind === 'wall' ? 0.2 : 1.4
@@ -2227,6 +2280,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       b.kind !== 'platform' &&
       b.kind !== 'wall' &&
       b.kind !== 'roof' &&
+      b.kind !== 'ladder' &&
       b.kind !== 'woodpile'
     )
   }
@@ -2394,6 +2448,33 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const tile = wallTargetTile()
       if (tile) {
         showGhostRoof(tile.x, tile.z, tile.deckY + ROOF_RISE)
+        return
+      }
+    }
+    if (canHangLadder()) {
+      const tile = wallTargetTile()
+      if (tile) {
+        const side = tileSide(tile)
+        const inset = 0.38
+        clearGhost()
+        const H = STORY_RISE
+        for (const lx of [-0.28, 0.28]) {
+          const rail = new THREE.Mesh(new THREE.BoxGeometry(0.07, H, 0.07), ghostMat)
+          rail.position.set(lx, H / 2, 0)
+          ghostRoot.add(rail)
+        }
+        for (let i = 0; i < 5; i++) {
+          const rung = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.05, 0.05), ghostMat)
+          rung.position.set(0, 0.3 + i * (H / 5), 0.02)
+          ghostRoot.add(rung)
+        }
+        ghostRoot.position.set(
+          tile.x + side.dx * (TILE / 2 - inset),
+          tile.deckY,
+          tile.z + side.dz * (TILE / 2 - inset),
+        )
+        ghostRoot.rotation.y = side.dx !== 0 ? Math.PI / 2 : 0
+        ghostRoot.visible = true
         return
       }
     }
@@ -4416,11 +4497,38 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         roofedBay
           ? 'Another bay under cover. Keep joining decks — each lid its own planks and fronds.'
           : storyIndex(tile) > 0
-            ? 'A lid on the upper bay. Look up from below to raise another floor — or Sleep if it’s closed in.'
-            : 'A lid on it. Rain sheds. Shade stays. Look up to raise a second floor — or Sleep if it’s closed in.',
+            ? 'A lid on the upper bay. Hang a Ladder below — or Sleep if it’s closed in.'
+            : 'A lid on it. Rain sheds. Look up for a second floor, or Hang a Ladder once you raise one.',
       )
       tap('wood', 0.75)
       tap('lash', 0.4)
+    },
+  })
+
+  addCamp('build', {
+    position: ladderPos,
+    verb: 'Hang',
+    label: 'Ladder',
+    cost: LADDER_COST,
+    radius: REACH,
+    available: canHangLadder,
+    use: () => {
+      const tile = wallTargetTile()
+      if (!tile || !deps.salvage.spend(LADDER_COST)) return
+      const side = tileSide(tile)
+      const inset = 0.38
+      const x = tile.x + side.dx * (TILE / 2 - inset)
+      const z = tile.z + side.dz * (TILE / 2 - inset)
+      addBuild('ladder', ladderMesh(m), x, z, tile.deckY, 1.4, 0, {
+        yaw: side.dx !== 0 ? Math.PI / 2 : 0,
+      })
+      deps.hud.whisper(
+        platformAbove(tile)
+          ? 'Rails and rungs. Climb when you’re ready for the floor above.'
+          : 'A ladder up the posts. Lay the second floor, then Climb.',
+      )
+      tap('wood', 0.7)
+      tap('lash', 0.5)
     },
   })
 
@@ -4463,16 +4571,32 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   deps.interactions.add({
     position: strikePos,
     verb: 'Strike',
-    label: 'Platform',
+    label: 'Ladder',
     radius: 2.7,
     available: () => {
       if (striking('wall', 2.5) || striking('roof', 3.0)) return false
+      return !!striking('ladder', 2.5)
+    },
+    use: () => {
+      const b = striking('ladder', 2.5)
+      if (!b) return
+      strikeDown(b, LADDER_COST, 'The ladder comes down. Plank and rope back.')
+    },
+  })
+
+  deps.interactions.add({
+    position: strikePos,
+    verb: 'Strike',
+    label: 'Platform',
+    radius: 2.7,
+    available: () => {
+      if (striking('wall', 2.5) || striking('roof', 3.0) || striking('ladder', 2.5)) return false
       const b = striking('platform', 2.5)
       if (!b) return false
       // Not from under your own feet, and not with pieces still on it
       if (platformAt(px, pz, 0.06, live?.y) === b) return false
       if (platformAbove(b)) return false
-      return tilePieces(b, 'wall').length === 0 && !tileRoof(b)
+      return tilePieces(b, 'wall').length === 0 && !tileRoof(b) && !tileLadder(b)
     },
     use: () => {
       const b = striking('platform', 2.5)
@@ -4482,8 +4606,44 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   // Swim up to a stilt deck and haul aboard — the same grab as the raft.
-  // On a built house: look up from the lower bay (or down from the upper) to
-  // climb between stories.
+  // Between stories: Hang a Ladder and Climb it, or look up/down on a stack.
+  deps.interactions.add({
+    position: climbPlatPos,
+    verb: 'Climb',
+    label: 'Ladder',
+    radius: 3.2,
+    priority: 3.1,
+    available: () => {
+      if (!deps.vitals.alive || !live || swimming) return false
+      const ladder = nearestOfKind(px, pz, 'ladder', 2.1, live.y)
+      if (!ladder) return false
+      const lower = platformAtDeck(ladder.x, ladder.z, ladder.deckY, 0.9)
+      const upper = platformAtDeck(ladder.x, ladder.z, ladder.deckY + STORY_RISE, 0.9)
+      if (!lower || !upper) return false
+      const here = platformAt(px, pz, 0.06, live.y)
+      return here === lower || here === upper
+    },
+    use: () => {
+      if (!live) return
+      const ladder = nearestOfKind(px, pz, 'ladder', 2.1, live.y)
+      if (!ladder) return
+      const lower = platformAtDeck(ladder.x, ladder.z, ladder.deckY, 0.9)
+      const upper = platformAtDeck(ladder.x, ladder.z, ladder.deckY + STORY_RISE, 0.9)
+      if (!lower || !upper) return
+      const here = platformAt(px, pz, 0.06, live.y)
+      const dest = here === upper ? lower : upper
+      live.mode = 'walk'
+      live.x = dest.x
+      live.z = dest.z
+      live.y = dest.deckY + WALK_EYE
+      live.vy = 0
+      live.submersion = 0
+      boardGrace = 0.45
+      deps.hud.whisper(dest === upper ? 'Up the ladder.' : 'Down the ladder.')
+      tap('wood', 0.55)
+    },
+  })
+
   deps.interactions.add({
     position: climbPlatPos,
     verb: 'Climb',
@@ -4493,6 +4653,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     priority: 2.8,
     available: () => {
       if (!deps.vitals.alive || !live) return false
+      // Ladder climb owns the prompt when you're on the rails
+      if (nearestOfKind(px, pz, 'ladder', 2.1, live.y) && !swimming) {
+        const ladder = nearestOfKind(px, pz, 'ladder', 2.1, live.y)
+        if (ladder) {
+          const lower = platformAtDeck(ladder.x, ladder.z, ladder.deckY, 0.9)
+          const upper = platformAtDeck(ladder.x, ladder.z, ladder.deckY + STORY_RISE, 0.9)
+          if (lower && upper) return false
+        }
+      }
       const here = platformAt(px, pz, 0.06, live.y)
       if (here && !swimming) {
         if (lookPitch >= STACK_LOOK_UP && platformAbove(here)) return true
@@ -4550,7 +4719,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       )
     }
     // Carpentry ready suppresses the raw-fish prompt the same as any build
-    if (canLayPlatform() || canRaiseWall() || canHangDoor() || canPitchRoof()) return true
+    if (canLayPlatform() || canRaiseWall() || canHangDoor() || canPitchRoof() || canHangLadder()) return true
     if (onRaftDeck) {
       const raft = nearestOfKind(px, pz, 'raft', 3.2)
       if (raft && !raft.mast && deps.salvage.has(MAST_COST)) return true
@@ -5174,30 +5343,48 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         setAnchor(wallPos, mid.x, mid.z, tile.deckY + 1.0)
         setAnchor(roofPos, tile.x, tile.z, tile.deckY + ROOF_RISE + 0.35)
         setAnchor(sleepPlatPos, tile.x, tile.z, tile.deckY + 0.6)
+        {
+          const side = tileSide(tile)
+          const inset = 0.38
+          setAnchor(
+            ladderPos,
+            tile.x + side.dx * (TILE / 2 - inset),
+            tile.z + side.dz * (TILE / 2 - inset),
+            tile.deckY + STORY_RISE * 0.45,
+          )
+        }
       } else {
         setAnchor(roofPos, wallAt.x, wallAt.z, deps.groundAt(wallAt.x, wallAt.z) + 2.3)
         sleepPlatPos.copy(eatPos)
+        ladderPos.copy(eatPos)
       }
     }
     {
       const struck =
         nearestOfKind(player.x, player.z, 'wall', 2.5, player.y) ??
+        nearestOfKind(player.x, player.z, 'ladder', 2.5, player.y) ??
         nearestOfKind(player.x, player.z, 'roof', 3.0, player.y) ??
         nearestOfKind(player.x, player.z, 'platform', 2.5, player.y)
       if (struck) setAnchor(strikePos, struck.x, struck.z, struck.deckY + 0.9)
       else strikePos.copy(eatPos)
       // Story Climb: aim the destination deck so looking up/down faces the
       // prompt — a ground-level anchor reads as "behind" when the camera tilts.
+      // Near a hung ladder, aim the rails so Climb Ladder stays in facing range.
       {
-        const here = platformAt(player.x, player.z, 0.06, player.y)
-        const up = here && lookPitch >= STACK_LOOK_UP ? platformAbove(here) : null
-        const down = here && lookPitch <= -0.35 ? platformBelow(here) : null
-        const dest = up ?? down
-        if (dest) setAnchor(climbPlatPos, dest.x, dest.z, dest.deckY + 0.35)
-        else {
-          const plat = nearestOfKind(player.x, player.z, 'platform', 3.0, player.y)
-          if (plat) setAnchor(climbPlatPos, plat.x, plat.z, plat.deckY + 0.4)
-          else climbPlatPos.copy(eatPos)
+        const ladder = nearestOfKind(player.x, player.z, 'ladder', 2.2, player.y)
+        if (ladder) {
+          setAnchor(climbPlatPos, ladder.x, ladder.z, ladder.deckY + STORY_RISE * 0.55)
+        } else {
+          const here = platformAt(player.x, player.z, 0.06, player.y)
+          const up = here && lookPitch >= STACK_LOOK_UP ? platformAbove(here) : null
+          const down = here && lookPitch <= -0.35 ? platformBelow(here) : null
+          const dest = up ?? down
+          if (dest) setAnchor(climbPlatPos, dest.x, dest.z, dest.deckY + 0.35)
+          else {
+            const plat = nearestOfKind(player.x, player.z, 'platform', 3.0, player.y)
+            if (plat) setAnchor(climbPlatPos, plat.x, plat.z, plat.deckY + 0.4)
+            else climbPlatPos.copy(eatPos)
+          }
         }
       }
       const pile = nearestOfKind(player.x, player.z, 'woodpile', 3.0)
@@ -6096,7 +6283,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       z: b.z,
       yaw: b.yaw ?? b.object.rotation.y,
       y:
-        b.kind === 'platform' || b.kind === 'wall' || b.kind === 'roof' || b.kind === 'woodpile'
+        b.kind === 'platform' ||
+        b.kind === 'wall' ||
+        b.kind === 'roof' ||
+        b.kind === 'ladder' ||
+        b.kind === 'woodpile'
           ? b.deckY
           : undefined,
       variant: b.variant,
@@ -6279,6 +6470,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       } else if (kind === 'roof') {
         const y = s.y ?? deps.groundAt(x, z) + ROOF_RISE
         build = addBuild('roof', roofMesh(m), x, z, y, 1.8, 0, { yaw: 0 })
+      } else if (kind === 'ladder') {
+        const y = s.y ?? deps.groundAt(x, z) + PLATFORM_RISE_LAND
+        build = addBuild('ladder', ladderMesh(m), x, z, y, 1.4, 0, {
+          yaw: s.yaw ?? 0,
+        })
       } else if (kind === 'raft') {
         const withBarrel = !!s.buoyant
         const sea = sampleOcean(x, z, 0).y
@@ -6428,6 +6624,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         platform: 0,
         wall: 0,
         roof: 0,
+        ladder: 0,
       }
       for (const b of builds) out[b.kind]++
       if (carried) out.fire++
@@ -6467,6 +6664,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       wall: WALL_COST,
       door: DOOR_COST,
       roof: ROOF_COST,
+      ladder: LADDER_COST,
       woodpile: WOODPILE_COST,
       label: costLabel,
     },

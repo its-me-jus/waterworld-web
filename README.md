@@ -106,7 +106,8 @@ grid so you can architect your own base instead of inheriting one:
   over the shallows. Stand on a deck and face the next empty square to join
   another — a faint ghost shows where it lands. Tiles chain flush into docks,
   piers and stilt houses. Roof a bay, look up, and Lay again to raise a second
-  floor on the same footprint — **Climb** between stories looking up or down.
+  floor on the same footprint — **Hang Ladder** then **Climb Ladder** between
+  stories (looking up/down still works without one).
 - **Raise wall** — hangs on the edge of the tile you're on (or facing), or
   stands free as a windbreak. Solid: it stops the wind and it stops you.
 - **Hang door** — the wall you walk through. It blocks its cheeks and lets
@@ -115,7 +116,8 @@ grid so you can architect your own base instead of inheriting one:
   a bedroom: **Sleep** there and the night skips to dawn like any lean-to —
   which is how the day counter turns. Bigger houses are more bays — each
   platform still takes its own lid — and a second story starts the same way
-  upstairs.
+  upstairs. **Hang Ladder** (plank + rope) on a roofed bay once the upper
+  floor is laid (or before), then **Climb Ladder** between stories.
 - **Stack woodpile** — shore stockpile for planks (Stow / Fetch) so a long
   build doesn't depend on swimming every stick.
 - **Strike** — every piece dismantles for a full refund. Rethink freely.

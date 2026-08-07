@@ -269,6 +269,33 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   })
   ok('standing on the upper deck', onUpper)
 
+  // Ladder: hang on the ground bay, climb without looking up
+  await teleport(page, plat.x, plat.z, plat.y + 1.75, 'walk')
+  await page.evaluate(() => {
+    window.ww.player.pitch = 0
+    window.ww.salvage.stash.plank += 4
+    window.ww.salvage.stash.rope += 2
+  })
+  await page.waitForTimeout(400)
+  ok('Hang Ladder available', await waitRecipe(page, 'Ladder', null, 8000))
+  ok('ladder hung', (await page.evaluate(counts)).ladder === 1)
+  await teleport(page, plat.x, plat.z, plat.y + 1.75, 'walk')
+  await page.evaluate(() => {
+    window.ww.player.pitch = 0.15
+    window.ww.player.yaw = 0
+  })
+  const climbedLadder = await faceAndPressF(page, { yaw: 0, pitch: 0.15 }, /climb ladder/i, 12000)
+  ok('climbed via ladder', climbedLadder)
+  const onUpperViaLadder = await page.evaluate(() => {
+    const plats = window.ww.improvise
+      .snapshot()
+      .filter((b) => b.kind === 'platform')
+      .sort((a, b) => (b.y ?? 0) - (a.y ?? 0))
+    const top = plats[0]
+    return Math.abs(window.ww.player.y - ((top.y ?? 0) + 1.62)) < 0.35
+  })
+  ok('ladder left you on the upper deck', onUpperViaLadder)
+
   // Ground floor still walkable under the stack (height-aware standAt)
   const floors = await page.evaluate(() => {
     const plats = window.ww.improvise.snapshot().filter((b) => b.kind === 'platform')
@@ -407,8 +434,8 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   await page.waitForTimeout(3500)
   const c = await page.evaluate(counts)
   ok(
-    `base restored (platform ${c.platform}, walls ${c.wall}, roof ${c.roof}, woodpile ${c.woodpile})`,
-    c.platform === 3 && c.wall === 4 && c.roof === 1 && c.woodpile === 1,
+    `base restored (platform ${c.platform}, walls ${c.wall}, roof ${c.roof}, woodpile ${c.woodpile}, ladder ${c.ladder})`,
+    c.platform === 3 && c.wall === 4 && c.roof === 1 && c.woodpile === 1 && c.ladder === 1,
   )
   const plats = await page.evaluate(snap, 'platform')
   const ground = plats.reduce((a, b) => ((a.y ?? 0) <= (b.y ?? 0) ? a : b))
