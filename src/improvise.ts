@@ -2311,11 +2311,22 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     tile.shelter = s
   }
 
-  /** Neighbour roofs at the same deck — drives joined ridge geometry. */
+  /** Neighbour roofs at the same deck — drives joined ridge geometry.
+   *  Slope-joined bays (decks within ~1.2 m) still read as one cover. */
   function roofJoinsAt(tile: Build): RoofJoins {
     const neighbourRoofed = (x: number, z: number) => {
-      const n = platformAtDeck(x, z, tile.deckY)
-      return !!n && !!tileRoof(n)
+      let best: Build | null = null
+      let bestDy = 1.25
+      for (const b of builds) {
+        if (b.kind !== 'platform') continue
+        if (Math.max(Math.abs(b.x - x), Math.abs(b.z - z)) >= TILE / 2 + 0.06) continue
+        const dy = Math.abs(b.deckY - tile.deckY)
+        if (dy < bestDy) {
+          bestDy = dy
+          best = b
+        }
+      }
+      return !!best && !!tileRoof(best)
     }
     return {
       px: neighbourRoofed(tile.x + TILE, tile.z),
