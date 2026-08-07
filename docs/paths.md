@@ -194,7 +194,10 @@ always meet flush; every piece **Strike**s down for a full refund.
    the empty square you want — a faint ghost shows the next deck.
 3. **Lay Platform** (F, or Pack → Camp). Standing on a deck, facing out always
    aims the empty neighbour so rooms grow. Looking back at your own floor
-   hides the prompt on purpose.
+   hides the prompt on purpose. Roof the bay, **look up**, and Lay again to
+   raise a second floor on the same footprint (one story up). Face out on the
+   upper deck to grow that floor sideways — each upper tile needs a roofed
+   bay under it. **Climb** Platform looking up or down to move between stories.
 4. Stand on the tile, face an edge → **Raise Wall** / **Hang Door**. Pitch a
    **Roof** (1 plank + 1 frond) per tile. A closed-in, roofed tile is a bedroom.
 5. Join more decks the same way. Each bay needs its own lid — bigger houses
@@ -207,10 +210,10 @@ lists every recipe that's ready right now.
 
 | Recipe | Cost | Where | What it does |
 |--------|------|-------|--------------|
-| **Lay platform** | 2 plank | Land, wash, or shallows (to ~2 m) | Stilt deck tile. Walkable; skirts to a ramp on land; **Climb** aboard from the water |
+| **Lay platform** | 2 plank | Land, wash, shallows (to ~2 m), or on a roofed bay (look up) | Stilt deck tile. Walkable; skirts to a ramp on land; **Climb** aboard from the water or between stories. Second floor needs a roofed bay under it |
 | **Raise wall** | 1 plank | Tile edge (or free-standing) | Solid panel — blocks wind and body. Free walls are windbreaks (0.5 shelter) |
 | **Hang door** | 1 plank | Tile edge | Wall with a walk-through gap; blocks its cheeks, passes the middle, counts toward the room |
-| **Pitch roof** | 1 plank + 1 frond | Over a tile | Shed lid. Roofed + walled (shelter ≥ 0.7) makes a bedroom: **Sleep** skips to dawn like the lean-to |
+| **Pitch roof** | 1 plank + 1 frond | Over a tile | Shed lid. Roofed + walled (shelter ≥ 0.7) makes a bedroom: **Sleep** skips to dawn like the lean-to. Also unlocks raising a second floor |
 | **Stack woodpile** | 1 plank | Dry ground or a deck | Shore stockpile (up to 24). **Stow on pile** / **Fetch from pile** (handfuls of 4) |
 | **Strike** | hands | Any piece | Dismantle for a full refund |
 

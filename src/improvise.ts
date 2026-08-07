@@ -326,6 +326,21 @@ const PLATFORM_MAX_DEPTH = 2.1
 const WALL_HEIGHT = 1.95
 /** Roof floats at wall-top above the deck. */
 const ROOF_RISE = 2.02
+/**
+ * Second-story deck sits just above the lower roof — same cadence as a
+ * wall+roof bay, with a finger of clearance so thatch and planks don't fight.
+ */
+const STORY_RISE = ROOF_RISE + 0.1
+/** Ground floor is story 0; one upper floor is enough for a stilt house. */
+const MAX_STORY = 1
+/** Look up this far on a roofed bay to raise the next floor instead of expanding. */
+const STACK_LOOK_UP = 0.42
+/**
+ * Walk heightmap: ignore decks more than this above the feet (can't step a
+ * full story), but keep enough downward catch that spring jitter won't drop
+ * you through the floor you're on.
+ */
+const DECK_STEP_UP = 0.85
 /** A free-standing wall is a windbreak; tile walls feed the platform instead. */
 const WALL_SHELTER = 0.5
 /** Sleep needs a roofed tile closed in about this much. */
@@ -1501,8 +1516,12 @@ function dripMesh(m: ReturnType<typeof mats>) {
 
 // —— carpentry pieces —————————————————————————————————————————
 
-/** Stilt deck tile — a floor that isn't sand, on the beach or over the shallows. */
-function platformMesh(m: ReturnType<typeof mats>) {
+/**
+ * Stilt deck tile — a floor that isn't sand. `postLen` is how far the piles
+ * drop below the deck: bury them in the beach, reach the seabed in the
+ * shallows, or keep them short when the deck rests on the roof below.
+ */
+function platformMesh(m: ReturnType<typeof mats>, postLen = 1.9) {
   const g = new THREE.Group()
   g.name = 'platform'
   for (let i = 0; i < 7; i++) {
@@ -1516,15 +1535,16 @@ function platformMesh(m: ReturnType<typeof mats>) {
     beam.position.set(0, -0.06, z)
     g.add(beam)
   }
-  // Stilt piles — long enough to read over water, buried short on sand
+  const len = Math.max(0.45, Math.min(postLen, 3.4))
   for (const [x, z] of [
     [-1.0, -1.0],
     [1.0, -1.0],
     [-1.0, 1.0],
     [1.0, 1.0],
   ] as const) {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.13, 2.4, 0.13), m.brand)
-    post.position.set(x, -0.95, z)
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.13, len, 0.13), m.brand)
+    // Sit the top of the pile just under the deck beams — no floating stubs
+    post.position.set(x, -len / 2 + 0.04, z)
     g.add(post)
     const lash = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.024, 4, 8), m.rope)
     lash.rotation.x = Math.PI / 2
@@ -1532,6 +1552,12 @@ function platformMesh(m: ReturnType<typeof mats>) {
     g.add(lash)
   }
   return g
+}
+
+/** How long the stilts need to be to meet the ground (or the roof under a story). */
+function platformPostLen(deckY: number, groundY: number, upper: boolean) {
+  if (upper) return 0.58
+  return Math.max(0.55, Math.min(3.2, deckY - groundY + 0.35))
 }
 
 /**
@@ -1898,14 +1924,24 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     })
   }
 
-  function nearestOfKind(x: number, z: number, kind: BuildKind, maxDist: number): Build | null {
+  function nearestOfKind(
+    x: number,
+    z: number,
+    kind: BuildKind,
+    maxDist: number,
+    nearY?: number,
+  ): Build | null {
     let best: Build | null = null
-    let bestD = maxDist
+    let bestScore = Infinity
     for (const b of builds) {
       if (b.kind !== kind) continue
       const d = Math.hypot(b.x - x, b.z - z)
-      if (d < bestD) {
-        bestD = d
+      if (d >= maxDist) continue
+      // Prefer the story you're on when several pieces share a footprint
+      const score =
+        nearY === undefined ? d : d + Math.abs(b.deckY - (nearY - WALK_EYE)) * 0.4
+      if (score < bestScore) {
+        bestScore = score
         best = b
       }
     }
@@ -1926,49 +1962,148 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   /** Live snap target for Lay Platform — recomputed every frame. */
   let platSnapX = 0
   let platSnapZ = 0
+  /** Absolute deck height the ghost / Lay will plant at. */
+  let platSnapY = 0
   /** True when the snap is an empty neighbour of a deck you're on / facing. */
   let platExpanding = false
+  /** True when looking up on a roofed bay to raise the next floor. */
+  let platStacking = false
 
-  /** The platform tile containing (x, z) — Chebyshev within half a tile. */
-  function platformAt(x: number, z: number, slack = 0.06): Build | null {
+  /** Feet height from an eye sample — matches WALK_EYE seating. */
+  const feetOf = (eyeY: number) => eyeY - WALK_EYE
+
+  /**
+   * Platform whose deck is under (x, z). With `nearY` (eye height), pick the
+   * story your feet are on; without it, the lowest deck on that cell (ground
+   * story) — used for occupancy / support checks that don't care which floor.
+   */
+  function platformAt(x: number, z: number, slack = 0.06, nearY?: number): Build | null {
+    let best: Build | null = null
+    let bestScore = Infinity
     for (const b of builds) {
       if (b.kind !== 'platform') continue
-      if (Math.max(Math.abs(b.x - x), Math.abs(b.z - z)) < TILE / 2 + slack) return b
+      if (Math.max(Math.abs(b.x - x), Math.abs(b.z - z)) >= TILE / 2 + slack) continue
+      if (nearY === undefined) {
+        if (!best || b.deckY < best.deckY) best = b
+        continue
+      }
+      const score = Math.abs(b.deckY - feetOf(nearY))
+      if (score < bestScore) {
+        bestScore = score
+        best = b
+      }
     }
-    return null
+    if (best && nearY !== undefined && bestScore > STORY_RISE * 0.55) return null
+    return best
+  }
+
+  /** Platform at a cell whose deck matches `deckY` within a story finger. */
+  function platformAtDeck(
+    x: number,
+    z: number,
+    deckY: number,
+    slack = 0.06,
+    ySlack = 0.4,
+  ): Build | null {
+    let best: Build | null = null
+    let bestDy = ySlack
+    for (const b of builds) {
+      if (b.kind !== 'platform') continue
+      if (Math.max(Math.abs(b.x - x), Math.abs(b.z - z)) >= TILE / 2 + slack) continue
+      const dy = Math.abs(b.deckY - deckY)
+      if (dy < bestDy) {
+        bestDy = dy
+        best = b
+      }
+    }
+    return best
+  }
+
+  function platformAbove(tile: Build) {
+    return platformAtDeck(tile.x, tile.z, tile.deckY + STORY_RISE)
+  }
+
+  function platformBelow(tile: Build) {
+    return platformAtDeck(tile.x, tile.z, tile.deckY - STORY_RISE)
+  }
+
+  /** 0 = ground floor, 1 = second story, … */
+  function storyIndex(tile: Build) {
+    let n = 0
+    let cur: Build | null = tile
+    while (cur) {
+      const below = platformBelow(cur)
+      if (!below) break
+      n += 1
+      cur = below
+    }
+    return n
   }
 
   /**
    * Where the next deck tile wants to land.
    *
    * Standing on a platform: always the empty neighbour you're facing — that's
-   * how rooms grow. Looking at a deck from outside: the empty cell past it if
+   * how rooms grow. Looking up on a roofed bay raises a second floor on the
+   * same footprint. Looking at a deck from outside: the empty cell past it if
    * you're aimed that way, else the ordinary look-ahead snap. Occupied cells
    * never win, which is why Lay Platform used to flicker off when you glanced
    * back at your own floor.
    */
-  function resolvePlatformSnap(lookX: number, lookZ: number): { x: number; z: number; expanding: boolean } {
-    const under = platformAt(px, pz)
+  function resolvePlatformSnap(
+    lookX: number,
+    lookZ: number,
+  ): { x: number; z: number; deckY: number; expanding: boolean; stacking: boolean } {
+    const eyeY = live?.y
+    const under = platformAt(px, pz, 0.06, eyeY)
+    // Look up: raise the next story, or stay put so Climb isn't stolen by a
+    // sideways Lay aimed at an empty neighbour.
+    if (under && lookPitch >= STACK_LOOK_UP) {
+      if (tileRoof(under) && !platformAbove(under) && storyIndex(under) < MAX_STORY) {
+        return {
+          x: under.x,
+          z: under.z,
+          deckY: under.deckY + STORY_RISE,
+          expanding: false,
+          stacking: true,
+        }
+      }
+      return {
+        x: under.x,
+        z: under.z,
+        deckY: under.deckY,
+        expanding: false,
+        stacking: false,
+      }
+    }
     if (under) {
       const side = tileSide(under)
       const nx = under.x + side.dx * TILE
       const nz = under.z + side.dz * TILE
-      if (!platformAt(nx, nz, TILE / 2)) return { x: nx, z: nz, expanding: true }
+      if (!platformAtDeck(nx, nz, under.deckY, TILE / 2)) {
+        return { x: nx, z: nz, deckY: under.deckY, expanding: true, stacking: false }
+      }
     }
-    const near = nearestOfKind(px, pz, 'platform', TILE * 1.35)
+    const near = nearestOfKind(px, pz, 'platform', TILE * 1.35, eyeY)
     if (near) {
       const side = tileSide(near)
       const nx = near.x + side.dx * TILE
       const nz = near.z + side.dz * TILE
-      if (!platformAt(nx, nz, TILE / 2)) {
+      if (!platformAtDeck(nx, nz, near.deckY, TILE / 2)) {
         const toEmpty = Math.hypot(lookX - nx, lookZ - nz)
         const toNear = Math.hypot(lookX - near.x, lookZ - near.z)
-        if (toEmpty <= toNear + 0.4) return { x: nx, z: nz, expanding: true }
+        if (toEmpty <= toNear + 0.4) {
+          return { x: nx, z: nz, deckY: near.deckY, expanding: true, stacking: false }
+        }
       }
     }
     const sx = snapTile(lookX)
     const sz = snapTile(lookZ)
-    return { x: sx, z: sz, expanding: false }
+    const ground = deps.groundAt(sx, sz)
+    const sea = sampleOcean(sx, sz, time).y
+    const overWater = ground <= sea - 0.3
+    const deckY = overWater ? sea + PLATFORM_RISE_SEA : ground + PLATFORM_RISE_LAND
+    return { x: sx, z: sz, deckY, expanding: false, stacking: false }
   }
 
   /** Carpentry pieces belonging to a tile — walls at its edges, its roof. */
@@ -1976,7 +2111,14 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     const out: Build[] = []
     for (const b of builds) {
       if (b.kind !== kind) continue
-      if (Math.hypot(b.x - tile.x, b.z - tile.z) < TILE * 0.68) out.push(b)
+      if (Math.hypot(b.x - tile.x, b.z - tile.z) >= TILE * 0.68) continue
+      // Keep each story's fittings on their own deck
+      if (kind === 'roof') {
+        if (Math.abs(b.deckY - (tile.deckY + ROOF_RISE)) > 0.45) continue
+      } else if (kind === 'wall') {
+        if (Math.abs(b.deckY - tile.deckY) > 0.45) continue
+      }
+      out.push(b)
     }
     return out
   }
@@ -1998,7 +2140,9 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     const mid = tileEdgeMid(tile, side)
     for (const b of builds) {
       if (b.kind !== 'wall') continue
-      if (Math.hypot(b.x - mid.x, b.z - mid.z) < 0.6) return b
+      if (Math.hypot(b.x - mid.x, b.z - mid.z) >= 0.6) continue
+      if (Math.abs(b.deckY - tile.deckY) > 0.45) continue
+      return b
     }
     return null
   }
@@ -2009,7 +2153,10 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
   /** The tile the player can hang a piece on: under them, or the one they face. */
   function wallTargetTile() {
-    return platformAt(px, pz) ?? platformAt(wallPos.x, wallPos.z, 0.35)
+    const eyeY = live?.y
+    return (
+      platformAt(px, pz, 0.06, eyeY) ?? platformAt(wallPos.x, wallPos.z, 0.35, eyeY)
+    )
   }
 
   /** A tile's shelter is the sum of what's hung on it — walls, door, roof. */
@@ -2058,8 +2205,18 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     scene.remove(b.object)
     disposeBuildObject(b.object)
     refund(cost)
-    const tile = platformAt(b.x, b.z, 0.9)
+    const tile = platformAtDeck(b.x, b.z, b.deckY, 0.9) ?? platformAt(b.x, b.z, 0.9)
     if (tile) recomputeTileShelter(tile)
+    // Walls/roofs struck off their tile — recompute the matching story
+    if (b.kind === 'wall' || b.kind === 'roof') {
+      const host = platformAtDeck(
+        b.x,
+        b.z,
+        b.kind === 'roof' ? b.deckY - ROOF_RISE : b.deckY,
+        0.9,
+      )
+      if (host && host !== tile) recomputeTileShelter(host)
+    }
     deps.hud.whisper(line)
     tap('wood', 0.6)
   }
@@ -2077,9 +2234,16 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   function canLayPlatform() {
     if (!deps.vitals.alive || carried) return false
     if (!deps.salvage.has(PLATFORM_COST)) return false
+    if (platformAtDeck(platSnapX, platSnapZ, platSnapY, TILE / 2)) return false
+    const upper = platStacking || platSnapY > deps.groundAt(platSnapX, platSnapZ) + 1.15
+    if (upper) {
+      const below = platformAtDeck(platSnapX, platSnapZ, platSnapY - STORY_RISE, TILE / 2)
+      if (!below || !tileRoof(below)) return false
+      if (storyIndex(below) >= MAX_STORY) return false
+      return true
+    }
     // Dry sand, the wash, or the shallows — stilts reach a couple metres down
     if (platGround < -PLATFORM_MAX_DEPTH) return false
-    if (platformAt(platSnapX, platSnapZ, TILE / 2)) return false
     // Other camps own their ground; carpentry tiles may sit beside anything wooden
     for (const b of builds) {
       if (!blocksPlatform(b)) continue
@@ -2204,11 +2368,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
   function updateCarpentryGhost() {
     if (canLayPlatform()) {
-      const ground = deps.groundAt(platSnapX, platSnapZ)
-      const sea = sampleOcean(platSnapX, platSnapZ, time).y
-      const overWater = ground <= sea - 0.3
-      const deckY = overWater ? sea + PLATFORM_RISE_SEA : ground + PLATFORM_RISE_LAND
-      showGhostPlatform(platSnapX, platSnapZ, deckY)
+      showGhostPlatform(platSnapX, platSnapZ, platSnapY)
       return
     }
     if (canRaiseWall() || canHangDoor()) {
@@ -2939,7 +3099,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const x = leanPos.x
       const z = leanPos.z
       const y = onPlatformDeck
-        ? (platformAt(px, pz)?.deckY ?? deps.groundAt(x, z) + 0.08)
+        ? (platformAt(px, pz, 0.06, live?.y)?.deckY ?? deps.groundAt(x, z) + 0.08)
         : deps.groundAt(x, z)
       const hold = emptyHold()
       hold.plank = 1
@@ -3111,7 +3271,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const deck = onRaftDeck
         ? nearestOfKind(px, pz, 'raft', 3.2)?.deckY
         : onPlatformDeck
-          ? platformAt(px, pz)?.deckY
+          ? platformAt(px, pz, 0.06, live?.y)?.deckY
           : undefined
       const y = (deck ?? deps.groundAt(x, z)) + (deck !== undefined ? 0.08 : 0)
       addBuild('fire', fireMesh(m), x, z, y, 2.4, 1.35)
@@ -3167,7 +3327,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const deck = onRaftDeck
         ? nearestOfKind(px, pz, 'raft', 3.2)?.deckY
         : onPlatformDeck
-          ? platformAt(px, pz)?.deckY
+          ? platformAt(px, pz, 0.06, live?.y)?.deckY
           : undefined
       const y = (deck ?? deps.groundAt(x, z)) + (deck !== undefined ? 0.08 : 0)
       carried.x = x
@@ -4154,17 +4314,23 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (!deps.salvage.spend(PLATFORM_COST)) return
       const sx = platSnapX
       const sz = platSnapZ
+      const deckY = platSnapY
       const ground = deps.groundAt(sx, sz)
       const sea = sampleOcean(sx, sz, time).y
-      const overWater = ground <= sea - 0.3
-      const deckY = overWater ? sea + PLATFORM_RISE_SEA : ground + PLATFORM_RISE_LAND
-      addBuild('platform', platformMesh(m), sx, sz, deckY, 1.8, 0.18, { yaw: 0 })
+      const overWater = !platStacking && ground <= sea - 0.3
+      const upper = platStacking || !!platformAtDeck(sx, sz, deckY - STORY_RISE, TILE / 2)
+      const mesh = platformMesh(m, platformPostLen(deckY, ground, upper))
+      addBuild('platform', mesh, sx, sz, deckY, 1.8, 0.18, { yaw: 0 })
       deps.hud.whisper(
-        overWater
-          ? 'Piles in the shallows. A deck over the water.'
-          : platExpanding
-            ? 'Joined. Face the next square to grow the floor.'
-            : "Stilts and planks. A floor that isn't sand.",
+        platStacking
+          ? 'A second floor. Walls and a roof still to fashion — look out to grow the bay.'
+          : upper
+            ? 'Joined upstairs. Face the next square to grow the floor.'
+            : overWater
+              ? 'Piles in the shallows. A deck over the water.'
+              : platExpanding
+                ? 'Joined. Face the next square to grow the floor.'
+                : "Stilts and planks. A floor that isn't sand.",
       )
       tap('wood', 0.8)
       tap('lash', 0.5)
@@ -4240,16 +4406,18 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       addBuild('roof', roofMesh(m), tile.x, tile.z, tile.deckY + ROOF_RISE, 1.8, 0, { yaw: 0 })
       recomputeTileShelter(tile)
       const neighbours = [
-        platformAt(tile.x + TILE, tile.z),
-        platformAt(tile.x - TILE, tile.z),
-        platformAt(tile.x, tile.z + TILE),
-        platformAt(tile.x, tile.z - TILE),
+        platformAtDeck(tile.x + TILE, tile.z, tile.deckY),
+        platformAtDeck(tile.x - TILE, tile.z, tile.deckY),
+        platformAtDeck(tile.x, tile.z + TILE, tile.deckY),
+        platformAtDeck(tile.x, tile.z - TILE, tile.deckY),
       ].filter(Boolean)
       const roofedBay = neighbours.some((n) => n && tileRoof(n))
       deps.hud.whisper(
         roofedBay
           ? 'Another bay under cover. Keep joining decks — each lid its own planks and fronds.'
-          : 'A lid on it. Rain sheds. Shade stays. Sleep if it’s closed in.',
+          : storyIndex(tile) > 0
+            ? 'A lid on the upper bay. Look up from below to raise another floor — or Sleep if it’s closed in.'
+            : 'A lid on it. Rain sheds. Shade stays. Look up to raise a second floor — or Sleep if it’s closed in.',
       )
       tap('wood', 0.75)
       tap('lash', 0.4)
@@ -4261,7 +4429,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   // never steal the prompt from Sleep / work verbs on a closed-in tile.
   const striking = (kind: BuildKind, dist: number) => {
     if (!deps.vitals.alive) return null
-    const b = nearestOfKind(px, pz, kind, dist)
+    const b = nearestOfKind(px, pz, kind, dist, live?.y)
     if (!b || facingDot(b.x, b.z) < 0.35) return null
     return b
   }
@@ -4302,7 +4470,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const b = striking('platform', 2.5)
       if (!b) return false
       // Not from under your own feet, and not with pieces still on it
-      if (platformAt(px, pz) === b) return false
+      if (platformAt(px, pz, 0.06, live?.y) === b) return false
+      if (platformAbove(b)) return false
       return tilePieces(b, 'wall').length === 0 && !tileRoof(b)
     },
     use: () => {
@@ -4313,21 +4482,49 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   })
 
   // Swim up to a stilt deck and haul aboard — the same grab as the raft.
+  // On a built house: look up from the lower bay (or down from the upper) to
+  // climb between stories.
   deps.interactions.add({
     position: climbPlatPos,
     verb: 'Climb',
     label: 'Platform',
     radius: 3.6,
+    // Beat sideways carpentry when looking up/down between stories
+    priority: 2.8,
     available: () => {
-      if (!deps.vitals.alive || !live || !swimming) return false
-      const t = nearestOfKind(px, pz, 'platform', 3.0)
+      if (!deps.vitals.alive || !live) return false
+      const here = platformAt(px, pz, 0.06, live.y)
+      if (here && !swimming) {
+        if (lookPitch >= STACK_LOOK_UP && platformAbove(here)) return true
+        if (lookPitch <= -0.35 && platformBelow(here)) return true
+      }
+      if (!swimming) return false
+      const t = nearestOfKind(px, pz, 'platform', 3.0, live.y)
       if (!t) return false
       const sea = sampleOcean(px, pz, time).y
       return t.deckY - sea < 1.15
     },
     use: () => {
       if (!live) return
-      const t = nearestOfKind(px, pz, 'platform', 3.0)
+      const here = platformAt(px, pz, 0.06, live.y)
+      if (here && !swimming) {
+        const up = lookPitch >= STACK_LOOK_UP ? platformAbove(here) : null
+        const down = lookPitch <= -0.35 ? platformBelow(here) : null
+        const dest = up ?? down
+        if (dest) {
+          live.mode = 'walk'
+          live.x = dest.x
+          live.z = dest.z
+          live.y = dest.deckY + WALK_EYE
+          live.vy = 0
+          live.submersion = 0
+          boardGrace = 0.55
+          deps.hud.whisper(up ? 'Up the posts. Another floor under your feet.' : 'Down to the bay below.')
+          tap('wood', 0.65)
+          return
+        }
+      }
+      const t = nearestOfKind(px, pz, 'platform', 3.0, live.y)
       if (!t) return
       live.mode = 'walk'
       live.x = t.x
@@ -4713,11 +4910,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     radius: 2.4,
     available: () => {
       if (!deps.vitals.alive || swimming || time < restReadyAt) return false
-      const t = platformAt(px, pz)
+      const t = platformAt(px, pz, 0.06, live?.y)
       return !!t && !!tileRoof(t) && t.shelter >= SLEEP_SHELTER
     },
     use: () => {
-      const tile = platformAt(px, pz)
+      const tile = platformAt(px, pz, 0.06, live?.y)
       if (!tile || !tileRoof(tile) || tile.shelter < SLEEP_SHELTER) return
       const v = deps.vitals
       if (v.food < 0.1 || v.water < 0.1) {
@@ -4805,7 +5002,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         !!raftNear &&
         Math.hypot(player.x - raftNear.x, player.z - raftNear.z) <= raftNear.radius * DECK_LIP
     }
-    onPlatformDeck = view.walking && platformAt(player.x, player.z) !== null
+    onPlatformDeck = view.walking && platformAt(player.x, player.z, 0.06, player.y) !== null
 
     // After Climb, kill swim inertia and keep them seated for a beat
     if (boardGrace > 0) {
@@ -4824,8 +5021,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         onRaftDeck = true
         swimming = false
       } else {
-        // Hauled out onto a stilt platform
-        const plat = platformAt(player.x, player.z, 1.6)
+        // Hauled out onto a stilt platform (or between stories)
+        const plat = platformAt(player.x, player.z, 1.6, player.y)
         if (plat) {
           player.mode = 'walk'
           player.submersion = 0
@@ -4858,7 +5055,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
 
     if (onLand && aheadY > 0.3) setAnchor(leanPos, ahead.x, ahead.z, aheadY + 0.5)
     else if (onPlatformDeck) {
-      const deck = platformAt(px, pz)?.deckY ?? player.y
+      const deck = platformAt(px, pz, 0.06, live?.y)?.deckY ?? player.y
       setAnchor(leanPos, ahead.x, ahead.z, deck + 0.35)
     } else setAnchor(leanPos, player.x, player.z, player.y)
 
@@ -4866,7 +5063,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const y = onRaftDeck
         ? (nearestOfKind(px, pz, 'raft', 3.2)?.deckY ?? player.y) + 0.35
         : onPlatformDeck
-          ? (platformAt(px, pz)?.deckY ?? player.y) + 0.35
+          ? (platformAt(px, pz, 0.06, live?.y)?.deckY ?? player.y) + 0.35
           : fireY + 0.3
       setAnchor(firePos, fireAt.x, fireAt.z, y)
       setAnchor(plantFirePos, fireAt.x, fireAt.z, y)
@@ -4922,29 +5119,37 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     // Platform snaps to the world tile grid; walls hang on tile edges when a
     // tile is in reach, else stand free where you face. Standing on a deck
     // always aims the next empty neighbour you're facing so rooms grow cleanly.
+    // Look up on a roofed bay to raise a second floor on the same footprint.
     const platAt = offset(player, facingYaw, 1.9, 0)
     const snap = resolvePlatformSnap(platAt.x, platAt.z)
     platSnapX = snap.x
     platSnapZ = snap.z
+    platSnapY = snap.deckY
     platExpanding = snap.expanding
+    platStacking = snap.stacking
     platGround = deps.groundAt(platSnapX, platSnapZ)
     platSea = sampleOcean(platSnapX, platSnapZ, t).y
-    // Prompt sits on the near edge when expanding so Lay beats Raise Wall
-    if (platExpanding) {
-      const under = platformAt(px, pz) ?? nearestOfKind(px, pz, 'platform', TILE * 1.35)
+    // Prompt sits on the near edge when expanding so Lay beats Raise Wall;
+    // stacking aims the ceiling of the bay you're in.
+    if (platStacking) {
+      setAnchor(platPos, platSnapX, platSnapZ, platSnapY + 0.35)
+    } else if (platExpanding) {
+      const under =
+        platformAt(px, pz, 0.06, player.y) ??
+        nearestOfKind(px, pz, 'platform', TILE * 1.35, player.y)
       if (under) {
         setAnchor(
           platPos,
           (under.x + platSnapX) * 0.5,
           (under.z + platSnapZ) * 0.5,
-          Math.max(under.deckY + 0.5, platGround + 0.6, platSea + 0.7),
+          Math.max(platSnapY + 0.5, under.deckY + 0.5, platGround + 0.6, platSea + 0.7),
         )
       } else {
         setAnchor(
           platPos,
           platSnapX,
           platSnapZ,
-          Math.max(platGround + 0.6, platSea + 0.7),
+          Math.max(platSnapY + 0.5, platGround + 0.6, platSea + 0.7),
         )
       }
     } else {
@@ -4952,13 +5157,14 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         platPos,
         platSnapX,
         platSnapZ,
-        Math.max(platGround + 0.6, platSea + 0.7),
+        Math.max(platSnapY + 0.5, platGround + 0.6, platSea + 0.7),
       )
     }
-    // Expand priority only while aboard a deck — near a tile on the sand
+    // Expand / stack priority only while aboard a deck — near a tile on the sand
     // (woodpile, walls) must not let Lay steal Stow / Raise.
     layPlatformItem &&
-      (layPlatformItem.priority = platExpanding && onPlatformDeck && canLayPlatform() ? 2.6 : 0)
+      (layPlatformItem.priority =
+        (platExpanding || platStacking) && onPlatformDeck && canLayPlatform() ? 2.6 : 0)
     const wallAt = offset(player, facingYaw, 1.5, 0)
     setAnchor(wallPos, wallAt.x, wallAt.z, deps.groundAt(wallAt.x, wallAt.z) + 1.0)
     {
@@ -4975,14 +5181,25 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     }
     {
       const struck =
-        nearestOfKind(player.x, player.z, 'wall', 2.5) ??
-        nearestOfKind(player.x, player.z, 'roof', 3.0) ??
-        nearestOfKind(player.x, player.z, 'platform', 2.5)
+        nearestOfKind(player.x, player.z, 'wall', 2.5, player.y) ??
+        nearestOfKind(player.x, player.z, 'roof', 3.0, player.y) ??
+        nearestOfKind(player.x, player.z, 'platform', 2.5, player.y)
       if (struck) setAnchor(strikePos, struck.x, struck.z, struck.deckY + 0.9)
       else strikePos.copy(eatPos)
-      const plat = nearestOfKind(player.x, player.z, 'platform', 3.0)
-      if (plat) setAnchor(climbPlatPos, plat.x, plat.z, plat.deckY + 0.4)
-      else climbPlatPos.copy(eatPos)
+      // Story Climb: aim the destination deck so looking up/down faces the
+      // prompt — a ground-level anchor reads as "behind" when the camera tilts.
+      {
+        const here = platformAt(player.x, player.z, 0.06, player.y)
+        const up = here && lookPitch >= STACK_LOOK_UP ? platformAbove(here) : null
+        const down = here && lookPitch <= -0.35 ? platformBelow(here) : null
+        const dest = up ?? down
+        if (dest) setAnchor(climbPlatPos, dest.x, dest.z, dest.deckY + 0.35)
+        else {
+          const plat = nearestOfKind(player.x, player.z, 'platform', 3.0, player.y)
+          if (plat) setAnchor(climbPlatPos, plat.x, plat.z, plat.deckY + 0.4)
+          else climbPlatPos.copy(eatPos)
+        }
+      }
       const pile = nearestOfKind(player.x, player.z, 'woodpile', 3.0)
       if (pile) setAnchor(woodpilePos, pile.x, pile.z, pile.deckY + 0.45)
       else woodpilePos.copy(eatPos)
@@ -5759,11 +5976,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     }
   }
 
-  function standAt(x: number, z: number) {
+  function standAt(x: number, z: number, eyeY?: number) {
     let best = -1000
+    const feet = eyeY !== undefined ? feetOf(eyeY) : undefined
     for (const b of builds) {
       if (b.kind === 'platform') {
-        // Square deck — walk on top; a short skirt ramps down to sand or sea
+        // Square deck — walk on top; a short skirt ramps down to sand or sea.
+        // With eyeY, only decks you can step onto count — so a second story
+        // doesn't yank you through the ceiling of the room below.
+        if (feet !== undefined && b.deckY > feet + DECK_STEP_UP) continue
         const half = TILE / 2
         const d = Math.max(Math.abs(b.x - x), Math.abs(b.z - z))
         const skirt = half + 1.0
@@ -6038,7 +6259,16 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         attachTrapCheck(build)
       } else if (kind === 'platform') {
         const y = s.y ?? deps.groundAt(x, z) + PLATFORM_RISE_LAND
-        build = addBuild('platform', platformMesh(m), x, z, y, 1.8, 0.18, { yaw: 0 })
+        build = addBuild(
+          'platform',
+          platformMesh(m, platformPostLen(y, deps.groundAt(x, z), y > deps.groundAt(x, z) + 1.15)),
+          x,
+          z,
+          y,
+          1.8,
+          0.18,
+          { yaw: 0 },
+        )
       } else if (kind === 'wall') {
         const door = s.variant === 'door'
         const y = s.y ?? deps.groundAt(x, z)
@@ -6133,7 +6363,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     // Carpentry shelters depend on neighbours — recompute once everything is up
     for (const b of builds) {
       if (b.kind === 'platform') recomputeTileShelter(b)
-      if (b.kind === 'wall' && platformAt(b.x, b.z, 0.9)) b.shelter = 0
+      if (b.kind === 'wall' && platformAtDeck(b.x, b.z, b.deckY, 0.9)) b.shelter = 0
     }
   }
 
