@@ -8,6 +8,8 @@ import { chromium } from 'playwright-core'
  *       it back, and the HUD row shows
  *   C — fishing: a bottle trap set in the shallows stocks itself and Checks
  *       out into the hand; the spear answers the schools directly
+ *   D — camp weather: rain douses open fires, a gale strips an open roof
+ *       (closed rooms hold), and storm wrack can be taken on a far beach
  *
  * Needs `npm run dev` running. CHROME_PATH / SHOT_BASE follow the shot suite.
  * The headless env renders slowly, so everything waits on conditions, not clocks.
@@ -26,7 +28,7 @@ const ok = (name, cond) => {
   if (!cond) fails.push(name)
 }
 
-// TEST_ONLY=shelter,energy,fishing runs just one section
+// TEST_ONLY=shelter,energy,fishing,weather runs just one section
 const only = process.env.TEST_ONLY?.split(',').map((s) => s.trim())
 const want = (key) => !only || only.includes(key)
 
@@ -345,6 +347,116 @@ if (want('fishing')) {
   await page.close()
 }
 await ctxC.close()
+
+// —— D: camp weather + storm wrack —————————————————————————————————————————
+const ctxD = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+await ctxD.addInitScript(() => localStorage.clear())
+if (want('weather')) {
+  const page = await ctxD.newPage()
+  page.on('pageerror', (e) => console.log('pageerror:', e.message))
+  await page.goto(`${BASE}/?hour=10`, { waitUntil: 'load' })
+  await page.waitForTimeout(2500)
+
+  const spot = await beachSpot(page)
+  ok('found dry beach spot', !!spot)
+  await teleport(page, spot.x, spot.z, spot.h + 1.7, 'walk')
+  await page.waitForFunction(() => window.ww.player.mode === 'walk', null, { timeout: 20000 })
+  await fillStash(page)
+  await page.waitForTimeout(400)
+
+  ok('Kindle Fire on sand', await waitRecipe(page, 'Fire', 'Kindle'))
+  ok('open fire planted', (await page.evaluate(counts)).fire === 1)
+  await page.evaluate(() => window.ww.improvise.debugWeather(4, 0, 1))
+  ok('rain douses an uncovered fire', (await page.evaluate(counts)).fire === 0)
+
+  ok('Lay Platform available', await waitRecipe(page, 'Platform', 'Lay'))
+  ok('platform built', (await page.evaluate(counts)).platform === 1)
+  const [plat] = await page.evaluate(snap, 'platform')
+  await teleport(page, plat.x, plat.z, (plat.y ?? spot.h) + 1.75, 'walk')
+  await page.waitForTimeout(400)
+  ok('Pitch Roof available', await waitRecipe(page, 'Roof', 'Pitch'))
+  ok('open roof pitched', (await page.evaluate(counts)).roof === 1)
+  ok('Kindle Fire under the lid', await waitRecipe(page, 'Fire', 'Kindle'))
+  ok('deck fire planted', (await page.evaluate(counts)).fire === 1)
+  await page.evaluate(() => window.ww.improvise.debugWeather(4, 0, 1))
+  ok('a sound roof keeps the hearth', (await page.evaluate(counts)).fire === 1)
+
+  await page.evaluate(() => window.ww.improvise.debugWeather(20, 1, 0))
+  const openRoof = await page.evaluate(() =>
+    window.ww.improvise.snapshot().find((b) => b.kind === 'roof'),
+  )
+  ok('gale strips an open roof', !!openRoof && openRoof.torn === true)
+
+  const saved = await page.evaluate(() => window.ww.improvise.snapshot())
+  await page.evaluate((s) => window.ww.improvise.restore(s), saved)
+  const restoredRoof = await page.evaluate(() =>
+    window.ww.improvise.snapshot().find((b) => b.kind === 'roof'),
+  )
+  ok('torn roof survives a restore', !!restoredRoof && restoredRoof.torn === true)
+
+  await teleport(page, plat.x, plat.z, (plat.y ?? spot.h) + 1.75, 'walk')
+  await fillStash(page)
+  await page.waitForTimeout(400)
+  ok('Mend Roof available', await waitRecipe(page, 'Roof', 'Mend'))
+  const mended = await page.evaluate(() =>
+    window.ww.improvise.snapshot().find((b) => b.kind === 'roof'),
+  )
+  ok('fronds back on the lid', !!mended && !mended.torn)
+
+  for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    await page.evaluate((y) => {
+      window.ww.player.yaw = y
+      window.ww.player.pitch = 0
+    }, yaw)
+    await page.waitForTimeout(250)
+    ok(`Raise Wall (${yaw.toFixed(2)})`, await waitRecipe(page, 'Wall', 'Raise', 8000))
+  }
+  ok('four walls close the room', (await page.evaluate(counts)).wall === 4)
+  await page.evaluate(() => window.ww.improvise.debugWeather(20, 1, 0))
+  const closedRoof = await page.evaluate(() =>
+    window.ww.improvise.snapshot().find((b) => b.kind === 'roof'),
+  )
+  ok('a closed room holds in a gale', !!closedRoof && !closedRoof.torn)
+
+  const spawned = await page.evaluate(() => window.ww.improvise.debugSpawnWrack())
+  ok('storm wrack lands', spawned === true)
+  const wrack = await page.evaluate(() =>
+    window.ww.improvise.snapshot().find((b) => b.kind === 'wrack'),
+  )
+  ok('wrack is out in the world', !!wrack)
+  if (wrack) {
+    const before = await page.evaluate(() => ({
+      plank: window.ww.salvage.stash.plank,
+      canvas: window.ww.salvage.stash.canvas,
+      rope: window.ww.salvage.stash.rope,
+    }))
+    await teleport(page, wrack.x, wrack.z, (wrack.y ?? 1) + 1.7, 'walk')
+    await page.waitForTimeout(500)
+    const took = await page.evaluate(() => {
+      const hit = window.ww.interactions
+        .inReach(window.ww.camera)
+        .find((i) => i.verb === 'Take' && i.label === 'Wrack')
+      if (!hit) return false
+      hit.use()
+      return true
+    })
+    ok('Take Wrack in reach', took)
+    const after = await page.evaluate(() => ({
+      plank: window.ww.salvage.stash.plank,
+      canvas: window.ww.salvage.stash.canvas,
+      rope: window.ww.salvage.stash.rope,
+    }))
+    ok(
+      'wrack salvages plank, canvas, rope',
+      after.plank >= before.plank + 2 &&
+        after.canvas >= before.canvas + 1 &&
+        after.rope >= before.rope + 1,
+    )
+    ok('wrack is gone', (await page.evaluate(counts)).wrack === 0)
+  }
+  await page.close()
+}
+await ctxD.close()
 
 console.log(fails.length === 0 ? 'CAMP: all green' : `CAMP: ${fails.length} failure(s)`)
 await browser.close()

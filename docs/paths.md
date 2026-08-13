@@ -101,9 +101,9 @@ The sea moves between your inputs, and what you carry is not free.
 | **Burden** | Stash weight slows the swim. Crate > barrel > plank > canvas > rope |
 | **Swim aid** | A plank or barrel under the arm buys float (head clearer, easier climb out of a wave) — not a raft, just buoyancy |
 | **Drop** | When swimming with a load and nothing else in reach: shed the heaviest piece into the water. Stow in a locker is the lasting answer |
-| **Wash-off** | Foul weather fills a meter on an open deck; rail cuts it hard; locker mass helps. Over the side, Climb again |
+| **Wash-off** | Foul weather fills a meter on an open deck; rail cuts it hard; locker mass helps. Over the side, Climb again. Open stilt decks over water wash the same way |
 | **Dive window** | Glass-offs clear murk, ease the stroke and the lungs — dive the wreck while it holds |
-| **Camp cascade** | Rain pools and rain-catches fill faster in a front; lean-to / fire warmth reads higher in foul weather; resting through a gale earns its keep |
+| **Camp cascade** | Rain pools and rain-catches fill faster in a front; lean-to / fire warmth reads higher in foul weather; resting through a gale earns its keep. Rain douses uncovered fires (a sound roof keeps them). A gale can strip an open roof — Mend with a frond; closed rooms hold. After the peak falls, wrack can land on a far beach (Take: plank, canvas, rope) — found by looking, never marked |
 
 ---
 
@@ -157,7 +157,7 @@ markers in-world, no "correct" build order.
 | **Lay mat** | 2 frond + 1 rope | Roofed shelter | Softer ground; warmer **Rest** |
 | **Lash crate** | 1 crate | Dry ground | Shore locker — **Stow** / **Fetch** like the raft hold |
 | **Plant cistern** | 1 barrel | Dry ground | Open barrel alone — rain store without a shelter |
-| **Fire** | 1 plank | Dry ground | Heat, cook/smoke fish, and a warm light at night. **Take** it as a brand to carry; **Plant** it to set camp again. Diving puts it out. |
+| **Fire** | 1 plank | Dry ground | Heat, cook/smoke fish, and a warm light at night. **Take** it as a brand to carry; **Plant** it to set camp again. Diving puts it out. Rain douses an uncovered hearth; a sound roof keeps it |
 | **Rain-catch** | 1 canvas + 1 rope | Higher dry ground | Refilling fresh water |
 | **Raft** | 3 plank + 1 rope (+1 barrel) | Waterline | A real deck: gunwales, push pole, climb-aboard. Hold ▼ + MOVE to pole (phone); look down + walk on desktop. |
 | **Rig sail** | 1 plank + 1 canvas + 1 rope | On the raft | Mast, canvas, and a stern tiller — slow trade-wind drift while you're aboard. Stand aft to helm (▼ becomes HELM on a phone). A gale can tear it; **Mend** with canvas + rope. |
@@ -196,9 +196,11 @@ always meet flush; every piece **Strike**s down for a full refund.
    aims the empty neighbour so rooms grow. Looking back at your own floor
    hides the prompt on purpose. Roof the bay, **look up**, and Lay again to
    raise a second floor on the same footprint (one story up). Face out on the
-   upper deck to grow that floor sideways — each upper tile needs a roofed
-   bay under it. **Hang Ladder** on the lower bay, then **Climb Ladder**
-   (or look up/down and Climb Platform) to move between stories.
+   upper deck to grow that floor sideways — over a built bay, or as tall
+   stilts into empty air. A roof holds you if you step onto it; look down
+   from the lid to Climb into the room. **Hang Ladder** on the lower bay,
+   then **Climb Ladder** (or look up/down and Climb Platform) to move
+   between stories. Don't use ▲/▼ — those are swim rise/dive.
 4. Stand on the tile, face an edge → **Raise Wall** / **Hang Door** /
    **Hang Window**. Pitch a **Roof** (1 plank + 1 frond) per tile. A closed-in,
    roofed tile is a bedroom. Adjacent roofs meet on a shared ridge.
@@ -212,11 +214,11 @@ lists every recipe that's ready right now.
 
 | Recipe | Cost | Where | What it does |
 |--------|------|-------|--------------|
-| **Lay platform** | 2 plank | Land, wash, shallows (to ~2 m), or on a roofed bay (look up) | Stilt deck tile. Walkable; skirts to a ramp on land; **Climb** aboard from the water or between stories. Second floor needs a roofed bay under it |
+| **Lay platform** | 2 plank | Land, wash, shallows (to ~2 m), on a roofed bay (look up), or out from an upper floor | Stilt deck tile. Walkable; ground tiles skirt to sand; upper tiles drop off. Roofs are walkable lids. **Climb** aboard from the water or between stories. Second floor can stack on a bay or stand on tall stilts |
 | **Raise wall** | 1 plank | Tile edge (or free-standing) | Solid panel — blocks wind and body. Free walls are windbreaks (0.5 shelter) |
 | **Hang door** | 1 plank | Tile edge | Wall with a walk-through gap; blocks its cheeks, passes the middle, counts toward the room |
 | **Hang window** | 1 plank | Tile edge | Framed opening — sill, cheeks, mullion. Light in; still blocks the body; finishes a box into a hut |
-| **Pitch roof** | 1 plank + 1 frond | Over a tile | Shed lid alone; shared ridge when a neighbour is roofed. Roofed + walled (shelter ≥ 0.7) makes a bedroom: **Sleep** skips to dawn like the lean-to. Also unlocks raising a second floor |
+| **Pitch roof** | 1 plank + 1 frond | Over a tile | Shed lid alone; shared ridge when a neighbour is roofed. Roofed + walled (shelter ≥ 0.7) makes a bedroom: **Sleep** skips to dawn like the lean-to. Also unlocks raising a second floor. An open lid can strip in a gale — **Mend Roof** (1 frond); closed rooms hold |
 | **Hang ladder** | 1 plank + 1 rope | Roofed bay (edge) | Rails up a story. **Climb Ladder** once the upper floor is laid |
 | **Stack woodpile** | 1 plank | Dry ground or a deck | Shore stockpile (up to 24). **Stow on pile** / **Fetch from pile** (handfuls of 4) |
 | **Strike** | hands | Any piece | Dismantle for a full refund |
@@ -290,7 +292,12 @@ Wound** (1 canvas) closes it now — the soft-fail answer ashore.
 ## Backlog (nothing committed)
 
 - **Memory spine** — pouch → log → cairn chart shipped; still room for a name / reason beat.
-- **More soft fails** — beyond sail-tear / locker flood / bindable wound, only if runs feel cruel.
+
+~~Camp weather / a reason to leave~~ — shipped: rain douses open fires, gales
+strip open roofs (Mend with a frond), stilts over water can wash you off,
+and a spent front throws wrack on a far beach.
+~~More soft fails~~ — sail-tear / locker flood / bindable wound / roof-strip /
+fire-douse / stilt wash-off. Stop unless runs feel cruel.
 
 ~~Inland second act~~ — shipped: dry ledge past the cairn (rock seep, windbreak niche).
 ~~Shelter discoverability~~ — shipped: platform nudge at 2 planks, Lay priority over Raise Frame, Pack empty copy.

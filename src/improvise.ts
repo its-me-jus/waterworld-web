@@ -72,6 +72,12 @@ export type ImproviseDeps = {
   hasMark?: () => boolean
   /** Live squall 0..1 — wash-off, rain-catch fill, camp value. */
   storm?: () => number
+  /** 0 dry … 1 rain — douses open fires. */
+  rain?: () => number
+  /** Island wash-line points — storm wrack lands away from camp. */
+  shore?: () => { x: number; y: number; z: number }[]
+  /** Spar buoy, for wrack that stays in the crossing. */
+  sparAt?: () => { x: number; z: number }
   /** Persistent sea set — rafts drift with the current. */
   current?: () => { x: number; z: number; strength: number }
   /** Optional foley — lash / wood / splash / sail / haul. */
@@ -104,6 +110,7 @@ type BuildKind =
   | 'wall'
   | 'roof'
   | 'ladder'
+  | 'wrack'
 
 type SmokeRack = {
   readyAt: number
@@ -169,7 +176,7 @@ type Build = {
   beached?: boolean
   /** Stone over the side, line made fast — the set can't take her. */
   anchored?: boolean
-  /** Sail torn in a gale — Mend with canvas before it draws again. */
+  /** Sail torn in a gale — Mend with canvas before it draws again. Roof thatch strips the same way. */
   torn?: boolean
   /** Locker took a sea — hold is wet / light items gone. */
   flooded?: boolean
@@ -325,6 +332,20 @@ const FAIL_RATE = 0.22
 const FAIL_STORM_GATE = 0.58
 /** Mend a torn sail. */
 const MEND_COST: Cost = { canvas: 1, rope: 1 }
+/** Fronds back on a gale-stripped lid. */
+const MEND_ROOF_COST: Cost = { leaf: 1 }
+/** How fast an open roof frays in a gale — slower than a sail, closed rooms hold. */
+const ROOF_FAIL_RATE = 0.07
+/** Rain heavy enough to kill an uncovered fire. */
+const RAIN_DOUSE_GATE = 0.38
+/** Seconds of heavy rain to snuff an open hearth. */
+const RAIN_DOUSE_RATE = 0.55
+/** A gale this hard can throw wrack; it lands once the front falls. */
+const WRACK_STORM_PEAK = 0.72
+const WRACK_STORM_FALL = 0.4
+/** Don't seed wrack in the opening scramble. */
+const WRACK_GRACE = 90
+const WRACK_SALVAGE: Cost = { plank: 2, canvas: 1, rope: 1 }
 
 // —— carpentry ————————————————————————————————————————————————
 /** Every platform snaps to this world grid, so pieces always meet flush. */
@@ -1565,10 +1586,11 @@ function platformMesh(m: ReturnType<typeof mats>, postLen = 1.9) {
   return g
 }
 
-/** How long the stilts need to be to meet the ground (or the roof under a story). */
-function platformPostLen(deckY: number, groundY: number, upper: boolean) {
-  if (upper) return 0.58
-  return Math.max(0.55, Math.min(3.2, deckY - groundY + 0.35))
+/** How long the stilts need to be to meet the ground, a lower deck, or a roof. */
+function platformPostLen(deckY: number, groundY: number, roofedBelow: boolean, supportDeckY?: number) {
+  if (roofedBelow) return 0.58
+  if (supportDeckY != null) return Math.max(0.55, Math.min(3.4, deckY - supportDeckY + 0.08))
+  return Math.max(0.55, Math.min(3.4, deckY - groundY + 0.35))
 }
 
 /**
@@ -1698,6 +1720,7 @@ function roofMesh(m: ReturnType<typeof mats>, joins: RoofJoins = { px: false, nx
           new THREE.PlaneGeometry(half - 0.08, ridgeAlongZ ? spanZ - 0.12 : 0.42, 1, 2),
           m.leaf,
         )
+        frond.name = 'thatch'
         frond.rotation.x = -Math.PI / 2
         if (ridgeAlongZ) {
           frond.position.set(side * (half / 2), 0.16, (i - 1.5) * 0.48)
@@ -1725,6 +1748,7 @@ function roofMesh(m: ReturnType<typeof mats>, joins: RoofJoins = { px: false, nx
     }
     for (let i = 0; i < 6; i++) {
       const frond = new THREE.Mesh(new THREE.PlaneGeometry(0.5, TILE - 0.1, 1, 2), m.leaf)
+      frond.name = 'thatch'
       frond.rotation.x = -Math.PI / 2
       frond.rotation.z = ((i % 3) - 1) * 0.05
       frond.position.set((i - 2.5) * 0.38, 0.16, 0)
@@ -1756,6 +1780,34 @@ function roofMesh(m: ReturnType<typeof mats>, joins: RoofJoins = { px: false, nx
     g.add(stub)
   }
   return g
+}
+
+/**
+ * Storm wrack — a crate the gale threw up. Found by looking, not by a marker.
+ */
+function wrackMesh(m: ReturnType<typeof mats>) {
+  const g = new THREE.Group()
+  g.name = 'wrack'
+  const crate = crateObject(m.wood)
+  crate.position.y = 0.28
+  crate.rotation.set(0.18, 0.4, -0.12)
+  g.add(crate)
+  const rag = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 0.7, 1, 2), m.cloth)
+  rag.rotation.x = -0.7
+  rag.rotation.y = 0.35
+  rag.position.set(0.15, 0.42, -0.1)
+  g.add(rag)
+  const stick = plankObject(1.35, 0.08, m.brand)
+  stick.rotation.z = 0.4
+  stick.position.set(-0.35, 0.12, 0.2)
+  g.add(stick)
+  return g
+}
+
+function applyRoofTornVisual(roof: THREE.Object3D, torn: boolean) {
+  roof.traverse((obj) => {
+    if (obj.name === 'thatch') obj.visible = !torn
+  })
 }
 
 function animateSail(raft: THREE.Object3D, t: number, torn = false) {
@@ -1938,6 +1990,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   const climbPlatPos = new THREE.Vector3()
   const woodpilePos = new THREE.Vector3()
   const sleepPlatPos = new THREE.Vector3()
+  const wrackPos = new THREE.Vector3()
+  const mendRoofPos = new THREE.Vector3()
 
   /** Construction recipes also listed in Pack → Camp (same use() as F). */
   type CampEntry = {
@@ -1989,6 +2043,13 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   let saidHome = false
   /** Soft nudge toward Lay Platform once planks are in hand. */
   let saidPlatform = false
+  let saidRoofFail = false
+  let saidRainFire = false
+  let saidStilt = false
+  /** A gale peaked this spell — wrack can land when it falls. */
+  let galeWorked = false
+  /** Soft-fail fill while a gale works an open stilt deck. */
+  let stiltWash = 0
   let swimming = false
   let onRaftDeck = false
   /** Standing on a platform tile — fires, sleep and wall work read it. */
@@ -2023,6 +2084,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     vy: number
     submersion: number
     speed?: number
+    fallFrom?: number | null
   } | null = null
   /** Living brand in hand — null when every fire is planted. */
   let carried: Build | null = null
@@ -2159,15 +2221,50 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     return n
   }
 
+  /** A lid under the feet — walkable when no floor sits just above it. */
+  function roofAtFeet(x: number, z: number, eyeY?: number): Build | null {
+    if (eyeY === undefined) return null
+    const feet = feetOf(eyeY)
+    let best: Build | null = null
+    let bestDy = 0.4
+    for (const b of builds) {
+      if (b.kind !== 'roof') continue
+      if (Math.max(Math.abs(b.x - x), Math.abs(b.z - z)) >= TILE / 2 + 0.04) continue
+      if (platformAtDeck(b.x, b.z, b.deckY + (STORY_RISE - ROOF_RISE), TILE / 2, 0.3)) continue
+      const dy = Math.abs(b.deckY - feet)
+      if (dy < bestDy) {
+        bestDy = dy
+        best = b
+      }
+    }
+    return best
+  }
+
+  function hostOfRoof(roof: Build) {
+    return platformAtDeck(roof.x, roof.z, roof.deckY - ROOF_RISE, 0.9)
+  }
+
+  function naturalDeckY(x: number, z: number) {
+    const ground = deps.groundAt(x, z)
+    const sea = sampleOcean(x, z, time).y
+    return ground <= sea - 0.3 ? sea + PLATFORM_RISE_SEA : ground + PLATFORM_RISE_LAND
+  }
+
+  /** True for a stacked story or a high-stilt balcony — no third floor on either. */
+  function isUpperDeck(tile: Build) {
+    return storyIndex(tile) > 0 || tile.deckY > naturalDeckY(tile.x, tile.z) + 1.35
+  }
+
   /**
    * Where the next deck tile wants to land.
    *
    * Standing on a platform: always the empty neighbour you're facing — that's
    * how rooms grow. Looking up on a roofed bay raises a second floor on the
-   * same footprint. Looking at a deck from outside: the empty cell past it if
-   * you're aimed that way, else the ordinary look-ahead snap. Occupied cells
-   * never win, which is why Lay Platform used to flicker off when you glanced
-   * back at your own floor.
+   * same footprint. Standing on a roof is the same as looking up: the next
+   * piece is that bay's second floor, or a neighbour at story height. Looking
+   * at a deck from outside: the empty cell past it if you're aimed that way,
+   * else the ordinary look-ahead snap. Occupied cells never win, which is why
+   * Lay Platform used to flicker off when you glanced back at your own floor.
    */
   function resolvePlatformSnap(
     lookX: number,
@@ -2175,10 +2272,36 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   ): { x: number; z: number; deckY: number; expanding: boolean; stacking: boolean } {
     const eyeY = live?.y
     const under = platformAt(px, pz, 0.06, eyeY)
+    const roofHere = !under ? roofAtFeet(px, pz, eyeY) : null
+    const roofHost = roofHere ? hostOfRoof(roofHere) : null
+    // On the lid of a bay that has no floor above — grow that story
+    if (roofHost && !platformAbove(roofHost)) {
+      if (lookPitch >= 0.12) {
+        return {
+          x: roofHost.x,
+          z: roofHost.z,
+          deckY: roofHost.deckY + STORY_RISE,
+          expanding: false,
+          stacking: true,
+        }
+      }
+      const side = tileSide(roofHost)
+      const nx = roofHost.x + side.dx * TILE
+      const nz = roofHost.z + side.dz * TILE
+      if (!platformAtDeck(nx, nz, roofHost.deckY + STORY_RISE, TILE / 2)) {
+        return {
+          x: nx,
+          z: nz,
+          deckY: roofHost.deckY + STORY_RISE,
+          expanding: true,
+          stacking: false,
+        }
+      }
+    }
     // Look up: raise the next story, or stay put so Climb isn't stolen by a
     // sideways Lay aimed at an empty neighbour.
     if (under && lookPitch >= STACK_LOOK_UP) {
-      if (tileRoof(under) && !platformAbove(under) && storyIndex(under) < MAX_STORY) {
+      if (tileRoof(under) && !platformAbove(under) && storyIndex(under) < MAX_STORY && !isUpperDeck(under)) {
         return {
           x: under.x,
           z: under.z,
@@ -2306,7 +2429,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       s +=
         w.variant === 'door' ? 0.08 : w.variant === 'window' ? 0.09 : 0.11
     }
-    if (tileRoof(tile)) s += 0.26
+    const roof = tileRoof(tile)
+    if (roof && !roof.torn) s += 0.26
     if (tile.deckY > 2) s += 0.08
     tile.shelter = s
   }
@@ -2346,6 +2470,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     disposeBuildObject(roof.object)
     roof.object = next
     scene.add(next)
+    applyRoofTornVisual(next, !!roof.torn)
   }
 
   /** After a lid goes up or comes down, retarget this bay and its neighbours. */
@@ -2362,6 +2487,217 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (!host) continue
       const roof = tileRoof(host)
       if (roof) refitRoofMesh(roof)
+    }
+  }
+
+  function setRoofTorn(roof: Build, torn: boolean) {
+    roof.torn = torn
+    if (!torn) roof.failMeter = 0
+    applyRoofTornVisual(roof.object, torn)
+    const host = hostOfRoof(roof)
+    if (host) recomputeTileShelter(host)
+  }
+
+  function fireUnderRoof(fire: Build) {
+    const tile = platformAt(fire.x, fire.z, 0.9, fire.deckY + WALK_EYE)
+    if (tile) {
+      const roof = tileRoof(tile)
+      return !!roof && !roof.torn
+    }
+    const lean = nearestOfKind(fire.x, fire.z, 'lean-to', 2.8)
+    return !!lean && !!lean.roof && lean.roof !== 'none'
+  }
+
+  function snuffFire(fire: Build, line: string) {
+    if (fire.smoking) {
+      for (const fish of fire.smoking) fire.object.remove(fish.mesh)
+      fire.smoking = []
+    }
+    const idx = builds.indexOf(fire)
+    if (idx < 0) return
+    builds.splice(idx, 1)
+    for (const item of fire.items) deps.interactions.remove(item)
+    scene.remove(fire.object)
+    disposeBuildObject(fire.object)
+    deps.hud.whisper(line)
+  }
+
+  function campCentroid() {
+    let sx = 0
+    let sz = 0
+    let n = 0
+    for (const b of builds) {
+      if (b.kind !== 'platform' && b.kind !== 'lean-to' && b.kind !== 'fire') continue
+      sx += b.x
+      sz += b.z
+      n += 1
+    }
+    if (n > 0) return { x: sx / n, z: sz / n }
+    const shore = deps.shore?.()
+    if (shore && shore.length > 0) {
+      let cx = 0
+      let cz = 0
+      for (const p of shore) {
+        cx += p.x
+        cz += p.z
+      }
+      return { x: cx / shore.length, z: cz / shore.length }
+    }
+    return { x: 0, z: 0 }
+  }
+
+  function pickWrackSpot(preferShore = true): { x: number; z: number; y: number } | null {
+    const camp = campCentroid()
+    const shore = deps.shore?.()
+    if (!preferShore && deps.sparAt) {
+      const spar = deps.sparAt()
+      const ang = Math.atan2(camp.z - spar.z, camp.x - spar.x) + 0.9
+      const x = spar.x + Math.cos(ang) * 8
+      const z = spar.z + Math.sin(ang) * 8
+      return { x, z, y: sampleOcean(x, z, time).y + 0.1 }
+    }
+    if (!shore || shore.length === 0) return null
+    let best = shore[0]
+    let bestD = -1
+    for (const p of shore) {
+      const d = Math.hypot(p.x - camp.x, p.z - camp.z)
+      if (d > bestD) {
+        bestD = d
+        best = p
+      }
+    }
+    const inlandX = camp.x - best.x
+    const inlandZ = camp.z - best.z
+    const len = Math.hypot(inlandX, inlandZ) || 1
+    for (let d = 1.2; d < 10; d += 0.8) {
+      const x = best.x + (inlandX / len) * d
+      const z = best.z + (inlandZ / len) * d
+      const y = deps.groundAt(x, z)
+      if (y > 0.25 && y < 6 && clearOfBuilds(x, z, 2.2)) return { x, z, y }
+    }
+    const y = Math.max(0.15, deps.groundAt(best.x, best.z))
+    return { x: best.x, z: best.z, y }
+  }
+
+  function spawnWrack(force = false) {
+    if (!force && time < WRACK_GRACE) return false
+    if (builds.some((b) => b.kind === 'wrack')) return false
+    const afloat = !force && Math.random() < 0.22
+    const at = pickWrackSpot(!afloat)
+    if (!at) return false
+    addBuild('wrack', wrackMesh(m), at.x, at.z, at.y, 1.8, 0)
+    deps.hud.whisper('The sea has thrown something up.')
+    return true
+  }
+
+  function washOffStilts(tile: Build, seaY: number) {
+    if (!live) return
+    stiltWash = 0
+    saidStilt = false
+    washGrace = 1.35
+    const ang = Math.atan2(live.z - tile.z, live.x - tile.x)
+    live.x = tile.x + Math.cos(ang) * (TILE * 0.85)
+    live.z = tile.z + Math.sin(ang) * (TILE * 0.85)
+    live.y = seaY - 0.25
+    live.mode = 'swim'
+    live.vy = 0
+    live.submersion = 0.85
+    if (live.speed !== undefined) live.speed = 0
+    onPlatformDeck = false
+    swimming = true
+    deps.hud.whisper('A wave takes you off the stilts.')
+    tap('splash', 0.9)
+  }
+
+  /**
+   * Gale vs camp: rain kills uncovered fires, open roofs strip, stilts over
+   * water wash you off, and a spent front can throw wrack on a far beach.
+   */
+  function weatherTheCamp(dt: number, storm = deps.storm?.() ?? 0, rain = deps.rain?.() ?? 0) {
+    if (dt <= 0) return
+    const fires = builds.filter((b) => b.kind === 'fire')
+    for (const fire of fires) {
+      if (fireUnderRoof(fire)) {
+        fire.failMeter = Math.max(0, (fire.failMeter ?? 0) - dt * 0.4)
+        continue
+      }
+      if (rain > RAIN_DOUSE_GATE) {
+        const rate =
+          RAIN_DOUSE_RATE * ((rain - RAIN_DOUSE_GATE) / Math.max(0.05, 1 - RAIN_DOUSE_GATE))
+        fire.failMeter = Math.min(1, (fire.failMeter ?? 0) + rate * dt)
+        if ((fire.failMeter ?? 0) > 0.45 && !saidRainFire) {
+          saidRainFire = true
+          deps.hud.whisper('Rain finds the hearth.')
+        }
+        if ((fire.failMeter ?? 0) >= 1) {
+          saidRainFire = false
+          snuffFire(fire, 'Rain takes the fire.')
+        }
+      } else {
+        fire.failMeter = Math.max(0, (fire.failMeter ?? 0) - dt * 0.2)
+        if ((fire.failMeter ?? 0) < 0.25) saidRainFire = false
+      }
+    }
+
+    if (storm > FAIL_STORM_GATE) {
+      const rate =
+        ROOF_FAIL_RATE * ((storm - FAIL_STORM_GATE) / Math.max(0.05, 1 - FAIL_STORM_GATE))
+      for (const roof of builds) {
+        if (roof.kind !== 'roof' || roof.torn) continue
+        const host = hostOfRoof(roof)
+        if (host && host.shelter >= SLEEP_SHELTER) {
+          roof.failMeter = Math.max(0, (roof.failMeter ?? 0) - dt * 0.12)
+          continue
+        }
+        roof.failMeter = Math.min(1, (roof.failMeter ?? 0) + rate * dt)
+        if ((roof.failMeter ?? 0) > 0.55 && !saidRoofFail) {
+          saidRoofFail = true
+          deps.hud.whisper('The thatch lifts. Hold the lid.')
+        }
+        if ((roof.failMeter ?? 0) >= 1) {
+          setRoofTorn(roof, true)
+          saidRoofFail = false
+          deps.hud.whisper('The gale strips the thatch. Mend it when you can.')
+          tap('sail', 0.7)
+        }
+      }
+    } else {
+      for (const roof of builds) {
+        if (roof.kind !== 'roof' || roof.torn) continue
+        roof.failMeter = Math.max(0, (roof.failMeter ?? 0) - dt * 0.15)
+      }
+      if (storm < FAIL_STORM_GATE - 0.08) saidRoofFail = false
+    }
+
+    if (live && onPlatformDeck && boardGrace <= 0 && washGrace <= 0 && !swimming) {
+      const tile = platformAt(live.x, live.z, 0.06, live.y)
+      const seaY = sampleOcean(live.x, live.z, time).y
+      const overWater =
+        !!tile &&
+        deps.groundAt(tile.x, tile.z) < seaY - 0.15 &&
+        tile.deckY - seaY < 1.15 &&
+        tile.shelter < SLEEP_SHELTER
+      if (overWater && tile && storm > WASH_STORM_GATE) {
+        const rate =
+          WASH_RATE * 0.72 * ((storm - WASH_STORM_GATE) / Math.max(0.05, 1 - WASH_STORM_GATE))
+        stiltWash = Math.min(1, stiltWash + rate * dt)
+        if (stiltWash > 0.55 && !saidStilt) {
+          saidStilt = true
+          deps.hud.whisper('The deck wants you off.')
+        }
+        if (stiltWash >= 1) washOffStilts(tile, seaY)
+      } else {
+        stiltWash = Math.max(0, stiltWash - dt * 0.55)
+        if (stiltWash < 0.3) saidStilt = false
+      }
+    } else {
+      stiltWash = Math.max(0, stiltWash - dt * 0.8)
+    }
+
+    if (storm > WRACK_STORM_PEAK) galeWorked = true
+    if (galeWorked && storm < WRACK_STORM_FALL) {
+      if (builds.some((b) => b.kind === 'wrack')) galeWorked = false
+      else if (spawnWrack()) galeWorked = false
     }
   }
 
@@ -2426,7 +2762,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       b.kind !== 'wall' &&
       b.kind !== 'roof' &&
       b.kind !== 'ladder' &&
-      b.kind !== 'woodpile'
+      b.kind !== 'woodpile' &&
+      b.kind !== 'wrack'
     )
   }
 
@@ -2434,11 +2771,20 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     if (!deps.vitals.alive || carried) return false
     if (!deps.salvage.has(PLATFORM_COST)) return false
     if (platformAtDeck(platSnapX, platSnapZ, platSnapY, TILE / 2)) return false
-    const upper = platStacking || platSnapY > deps.groundAt(platSnapX, platSnapZ) + 1.15
-    if (upper) {
+    const elevated = platStacking || platSnapY > deps.groundAt(platSnapX, platSnapZ) + 1.15
+    if (elevated) {
       const below = platformAtDeck(platSnapX, platSnapZ, platSnapY - STORY_RISE, TILE / 2)
-      if (!below || !tileRoof(below)) return false
-      if (storyIndex(below) >= MAX_STORY) return false
+      if (below) {
+        if (storyIndex(below) >= MAX_STORY || isUpperDeck(below)) return false
+        return true
+      }
+      // Empty air at story height — tall stilts, only when growing an upper floor
+      if (!platExpanding) return false
+      if (platGround < -PLATFORM_MAX_DEPTH) return false
+      for (const b of builds) {
+        if (!blocksPlatform(b)) continue
+        if (Math.hypot(b.x - platSnapX, b.z - platSnapZ) < 2.1) return false
+      }
       return true
     }
     // Dry sand, the wash, or the shallows — stilts reach a couple metres down
@@ -3995,6 +4341,54 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     },
   })
 
+  addCamp('build', {
+    position: mendRoofPos,
+    verb: 'Mend',
+    label: 'Roof',
+    cost: MEND_ROOF_COST,
+    radius: 2.8,
+    available: () => {
+      if (!deps.vitals.alive || !deps.salvage.has(MEND_ROOF_COST)) return false
+      const roof = nearestOfKind(px, pz, 'roof', 3.2, live?.y)
+      return !!roof && !!roof.torn
+    },
+    use: () => {
+      const roof = nearestOfKind(px, pz, 'roof', 3.2, live?.y)
+      if (!roof || !roof.torn || !deps.salvage.spend(MEND_ROOF_COST)) return
+      setRoofTorn(roof, false)
+      saidRoofFail = false
+      deps.hud.whisper('Fronds back on the ridge. The lid holds.')
+      tap('lash', 0.55)
+      tap('wood', 0.4)
+    },
+  })
+
+  deps.interactions.add({
+    position: wrackPos,
+    verb: 'Take',
+    label: 'Wrack',
+    radius: 2.8,
+    priority: 2.4,
+    available: () => {
+      if (!deps.vitals.alive) return false
+      return !!nearestOfKind(px, pz, 'wrack', 2.8)
+    },
+    use: () => {
+      const wrack = nearestOfKind(px, pz, 'wrack', 2.8)
+      if (!wrack) return
+      const idx = builds.indexOf(wrack)
+      if (idx < 0) return
+      builds.splice(idx, 1)
+      for (const item of wrack.items) deps.interactions.remove(item)
+      scene.remove(wrack.object)
+      disposeBuildObject(wrack.object)
+      refund(WRACK_SALVAGE)
+      deps.hud.whisper('Plank, canvas, a length of rope. The sea paid you back.')
+      tap('haul', 0.7)
+      tap('wood', 0.45)
+    },
+  })
+
   // Haul the raft onto sand when the water shoals
   addCamp('raft', {
     position: beachPos,
@@ -4571,19 +4965,24 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const ground = deps.groundAt(sx, sz)
       const sea = sampleOcean(sx, sz, time).y
       const overWater = !platStacking && ground <= sea - 0.3
-      const upper = platStacking || !!platformAtDeck(sx, sz, deckY - STORY_RISE, TILE / 2)
-      const mesh = platformMesh(m, platformPostLen(deckY, ground, upper))
+      const below = platformAtDeck(sx, sz, deckY - STORY_RISE, TILE / 2)
+      const roofedBelow = !!below && !!tileRoof(below)
+      const mesh = platformMesh(m, platformPostLen(deckY, ground, roofedBelow, below?.deckY))
       addBuild('platform', mesh, sx, sz, deckY, 1.8, 0.18, { yaw: 0 })
       deps.hud.whisper(
         platStacking
           ? 'A second floor. Walls and a roof still to fashion — look out to grow the bay.'
-          : upper
+          : below && roofedBelow
             ? 'Joined upstairs. Face the next square to grow the floor.'
-            : overWater
-              ? 'Piles in the shallows. A deck over the water.'
-              : platExpanding
-                ? 'Joined. Face the next square to grow the floor.'
-                : "Stilts and planks. A floor that isn't sand.",
+            : below
+              ? 'A floor over the bay. Posts on the deck below — a roof under it would sit tighter.'
+              : overWater
+                ? 'Piles in the shallows. A deck over the water.'
+                : platExpanding && deckY > ground + 1.15
+                  ? 'High stilts. A balcony off the upper floor.'
+                  : platExpanding
+                    ? 'Joined. Face the next square to grow the floor.'
+                    : "Stilts and planks. A floor that isn't sand.",
       )
       tap('wood', 0.8)
       tap('lash', 0.5)
@@ -4840,6 +5239,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       live.z = dest.z
       live.y = dest.deckY + WALK_EYE
       live.vy = 0
+      live.fallFrom = null
       live.submersion = 0
       boardGrace = 0.45
       deps.hud.whisper(dest === upper ? 'Up the ladder.' : 'Down the ladder.')
@@ -4868,7 +5268,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const here = platformAt(px, pz, 0.06, live.y)
       if (here && !swimming) {
         if (lookPitch >= STACK_LOOK_UP && platformAbove(here)) return true
-        if (lookPitch <= -0.35 && platformBelow(here)) return true
+        // Looking down to drop a story — not when the facing cell is an empty expand
+        if (lookPitch <= -0.35 && platformBelow(here) && !(platExpanding && canLayPlatform())) {
+          return true
+        }
+      }
+      const roofHere = roofAtFeet(px, pz, live.y)
+      if (roofHere && !swimming && lookPitch <= -0.35) {
+        const host = hostOfRoof(roofHere)
+        if (host) return true
       }
       if (!swimming) return false
       const t = nearestOfKind(px, pz, 'platform', 3.0, live.y)
@@ -4889,9 +5297,27 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           live.z = dest.z
           live.y = dest.deckY + WALK_EYE
           live.vy = 0
+          live.fallFrom = null
           live.submersion = 0
           boardGrace = 0.55
           deps.hud.whisper(up ? 'Up the posts. Another floor under your feet.' : 'Down to the bay below.')
+          tap('wood', 0.65)
+          return
+        }
+      }
+      const roofHere = roofAtFeet(px, pz, live.y)
+      if (roofHere && !swimming) {
+        const host = hostOfRoof(roofHere)
+        if (host) {
+          live.mode = 'walk'
+          live.x = host.x
+          live.z = host.z
+          live.y = host.deckY + WALK_EYE
+          live.vy = 0
+          live.fallFrom = null
+          live.submersion = 0
+          boardGrace = 0.55
+          deps.hud.whisper('Down through the lid. The room below.')
           tap('wood', 0.65)
           return
         }
@@ -4903,6 +5329,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       live.z = t.z
       live.y = t.deckY + WALK_EYE
       live.vy = 0
+      live.fallFrom = null
       live.submersion = 0
       boardGrace = 0.9
       deps.hud.whisper('Up onto the deck. Dry feet, and the sea below.')
@@ -5187,7 +5614,18 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       seconds = (hours / 24) * DAY_LENGTH
     }
 
-    deps.skipTime(seconds)
+    // Climate already steps weather in 2 s slices; tick the camp the same way
+    // so a night gale can strip an open roof or throw wrack while you sleep.
+    {
+      const step = 2
+      let left = seconds
+      while (left > 0) {
+        const dt = Math.min(step, left)
+        deps.skipTime(dt)
+        weatherTheCamp(dt)
+        left -= dt
+      }
+    }
 
     // Shelter + optional fire do the warming; sleep itself mends the body.
     // Foul weather is when a roof earns its keep — more warmth back.
@@ -5283,11 +5721,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     available: () => {
       if (!deps.vitals.alive || swimming || time < restReadyAt) return false
       const t = platformAt(px, pz, 0.06, live?.y)
-      return !!t && !!tileRoof(t) && t.shelter >= SLEEP_SHELTER
+      if (!t) return false
+      const roof = tileRoof(t)
+      return !!roof && !roof.torn && t.shelter >= SLEEP_SHELTER
     },
     use: () => {
       const tile = platformAt(px, pz, 0.06, live?.y)
-      if (!tile || !tileRoof(tile) || tile.shelter < SLEEP_SHELTER) return
+      if (!tile) return
+      const roof = tileRoof(tile)
+      if (!roof || roof.torn || tile.shelter < SLEEP_SHELTER) return
       const v = deps.vitals
       if (v.food < 0.1 || v.water < 0.1) {
         deps.hud.whisper('Too empty to sleep.')
@@ -5389,7 +5831,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         !!raftNear &&
         Math.hypot(player.x - raftNear.x, player.z - raftNear.z) <= raftNear.radius * DECK_LIP
     }
-    onPlatformDeck = view.walking && platformAt(player.x, player.z, 0.06, player.y) !== null
+    onPlatformDeck =
+      view.walking &&
+      (platformAt(player.x, player.z, 0.06, player.y) !== null ||
+        roofAtFeet(player.x, player.z, player.y) !== null)
+    weatherTheCamp(dt)
 
     // After Climb, kill swim inertia and keep them seated for a beat
     if (boardGrace > 0) {
@@ -5565,7 +6011,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     layPlatformItem &&
       (layPlatformItem.priority = (() => {
         if (!canLayPlatform()) return 0
-        if ((platExpanding || platStacking) && onPlatformDeck) return 2.6
+        if ((platExpanding || platStacking) && onPlatformDeck) {
+          // Looking down from a lid — Climb into the room owns that glance
+          if (lookPitch <= -0.35 && roofAtFeet(px, pz, player.y)) return 0.3
+          return 3.2
+        }
         if (!builds.some((b) => b.kind === 'platform')) return 2.35
         return 0
       })())
@@ -5602,6 +6052,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         nearestOfKind(player.x, player.z, 'platform', 2.5, player.y)
       if (struck) setAnchor(strikePos, struck.x, struck.z, struck.deckY + 0.9)
       else strikePos.copy(eatPos)
+      {
+        const tornRoof = nearestOfKind(player.x, player.z, 'roof', 3.2, player.y)
+        if (tornRoof && tornRoof.torn) {
+          setAnchor(mendRoofPos, tornRoof.x, tornRoof.z, tornRoof.deckY + 0.35)
+        } else mendRoofPos.copy(eatPos)
+        const wrack = nearestOfKind(player.x, player.z, 'wrack', 3.2)
+        if (wrack) setAnchor(wrackPos, wrack.x, wrack.z, wrack.deckY + 0.5)
+        else wrackPos.copy(eatPos)
+      }
       // Story Climb: aim the destination deck so looking up/down faces the
       // prompt — a ground-level anchor reads as "behind" when the camera tilts.
       // Near a hung ladder, aim the rails so Climb Ladder stays in facing range.
@@ -6277,6 +6736,17 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (b.kind === 'fire') {
         animateFire(b.object, t, b.x * 0.7 + b.z * 0.3, deps.daylight())
       }
+      if (b.kind === 'wrack') {
+        const ground = deps.groundAt(b.x, b.z)
+        const sea = sampleOcean(b.x, b.z, t)
+        if (ground < sea.y - 0.15) {
+          b.deckY = sea.y + 0.1
+          b.object.position.set(b.x, b.deckY, b.z)
+          b.object.rotation.order = 'YXZ'
+          b.object.rotation.x = sea.normal.z * 0.22
+          b.object.rotation.z = -sea.normal.x * 0.22
+        }
+      }
       if (b.kind === 'signal') {
         const rag = b.object.getObjectByName('signalRag')
         if (rag) {
@@ -6404,22 +6874,35 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     const feet = eyeY !== undefined ? feetOf(eyeY) : undefined
     for (const b of builds) {
       if (b.kind === 'platform') {
-        // Square deck — walk on top; a short skirt ramps down to sand or sea.
-        // With eyeY, only decks you can step onto count — so a second story
-        // doesn't yank you through the ceiling of the room below.
+        // Square deck — walk on top. Ground-floor tiles keep a sand/sea ramp;
+        // an upper story drops off (roofs catch you, or gravity does).
         if (feet !== undefined && b.deckY > feet + DECK_STEP_UP) continue
         const half = TILE / 2
         const d = Math.max(Math.abs(b.x - x), Math.abs(b.z - z))
-        const skirt = half + 1.0
+        const elevated = b.deckY > deps.groundAt(b.x, b.z) + 1.15
+        const skirt = half + (elevated ? 0.12 : 1.0)
         if (d > skirt) continue
         if (d <= half) {
           best = Math.max(best, b.deckY)
-        } else {
+        } else if (!elevated) {
           const f = Math.min(1, (d - half) / (skirt - half))
           const under = deps.groundAt(x, z)
           const target = Math.min(b.deckY, Math.max(under, -1.25))
           best = Math.max(best, THREE.MathUtils.lerp(b.deckY, target, Math.pow(f, 0.8)))
+        } else {
+          const f = Math.min(1, (d - half) / 0.12)
+          best = Math.max(best, b.deckY - f * 0.08)
         }
+        continue
+      }
+      if (b.kind === 'roof') {
+        if (feet !== undefined && b.deckY > feet + DECK_STEP_UP) continue
+        // A floor 10cm above this lid is the walk surface — don't stand in the thatch
+        if (platformAtDeck(b.x, b.z, b.deckY + (STORY_RISE - ROOF_RISE), TILE / 2, 0.3)) continue
+        const half = TILE / 2
+        const d = Math.max(Math.abs(b.x - x), Math.abs(b.z - z))
+        if (d > half + 0.1) continue
+        best = Math.max(best, d <= half ? b.deckY : b.deckY - 0.05)
         continue
       }
       if (b.kind !== 'raft') continue
@@ -6492,6 +6975,11 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     saidDig = false
     saidHome = false
     saidPlatform = false
+    saidRoofFail = false
+    saidRainFire = false
+    saidStilt = false
+    galeWorked = false
+    stiltWash = 0
     washMeter = 0
     boardGrace = 0
     washGrace = 0
@@ -6525,7 +7013,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         b.kind === 'wall' ||
         b.kind === 'roof' ||
         b.kind === 'ladder' ||
-        b.kind === 'woodpile'
+        b.kind === 'woodpile' ||
+        b.kind === 'wrack'
           ? b.deckY
           : undefined,
       variant: b.variant,
@@ -6687,10 +7176,20 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         if (stockMesh) stockMesh.visible = (s.fish ?? 0) > 0
         attachTrapCheck(build)
       } else if (kind === 'platform') {
-        const y = s.y ?? deps.groundAt(x, z) + PLATFORM_RISE_LAND
+        const ground = deps.groundAt(x, z)
+        const y = s.y ?? ground + PLATFORM_RISE_LAND
+        let supportY: number | undefined
+        let roofedBelow = false
+        for (const b of builds) {
+          if (Math.max(Math.abs(b.x - x), Math.abs(b.z - z)) >= TILE / 2) continue
+          if (b.kind === 'platform' && Math.abs(b.deckY - (y - STORY_RISE)) < 0.45) supportY = b.deckY
+          if (b.kind === 'roof' && Math.abs(b.deckY - (y - (STORY_RISE - ROOF_RISE))) < 0.45) {
+            roofedBelow = true
+          }
+        }
         build = addBuild(
           'platform',
-          platformMesh(m, platformPostLen(y, deps.groundAt(x, z), y > deps.groundAt(x, z) + 1.15)),
+          platformMesh(m, platformPostLen(y, ground, roofedBelow, supportY)),
           x,
           z,
           y,
@@ -6708,7 +7207,15 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         })
       } else if (kind === 'roof') {
         const y = s.y ?? deps.groundAt(x, z) + ROOF_RISE
-        build = addBuild('roof', roofMesh(m), x, z, y, 1.8, 0, { yaw: 0 })
+        build = addBuild('roof', roofMesh(m), x, z, y, 1.8, 0, {
+          yaw: 0,
+          torn: !!s.torn,
+          failMeter: s.failMeter ?? 0,
+        })
+        if (s.torn) applyRoofTornVisual(build.object, true)
+      } else if (kind === 'wrack') {
+        const y = s.y ?? deps.groundAt(x, z)
+        build = addBuild('wrack', wrackMesh(m), x, z, y, 1.8, 0)
       } else if (kind === 'ladder') {
         const y = s.y ?? deps.groundAt(x, z) + PLATFORM_RISE_LAND
         build = addBuild('ladder', ladderMesh(m), x, z, y, 1.4, 0, {
@@ -6826,6 +7333,14 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     debugTick(seconds: number) {
       stockTraps(seconds)
     },
+    /** Dev/tests — run camp weather with optional storm/rain overrides. */
+    debugWeather(seconds: number, storm?: number, rain?: number) {
+      weatherTheCamp(Math.max(0, seconds), storm, rain)
+    },
+    /** Dev/tests — drop storm wrack on the far shore without waiting out a gale. */
+    debugSpawnWrack() {
+      return spawnWrack(true)
+    },
     /** Construction recipes ready right now — Pack Camp tab / Actions sheet. */
     campRecipes(): CampRecipe[] {
       return campEntries
@@ -6867,6 +7382,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
         wall: 0,
         roof: 0,
         ladder: 0,
+        wrack: 0,
       }
       for (const b of builds) out[b.kind]++
       if (carried) out.fire++
@@ -6902,6 +7418,7 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       floats: FLOAT_COST,
       drip: DRIP_COST,
       mend: MEND_COST,
+      mendRoof: MEND_ROOF_COST,
       platform: PLATFORM_COST,
       wall: WALL_COST,
       door: DOOR_COST,

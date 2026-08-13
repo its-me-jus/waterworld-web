@@ -39,6 +39,7 @@ const DEATH_TITLE: Record<Cause, string> = {
   thirst: 'You died of thirst',
   hunger: 'You starved',
   taken: 'The ocean kept you',
+  fall: 'You fell',
 }
 
 export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: () => void }) {
