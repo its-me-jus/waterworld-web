@@ -7,7 +7,7 @@
  * numbers below read as "how long have I got".
  */
 
-export type Cause = 'drowned' | 'exposure' | 'thirst' | 'hunger' | 'taken'
+export type Cause = 'drowned' | 'exposure' | 'thirst' | 'hunger' | 'taken' | 'fall'
 
 export type Vitals = {
   breath: number
@@ -328,6 +328,37 @@ export function bindWound(v: Vitals, whisper?: (text: string) => void) {
   v.stamina = Math.min(1, v.stamina + 0.1)
   whisper?.('Canvas bound tight. The iron taste fades.')
   return true
+}
+
+/**
+ * A drop onto sand or deck. Short steps are free. A story hurts; a spent
+ * body eats more of it. Rested legs land cleaner — "strong enough" is the
+ * difference between a bruise and a wound.
+ */
+export function landHard(v: Vitals, drop: number, whisper?: (text: string) => void) {
+  if (!v.alive || drop < 1.15) return
+  const strength = Math.min(1, Math.max(0.2, Math.min(v.stamina, 0.45 + 0.55 * v.energy)))
+  const extra = drop - 1.15
+  const harm = Math.min(0.62, (extra * 0.2) / strength)
+  v.health = Math.max(0, v.health - harm)
+  v.stamina = Math.max(0.08, v.stamina - extra * 0.1)
+  if (drop >= 2.55 && !v.wounded) {
+    v.wounded = true
+    v.woundClock = 0
+    v.saidBleeding = false
+  }
+  if (v.health <= 0) {
+    v.alive = false
+    v.cause = 'fall'
+    return
+  }
+  whisper?.(
+    drop >= 2.4
+      ? 'The landing drives the breath out of you.'
+      : strength < 0.45
+        ? 'You hit hard. The legs had nothing left.'
+        : 'You hit hard.',
+  )
 }
 
 /** Pull the immersion suit on. One way — you don't take it off out here. */

@@ -71,6 +71,8 @@ export type PlayerState = {
   /** Smoothed submersion while walking — a storm face over the head knocks you swimming. */
   walkWash: number
   unlocked: boolean
+  /** Eye height when this fall began — null while the feet have a floor. */
+  fallFrom: number | null
 }
 
 /** Shoves the swimmer out of solid geometry, in place, after they've moved. */
@@ -121,6 +123,8 @@ export type PlayerFrame = {
   walking: boolean
   /** World ground height under the player (−Infinity over open water). */
   groundY: number
+  /** Metres of free fall landed this frame (0 if the feet never left). */
+  fallLanded: number
 }
 
 export function createPlayer(): PlayerState {
@@ -144,6 +148,7 @@ export function createPlayer(): PlayerState {
     mode: 'swim',
     walkWash: 0,
     unlocked: false,
+    fallFrom: null,
   }
 }
 
@@ -280,21 +285,25 @@ export function updatePlayer(
     if (seaDepth < STAND_ENTER && depth < 1.05) {
       player.mode = 'walk'
       player.vy = 0
+      player.fallFrom = null
     }
   } else if (seaDepth > STAND_EXIT) {
     player.mode = 'swim'
     player.walkWash = 0
+    player.fallFrom = null
   } else {
     // A storm face that actually closes over your head knocks you swimming
     player.walkWash = damp(player.walkWash, submersion, 1.4, dt)
     if (player.walkWash > 0.8) {
       player.mode = 'swim'
       player.walkWash = 0
+      player.fallFrom = null
     }
   }
 
   let bobY = 0
   let bobSide = 0
+  let fallLanded = 0
 
   // Tremor when the body's running out — two incommensurate sines so it never
   // reads as a steady oscillation
@@ -347,13 +356,18 @@ export function updatePlayer(
     // it rises — steps over relief without stair-popping or sinking through.
     const floorY = gat(player.x, player.z) + WALK_EYE
     if (player.y > floorY + 0.04) {
+      if (player.fallFrom == null) player.fallFrom = player.y
       player.vy = Math.max(player.vy - 26 * dt, -15)
       player.y += player.vy * dt
       if (player.y <= floorY) {
+        const drop = (player.fallFrom ?? player.y) - floorY
         player.y = floorY
         player.vy = 0
+        player.fallFrom = null
+        if (drop > 1.15) fallLanded = drop
       }
     } else {
+      player.fallFrom = null
       player.y = damp(player.y, floorY, 18, dt)
       if (player.y < floorY - 0.6) player.y = floorY - 0.6
       player.vy = 0
@@ -490,5 +504,6 @@ export function updatePlayer(
     surfaceVel,
     walking: player.mode === 'walk',
     groundY,
+    fallLanded,
   }
 }

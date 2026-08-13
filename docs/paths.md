@@ -196,9 +196,11 @@ always meet flush; every piece **Strike**s down for a full refund.
    aims the empty neighbour so rooms grow. Looking back at your own floor
    hides the prompt on purpose. Roof the bay, **look up**, and Lay again to
    raise a second floor on the same footprint (one story up). Face out on the
-   upper deck to grow that floor sideways — each upper tile needs a roofed
-   bay under it. **Hang Ladder** on the lower bay, then **Climb Ladder**
-   (or look up/down and Climb Platform) to move between stories.
+   upper deck to grow that floor sideways — over a built bay, or as tall
+   stilts into empty air. A roof holds you if you step onto it; look down
+   from the lid to Climb into the room. **Hang Ladder** on the lower bay,
+   then **Climb Ladder** (or look up/down and Climb Platform) to move
+   between stories. Don't use ▲/▼ — those are swim rise/dive.
 4. Stand on the tile, face an edge → **Raise Wall** / **Hang Door** /
    **Hang Window**. Pitch a **Roof** (1 plank + 1 frond) per tile. A closed-in,
    roofed tile is a bedroom. Adjacent roofs meet on a shared ridge.
@@ -212,7 +214,7 @@ lists every recipe that's ready right now.
 
 | Recipe | Cost | Where | What it does |
 |--------|------|-------|--------------|
-| **Lay platform** | 2 plank | Land, wash, shallows (to ~2 m), or on a roofed bay (look up) | Stilt deck tile. Walkable; skirts to a ramp on land; **Climb** aboard from the water or between stories. Second floor needs a roofed bay under it |
+| **Lay platform** | 2 plank | Land, wash, shallows (to ~2 m), on a roofed bay (look up), or out from an upper floor | Stilt deck tile. Walkable; ground tiles skirt to sand; upper tiles drop off. Roofs are walkable lids. **Climb** aboard from the water or between stories. Second floor can stack on a bay or stand on tall stilts |
 | **Raise wall** | 1 plank | Tile edge (or free-standing) | Solid panel — blocks wind and body. Free walls are windbreaks (0.5 shelter) |
 | **Hang door** | 1 plank | Tile edge | Wall with a walk-through gap; blocks its cheeks, passes the middle, counts toward the room |
 | **Hang window** | 1 plank | Tile edge | Framed opening — sill, cheeks, mullion. Light in; still blocks the body; finishes a box into a hut |

@@ -339,6 +339,49 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
       Math.abs(floors.standHigh - floors.highY) < 0.15,
   )
 
+  // Second-story expand: Lay Platform must show while facing out (not stolen by Climb)
+  await fillStash(page)
+  await page.evaluate(() => {
+    const plats = window.ww.improvise.snapshot().filter((b) => b.kind === 'platform')
+    let high = plats[0]
+    for (const p of plats) if ((p.y ?? 0) > (high.y ?? 0)) high = p
+    const p = window.ww.player
+    p.x = high.x
+    p.z = high.z
+    p.y = (high.y ?? 0) + 1.75
+    p.vy = 0
+    p.fallFrom = null
+    p.mode = 'walk'
+    p.pitch = 0
+  })
+  await page.waitForTimeout(400)
+  let upperLay = false
+  for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    await page.evaluate((y) => {
+      window.ww.player.yaw = y
+      window.ww.player.pitch = 0
+    }, yaw)
+    await page.waitForTimeout(350)
+    upperLay = await page.evaluate(() =>
+      window.ww.improvise.campRecipes().some((r) => r.label === 'Platform' && r.verb === 'Lay'),
+    )
+    if (upperLay) break
+  }
+  ok('Lay Platform listed from the second story', upperLay)
+
+  const skirt = await page.evaluate(() => {
+    const plats = window.ww.improvise.snapshot().filter((b) => b.kind === 'platform')
+    let high = plats[0]
+    for (const p of plats) if ((p.y ?? 0) > (high.y ?? 0)) high = p
+    const on = window.ww.improvise.standAt(high.x, high.z, (high.y ?? 0) + 1.62)
+    const off = window.ww.improvise.standAt(high.x + 1.65, high.z, (high.y ?? 0) + 1.62)
+    return { on, off, highY: high.y }
+  })
+  ok(
+    'upper deck drops off instead of ramping to the ground',
+    !!skirt && Math.abs(skirt.on - skirt.highY) < 0.15 && skirt.off < skirt.highY - 1.0,
+  )
+
   // Back to the ground bay for fire / sleep
   await teleport(page, plat.x, plat.z, plat.y + 1.75, 'walk')
   await page.evaluate(() => {
@@ -488,6 +531,47 @@ const ctxA = await browser.newContext({ viewport: { width: 1280, height: 720 } }
     ok('Pitch Roof on neighbour bay', await waitRecipe(page, 'Roof', null, 8000))
     ok('two roofs joined', (await page.evaluate(counts)).roof === 2)
   }
+
+  // A lid without a floor above it holds the body
+  const roofWalk = await page.evaluate(() => {
+    const roofs = window.ww.improvise.snapshot().filter((b) => b.kind === 'roof')
+    const plats = window.ww.improvise.snapshot().filter((b) => b.kind === 'platform')
+    const open = roofs.find((r) => {
+      const above = plats.find(
+        (p) =>
+          Math.abs(p.x - r.x) < 0.2 &&
+          Math.abs(p.z - r.z) < 0.2 &&
+          (p.y ?? 0) > (r.y ?? 0) + 0.04 &&
+          (p.y ?? 0) < (r.y ?? 0) + 0.45,
+      )
+      return !above
+    })
+    if (!open) return null
+    const stand = window.ww.improvise.standAt(open.x, open.z, (open.y ?? 0) + 1.62)
+    return { roofY: open.y, stand }
+  })
+  ok(
+    'roof holds a standing body',
+    !!roofWalk && Math.abs((roofWalk.stand ?? 0) - (roofWalk.roofY ?? 0)) < 0.2,
+  )
+
+  // A story drop onto sand hurts
+  const healthBefore = await page.evaluate(() => window.ww.vitals.health)
+  await page.evaluate((spot) => {
+    const p = window.ww.player
+    const sand = window.ww.island.heightAt(spot.x + 10, spot.z)
+    p.x = spot.x + 10
+    p.z = spot.z
+    p.y = sand + 1.62 + 2.6
+    p.vy = 0
+    p.fallFrom = p.y
+    p.mode = 'walk'
+  }, plat)
+  await page
+    .waitForFunction((h) => window.ww.vitals.health < h - 0.04, healthBefore, { timeout: 10000 })
+    .catch(() => {})
+  const healthAfter = await page.evaluate(() => window.ww.vitals.health)
+  ok(`a story drop hurts (${healthBefore.toFixed(2)} → ${healthAfter.toFixed(2)})`, healthAfter < healthBefore - 0.04)
 
   // Inland ledge past the cairn
   ok(

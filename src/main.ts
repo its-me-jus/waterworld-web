@@ -28,6 +28,7 @@ import { createSwimmer } from './swimmer'
 import {
   createVitals,
   debugSetVitals,
+  landHard,
   resetVitals,
   swimLimits,
   updateVitals,
@@ -533,6 +534,7 @@ function loadRun(data: SavedRun) {
   player.mode = data.player.mode
   player.vy = 0
   player.speed = 0
+  player.fallFrom = null
   applyVitals(vitals, data.vitals)
 
   // Weather and ocean first — later visual restores read tide / sea height
@@ -903,6 +905,7 @@ function frame() {
     z: sea.current.z * lee,
   }
   const view = updatePlayer(player, camera, input, dt, t, collide, groundAt, limits, drift)
+  if (view.fallLanded > 0) landHard(vitals, view.fallLanded, (line) => hud.whisper(line))
   const { underwater, surfaceY, depth } = view
   if (depth > 1) hasDived = true
 

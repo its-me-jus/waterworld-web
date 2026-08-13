@@ -107,7 +107,11 @@ grid so you can architect your own base instead of inheriting one:
   another — a faint ghost shows where it lands. Tiles chain flush into docks,
   piers and stilt houses. Roof a bay, look up, and Lay again to raise a second
   floor on the same footprint — **Hang Ladder** then **Climb Ladder** between
-  stories (looking up/down still works without one).
+  stories (looking up/down still works without one). From the upper floor,
+  face out to grow that story: over a built bay the deck joins; into empty
+  air it drops tall stilts. A pitched roof is walkable — step onto a
+  neighbouring lid instead of through it. A story's drop onto sand or a
+  lower deck hurts; rested legs land cleaner than spent ones.
 - **Raise wall** — hangs on the edge of the tile you're on (or facing), or
   stands free as a windbreak. Solid: it stops the wind and it stops you.
 - **Hang door** — the wall you walk through. It blocks its cheeks and lets
