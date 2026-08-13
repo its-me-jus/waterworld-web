@@ -124,7 +124,11 @@ grid so you can architect your own base instead of inheriting one:
   which is how the day counter turns. First night in a room you built names
   it home. Bigger houses are more bays, and a second story starts the same
   way upstairs. **Hang Ladder** (plank + rope) on a roofed bay once the upper
-  floor is laid (or before), then **Climb Ladder** between stories.
+  floor is laid (or before), then **Climb Ladder** between stories. A gale
+  can strip an *open* lid (no closed-in walls); **Mend Roof** with a frond.
+  Closed rooms hold. Rain douses uncovered fires; a sound roof keeps the
+  hearth. Stilts over water can wash you off in a blow — **Climb** back.
+  After a hard front the sea may throw wrack on a far beach. Look for it.
 - **Stack woodpile** — shore stockpile for planks (Stow / Fetch) so a long
   build doesn't depend on swimming every stick.
 - **Strike** — every piece dismantles for a full refund. Rethink freely.
