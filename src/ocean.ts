@@ -215,9 +215,11 @@ void main() {
     col = mix(col, murk, smoothstep(8.0, 60.0, dist));
 
     float planarU = length(vWorldPos.xz - uCameraPos.xz);
-    float rimU = 1.0 - smoothstep(uHalfExtent * 0.52, uHalfExtent * 0.97, planarU);
+    // Same late rim as the surface: fading from half-extent ate the mid-water
+    // column and left a hole you could see the seabed through.
+    float rimU = 1.0 - smoothstep(uHalfExtent * 0.80, uHalfExtent * 0.98, planarU);
     col = mix(col, murk * 0.7, 1.0 - rimU);
-    gl_FragColor = vec4(col, 0.95 * rimU);
+    gl_FragColor = vec4(col, mix(0.2, 0.95, rimU));
 
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -261,8 +263,9 @@ void main() {
   // Extra glow in the shallows — light bouncing off sand underfoot
   body += beachShallow * shelf * 0.08 * facing;
 
-  // Shallows give the sand more of a say — less mirror, more body colour
-  fres *= 1.0 - 0.5 * shelf;
+  // Shallows give the sand more of a say — less mirror, more body colour.
+  // Keep enough fresnel that the shelf still reads as a surface, not wet sand.
+  fres *= 1.0 - 0.32 * shelf;
 
   vec3 color = mix(body, sky, fres);
 
@@ -273,8 +276,8 @@ void main() {
   // Sun glitter: sharp near, broader far — dialled back over the shelf so it
   // doesn't glitter like open ocean on ankle-deep water
   float rough = mix(0.05, 0.2, clamp(dist * 0.006, 0.0, 1.0));
-  rough = mix(rough, 0.24, shelf);
-  color += uSunColor * ggx(N, V, L, rough) * mix(1.6, 0.55, shelf);
+  rough = mix(rough, 0.22, shelf);
+  color += uSunColor * ggx(N, V, L, rough) * mix(1.6, 0.95, shelf);
 
   // Whitecaps on crests + a little foam streaking in the chop
   float streak = fbm(vWorldPos.xz * 0.9 + vec2(uTime * 0.25, -uTime * 0.2), 3);
@@ -294,19 +297,24 @@ void main() {
     (0.35 + 0.65 * (1.0 - facing));
   color = mix(color, vec3(0.93, 0.97, 0.99), shoreLace * 0.42);
 
-  // Blend toward the sky near the mesh rim so a finite square doesn't silhouette
+  // Blend toward the sky near the mesh rim so a finite square doesn't silhouette.
+  // Start late — phones use a ~1 km plane, and fading from half-extent punched
+  // a hole through the mid-water so the island's underwater sand showed as a
+  // dry shelf with anything afloat hanging in the air.
   float planar = length(vWorldPos.xz - uCameraPos.xz);
-  float rim = 1.0 - smoothstep(uHalfExtent * 0.52, uHalfExtent * 0.97, planar);
+  float rim = 1.0 - smoothstep(uHalfExtent * 0.80, uHalfExtent * 0.98, planar);
   float far = 1.0 - rim;
-  color = mix(color, uHorizonColor * 0.85, far * 0.92);
+  color = mix(color, uHorizonColor * 0.85, far * 0.7);
 
-  // Soft edge: last metres over the beach go translucent so sand peeks through
-  // with a wet sheen, without turning the whole shelf into grey mud.
-  float alpha = mix(1.0, 0.38, shelf * shelf);
+  // Soft edge: only the last cut over the beach goes a little translucent.
+  // The whole 180 m shelf used to drop to ~0.38 and read as missing water.
+  float cut = pow(shelf, 3.6);
+  float alpha = mix(1.0, 0.84, cut);
   // A little more see-through right at the cut where the lace sits
-  alpha *= 1.0 - shoreLace * 0.18;
-  // Radial fade kills the square corners against the horizon
-  alpha *= rim;
+  alpha *= 1.0 - shoreLace * 0.12;
+  // Fade coverage only in the last metres — keep the mid-ocean opaque so the
+  // seabed never shows through a vanishing plane.
+  alpha *= mix(1.0, 0.2, far * far);
 
   gl_FragColor = vec4(color, alpha);
 
