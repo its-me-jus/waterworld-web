@@ -2171,6 +2171,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   type SleepJob = {
     phase: 'closing' | 'opening'
     age: number
+    /** performance.now() when the current lid phase began — beats capped dt. */
+    phaseAt: number
     opts: {
       at: { x: number; z: number }
       fireRadius: number
@@ -6022,23 +6024,37 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     }
     // Jump the clock while the lids are shutting — never gate dawn on FPS
     const result = applySleepBody(opts)
-    sleepJob = { phase: 'closing', age: 0, opts, onWake, result }
+    sleepJob = {
+      phase: 'closing',
+      age: 0,
+      phaseAt: performance.now(),
+      opts,
+      onWake,
+      result,
+    }
     deps.hud.setSleepVeil(1)
   }
 
   function tickSleep(dt: number) {
     if (!sleepJob) return false
-    // Hitch / headless friendly — don't let a capped low FPS stall the wake
-    sleepJob.age += Math.max(dt, 1 / 40)
+    // Frame dt is capped (~0.05) in main — rare headless RAF then crawls.
+    // Also count wall time so camp-weather work during the clock jump can't
+    // leave the lids stuck after a hitch.
+    const wall = (performance.now() - sleepJob.phaseAt) / 1000
+    sleepJob.age = Math.max(sleepJob.age + Math.max(dt, 1 / 40), wall)
     if (sleepJob.phase === 'closing') {
       if (sleepJob.age >= 0.55) {
         sleepJob.phase = 'opening'
         sleepJob.age = 0
+        sleepJob.phaseAt = performance.now()
         deps.hud.setSleepVeil(0)
       }
     } else if (sleepJob.age >= 0.7) {
-      if (sleepJob.result) sleepJob.onWake(sleepJob.result)
-      sleepJob = null
+      try {
+        if (sleepJob.result) sleepJob.onWake(sleepJob.result)
+      } finally {
+        sleepJob = null
+      }
     }
     // Hold still while the lids move
     if (live) {
