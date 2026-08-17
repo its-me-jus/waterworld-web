@@ -35,6 +35,27 @@ export type CampRecipe = {
 
 export type Cost = Partial<Record<StashKind, number>>
 
+// #region agent log
+const __agentLogLast: Record<string, number> = {}
+function agentLog(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+  everyMs = 400,
+) {
+  const key = `${hypothesisId}:${location}:${message}`
+  const now = Date.now()
+  if (now - (__agentLogLast[key] ?? 0) < everyMs) return
+  __agentLogLast[key] = now
+  fetch('http://127.0.0.1:7399/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hypothesisId, location, message, data, timestamp: now }),
+  }).catch(() => {})
+}
+// #endregion
+
 export type ImproviseDeps = {
   interactions: Interactions
   salvage: Salvage
@@ -4691,7 +4712,28 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     available: () => {
       if (!deps.vitals.alive) return false
       const raft = nearestOfKind(px, pz, 'raft', 4.2)
-      return !!raft && !raft.beached && !raft.anchored
+      const ok = !!raft && !raft.beached && !raft.anchored
+      // #region agent log
+      if (raft) {
+        agentLog(
+          'G',
+          'improvise.ts:DropAnchor.available',
+          'Drop Anchor gate',
+          {
+            ok,
+            beached: !!raft.beached,
+            anchored: !!raft.anchored,
+            dist: +Math.hypot(raft.x - px, raft.z - pz).toFixed(3),
+            onRaftDeck,
+            pitch: +lookPitch.toFixed(3),
+            px: +px.toFixed(2),
+            pz: +pz.toFixed(2),
+          },
+          500,
+        )
+      }
+      // #endregion
+      return ok
     },
     use: () => {
       const raft = nearestOfKind(px, pz, 'raft', 4.2)
@@ -5390,7 +5432,22 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       if (!deps.vitals.alive || !deps.salvage.has(SHELF_COST)) return false
       const wall = nearestOfKind(px, pz, 'wall', 2.6, live?.y)
       if (!wall || facingDot(wall.x, wall.z) < 0.2) return false
-      return !nearestOfKind(wall.x, wall.z, 'shelf', 1.2, live?.y)
+      const free = !nearestOfKind(wall.x, wall.z, 'shelf', 1.2, live?.y)
+      // #region agent log
+      if (free) {
+        agentLog('A', 'improvise.ts:HangShelf.available', 'Hang Shelf available', {
+          px,
+          pz,
+          liveY: live?.y ?? null,
+          wall: { x: wall.x, z: wall.z, deckY: wall.deckY, variant: wall.variant ?? 'solid' },
+          facing: +facingDot(wall.x, wall.z).toFixed(3),
+          shelfPos: { x: shelfPos.x, y: shelfPos.y, z: shelfPos.z },
+          hasShelfCost: deps.salvage.has(SHELF_COST),
+          onPlatformDeck,
+        })
+      }
+      // #endregion
+      return free
     },
     use: () => {
       const wall = nearestOfKind(px, pz, 'wall', 2.6, live?.y)
@@ -5473,8 +5530,37 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
   // never steal the prompt from Sleep / work verbs on a closed-in tile.
   const striking = (kind: BuildKind, dist: number) => {
     if (!deps.vitals.alive) return null
-    const b = nearestOfKind(px, pz, kind, dist, live?.y)
-    if (!b || facingDot(b.x, b.z) < 0.35) return null
+    const raw = nearestOfKind(px, pz, kind, dist, live?.y)
+    const rawNoY = nearestOfKind(px, pz, kind, dist)
+    const face = raw ? facingDot(raw.x, raw.z) : null
+    const b = raw && face !== null && face >= 0.35 ? raw : null
+    // #region agent log
+    if (kind === 'wall' && (raw || rawNoY)) {
+      agentLog('B', 'improvise.ts:striking', 'Strike wall gate', {
+        px,
+        pz,
+        yaw: +yaw.toFixed(3),
+        liveY: live?.y ?? null,
+        dist,
+        face,
+        pass: !!b,
+        raw: raw
+          ? { x: raw.x, z: raw.z, deckY: raw.deckY, variant: raw.variant ?? 'solid', d: +Math.hypot(raw.x - px, raw.z - pz).toFixed(3) }
+          : null,
+        rawNoY: rawNoY
+          ? {
+              x: rawNoY.x,
+              z: rawNoY.z,
+              deckY: rawNoY.deckY,
+              variant: rawNoY.variant ?? 'solid',
+              d: +Math.hypot(rawNoY.x - px, rawNoY.z - pz).toFixed(3),
+              storyDelta: live ? +(Math.abs(rawNoY.deckY - (live.y - WALK_EYE)) * 0.4).toFixed(3) : null,
+            }
+          : null,
+        storyMismatch: !!(rawNoY && !raw),
+      })
+    }
+    // #endregion
     return b
   }
 
@@ -6522,6 +6608,29 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
       const shelfWall = nearestOfKind(player.x, player.z, 'wall', 2.8)
       if (shelfWall) setAnchor(shelfPos, shelfWall.x, shelfWall.z, shelfWall.deckY + 1.1)
       else shelfPos.copy(eatPos)
+      // #region agent log
+      {
+        const nearWall = nearestOfKind(player.x, player.z, 'wall', 2.8, player.y)
+        if (nearWall) {
+          const dx = strikePos.x - player.x
+          const dy = strikePos.y - player.y
+          const dz = strikePos.z - player.z
+          const dist3 = Math.hypot(dx, dy, dz)
+          agentLog('C', 'improvise.ts:update.strikePos', 'strikePos vs player', {
+            player: { x: +player.x.toFixed(2), y: +player.y.toFixed(2), z: +player.z.toFixed(2) },
+            strikePos: { x: +strikePos.x.toFixed(2), y: +strikePos.y.toFixed(2), z: +strikePos.z.toFixed(2) },
+            shelfPos: { x: +shelfPos.x.toFixed(2), y: +shelfPos.y.toFixed(2), z: +shelfPos.z.toFixed(2) },
+            dist3: +dist3.toFixed(3),
+            strikeRadiusOk: dist3 <= 2.7,
+            shelfDist3: +Math.hypot(shelfPos.x - player.x, shelfPos.y - player.y, shelfPos.z - player.z).toFixed(3),
+            struckKind: struck?.kind ?? null,
+            wallDeckY: nearWall.deckY,
+            yaw: +yaw.toFixed(3),
+            pitch: +lookPitch.toFixed(3),
+          })
+        }
+      }
+      // #endregion
     }
 
     updateCarpentryGhost()
@@ -6664,6 +6773,28 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
           poleIntent &&
           view.speed > 0.28 &&
           boardGrace <= 0
+        // #region agent log
+        if (aboard) {
+          agentLog(
+            'F',
+            'improvise.ts:raft.drive',
+            'raft drive gates',
+            {
+              aboard,
+              beached: !!b.beached,
+              anchored: !!b.anchored,
+              poleIntent,
+              speed: +view.speed.toFixed(3),
+              lookPitch: +lookPitch.toFixed(3),
+              boardGrace: +boardGrace.toFixed(3),
+              poling,
+              drivePlant: drivePlant ? { ...drivePlant } : null,
+              raft: { x: +b.x.toFixed(2), z: +b.z.toFixed(2), vx: +(b.vx ?? 0).toFixed(3), vz: +(b.vz ?? 0).toFixed(3) },
+            },
+            250,
+          )
+        }
+        // #endregion
         if (aboard && !b.beached && !b.anchored && view.speed > 0.35 && !poleIntent) {
           idleAboardT += dt
           if (!saidPoleHint) {
