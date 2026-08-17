@@ -99,8 +99,10 @@ const skyRig = createSky(scene, 30, 38, {
 scene.background = skyRig.horizonColor.clone()
 
 const { mesh: ocean, material: oceanMat, follow, syncWaves } = createOcean({
-  // Big enough that fog + radial rim fade eat the edge before a square shows
-  size: lowPower ? 900 : 1400,
+  // Wide enough that the late rim fade (last ~20% of the plane) sits past the
+  // island's underwater shelf. The old 900 m phone plane started vanishing at
+  // ~230 m and left the sandy apron showing through.
+  size: lowPower ? 1100 : 1400,
   segments: lowPower ? 150 : 300,
   detailOctaves: lowPower ? 2 : 4,
 })
@@ -826,6 +828,11 @@ const shallowTint = new THREE.Color('#0a4f5e')
 const deepTint = new THREE.Color('#031f2d')
 const nightWater = new THREE.Color('#020c14')
 const waterTint = new THREE.Color()
+const oceanDayDeep = new THREE.Color('#031d2b')
+const oceanDayShallow = new THREE.Color('#12718c')
+const oceanNightDeep = new THREE.Color('#01060c')
+const oceanNightShallow = new THREE.Color('#062030')
+const oceanStormShallow = new THREE.Color('#1a3a48')
 const underHemiSky = new THREE.Color('#6fc6d8')
 const underHemiNight = new THREE.Color('#1a3a48')
 
@@ -1076,6 +1083,15 @@ function frame() {
   oceanMat.uniforms.uHorizonColor.value.copy(skyRig.horizonColor)
   oceanMat.uniforms.uUnderwater.value = underwater ? 1 : 0
   oceanMat.uniforms.uSunColor.value.setRGB(1, 0.95, 0.85).lerp(new THREE.Color('#6a7a9a'), 1 - weather.daylight)
+  // Body colour used to stay noon-teal after dark, and night exposure is
+  // *higher* than midday — the shelf glowed like a pool. Walk it down with
+  // the sky, and grey it a little when a front is in.
+  const nightMix = 1 - weather.daylight
+  oceanMat.uniforms.uDeepColor.value.copy(oceanDayDeep).lerp(oceanNightDeep, nightMix)
+  oceanMat.uniforms.uShallowColor.value
+    .copy(oceanDayShallow)
+    .lerp(oceanNightShallow, nightMix)
+    .lerp(oceanStormShallow, weather.storm * 0.4)
 
   // The deeper you go, the tighter and darker the water closes in.
   // Glass-offs clear the murk a touch — the dive window you can see as well as feel.
@@ -1097,6 +1113,7 @@ function frame() {
   // Fog has to track the tint or distant geometry fades to the wrong colour and
   // reads as a flat cutout against the water instead of dissolving into it
   underFog.color.copy(waterTint)
+  oceanMat.uniforms.uUnderColor.value.copy(waterTint)
 
   airFog.color.copy(skyRig.horizonColor)
   airFog.density = 0.0045 + weather.storm * 0.0035 + (1 - weather.daylight) * 0.002
