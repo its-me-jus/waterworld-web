@@ -464,6 +464,7 @@ export function createOcean({
   mesh.add(fallback)
   let fallbackNeeded = false
   let programChecked = false
+  let triedSimple = simple
 
   const step = size / segments
 
@@ -495,8 +496,9 @@ export function createOcean({
   }
 
   /**
-   * After the first draw, if the custom program failed to compile, lift the
-   * flat stand-in so the shelf cannot read as the sea.
+   * After the first draw, if the custom program failed to compile, try the
+   * cheap fragment once; if that fails too, lift the flat stand-in so the
+   * shelf cannot read as the sea.
    */
   function reviewProgram(renderer: THREE.WebGLRenderer) {
     if (programChecked) return
@@ -504,6 +506,12 @@ export function createOcean({
       program?: { diagnostics?: unknown }
     }
     if (!props?.program) return
+    if (props.program.diagnostics && !triedSimple) {
+      triedSimple = true
+      material.fragmentShader = simpleFragmentShader
+      material.needsUpdate = true
+      return
+    }
     programChecked = true
     fallbackNeeded = Boolean(props.program.diagnostics)
     fallback.visible = fallbackNeeded && !material.transparent

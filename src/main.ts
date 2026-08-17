@@ -105,9 +105,6 @@ const { mesh: ocean, material: oceanMat, follow, syncWaves, setSubmerged, review
   size: 1400,
   segments: lowPower ? 150 : 300,
   detailOctaves: lowPower ? 2 : 4,
-  // Picky mobile drivers drop the full fbm/GGX/cube-map fragment; a missing
-  // surface is the grey-green shelf the player keeps seeing from the raft.
-  simple: lowPower,
 })
 oceanMat.uniforms.uHorizonColor.value.copy(skyRig.horizonColor)
 scene.add(ocean)
