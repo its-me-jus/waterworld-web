@@ -774,7 +774,7 @@ const ctxB = await browser.newContext({ viewport: { width: 1280, height: 720 } }
     return { rx: r.x, rz: r.z, radius: r.radius }
   })
   await page.keyboard.down('KeyW')
-  await page.waitForTimeout(2800)
+  await page.waitForTimeout(3500)
   await page.keyboard.up('KeyW')
   const plantResult = await page.evaluate((b) => {
     const [r] = window.ww.improvise.snapshot().filter((b) => b.kind === 'raft')

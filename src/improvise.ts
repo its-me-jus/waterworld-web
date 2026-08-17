@@ -5363,6 +5363,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     radius: REACH,
     available: () => {
       if (!deps.vitals.alive || swimming || !deps.salvage.has(BED_COST)) return false
+      // Extreme look-down is Sleep Under roof — don't steal that prompt
+      if (lookPitch <= -0.85) return false
       const tile = platformAt(px, pz, 0.06, live?.y)
       if (!tile || tile.shelter < SLEEP_SHELTER) return false
       const roof = tileRoof(tile)
@@ -6138,6 +6140,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     verb: 'Sleep',
     label: 'Under roof',
     radius: 2.4,
+    // Beat Lay Bed / camp builds when you're looking down to rest
+    priority: 3.2,
     available: () => {
       if (sleepJob || !deps.vitals.alive || swimming || time < restReadyAt) return false
       const t = platformAt(px, pz, 0.06, live?.y)
