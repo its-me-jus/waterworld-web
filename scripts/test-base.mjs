@@ -733,7 +733,29 @@ const ctxB = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   ok(`helm drives toward the look (${helmDx.toFixed(2)} m +x)`, helmDx > 1.0)
   ok(`helm beats passive sail speed (${helmSpeed.toFixed(2)} m/s)`, helmSpeed > 1.1)
 
-  // Feet stay planted while driving — MOVE must not stroll you over the lip
+  // Feet stay planted while driving — MOVE must not stroll you over the lip.
+  // Soft-beach after the helm beat can zero the hull; clear it and stay deep.
+  await page.evaluate(() => {
+    const snap = window.ww.improvise.snapshot()
+    const raft = snap.find((b) => b.kind === 'raft')
+    if (!raft) return
+    raft.beached = false
+    raft.anchored = false
+    const isl = window.ww.island
+    const dx = raft.x - isl.centre.x
+    const dz = raft.z - isl.centre.z
+    const len = Math.hypot(dx, dz) || 1
+    for (let d = 0; d < 40; d += 2) {
+      const x = raft.x + (dx / len) * d
+      const z = raft.z + (dz / len) * d
+      if (isl.heightAt(x, z) < -1.4) {
+        raft.x = x
+        raft.z = z
+        break
+      }
+    }
+    window.ww.improvise.restore(snap)
+  })
   await page.evaluate((r) => {
     const c = Math.cos(r.yaw)
     const s = Math.sin(r.yaw)
@@ -771,13 +793,29 @@ const ctxB = await browser.newContext({ viewport: { width: 1280, height: 720 } }
   ok(`hull still drove with planted feet (${plantResult.moved.toFixed(2)} m)`, plantResult.moved > 0.8)
 
   // Re-seat aboard with a clean hull — headless drive can soft-beach her and
-  // hide Drop Anchor. Restore unbeached from a live snapshot.
+  // hide Drop Anchor. Restore unbeached from a live snapshot, and nudge into
+  // deeper water so main's shoreline clearance doesn't stick her again.
   await page.evaluate(() => {
     const snap = window.ww.improvise.snapshot()
     const raft = snap.find((b) => b.kind === 'raft')
     if (raft) {
       raft.beached = false
       raft.anchored = false
+      const isl = window.ww.island
+      const dx = raft.x - isl.centre.x
+      const dz = raft.z - isl.centre.z
+      const len = Math.hypot(dx, dz) || 1
+      const ux = dx / len
+      const uz = dz / len
+      for (let d = 0; d < 40; d += 2) {
+        const x = raft.x + ux * d
+        const z = raft.z + uz * d
+        if (isl.heightAt(x, z) < -1.4) {
+          raft.x = x
+          raft.z = z
+          break
+        }
+      }
     }
     window.ww.improvise.restore(snap)
     const [r] = window.ww.improvise.snapshot().filter((b) => b.kind === 'raft')
