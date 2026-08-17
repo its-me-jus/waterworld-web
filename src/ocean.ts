@@ -104,7 +104,10 @@ void main() {
 
   vCrest = smoothstep(0.4, 1.35, disp.y);
   vWorldPos = world;
-  vNormal = normalize(cross(binormal, tangent));
+  // A degenerate frame (mediump on phones) used to NaN the normal and stretch
+  // a triangle into a white beam across the view.
+  vec3 n = cross(binormal, tangent);
+  vNormal = length(n) > 1e-4 ? normalize(n) : vec3(0.0, 1.0, 0.0);
 
   gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
 }
@@ -306,18 +309,80 @@ void main() {
   float far = 1.0 - rim;
   color = mix(color, uHorizonColor * 0.85, far * 0.7);
 
-  // Soft edge: only the last cut over the beach goes a little translucent.
-  // The whole 180 m shelf used to drop to ~0.38 and read as missing water.
-  float cut = pow(shelf, 3.6);
-  float alpha = mix(1.0, 0.84, cut);
-  // A little more see-through right at the cut where the lace sits
-  alpha *= 1.0 - shoreLace * 0.12;
-  // Fade coverage only in the last metres — keep the mid-ocean opaque so the
-  // seabed never shows through a vanishing plane.
-  alpha *= mix(1.0, 0.2, far * far);
+  // Keep the surface opaque. Any alpha under 1 lets the island's underwater
+  // shelf (a grey-green sand mesh) read as dry flats — the "missing water"
+  // phones keep showing from a raft. Colour still fades at the rim so the
+  // square edge hides; coverage does not.
+  gl_FragColor = vec4(color, 1.0);
 
-  gl_FragColor = vec4(color, alpha);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`
 
+// Phone / WebGL1 drivers have a hard instruction budget. The full fragment
+// (stacked fbm, GGX, cube-map fresnel) fails to compile on some of them, and
+// a missing surface is exactly the grey-green island shelf. This path keeps
+// Gerstner displacement and a readable body colour without the extras.
+const simpleFragmentShader = /* glsl */ `
+uniform vec3 uDeepColor;
+uniform vec3 uShallowColor;
+uniform vec3 uUnderColor;
+uniform vec3 uSunColor;
+uniform vec3 uSunDir;
+uniform vec3 uCameraPos;
+uniform vec3 uHorizonColor;
+uniform float uUnderwater;
+uniform float uHalfExtent;
+uniform vec4 uShelf;
+
+varying vec3 vWorldPos;
+varying vec3 vNormal;
+varying float vCrest;
+
+void main() {
+  vec3 V = normalize(uCameraPos - vWorldPos);
+  vec3 N = normalize(vNormal);
+  N.y = max(N.y, 0.16);
+  N = normalize(N);
+
+  if (uUnderwater > 0.5) {
+    vec3 murk = uUnderColor;
+    float upness = clamp(normalize(vWorldPos - uCameraPos).y, 0.0, 1.0);
+    vec3 col = mix(murk, uHorizonColor * 0.55, smoothstep(0.28, 0.92, upness) * 0.65);
+    gl_FragColor = vec4(col, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    return;
+  }
+
+  float ndv = max(dot(N, V), 0.0);
+  float fres = min(0.02 + 0.78 * pow(1.0 - ndv, 5.0), 0.5);
+  vec3 body = mix(uDeepColor, uShallowColor, pow(clamp(N.y, 0.0, 1.0), 2.0));
+
+  float shelf = 0.0;
+  if (uShelf.w > uShelf.z) {
+    float rd = length(vWorldPos.xz - uShelf.xy);
+    shelf = 1.0 - smoothstep(uShelf.z, uShelf.w, rd);
+  }
+  body = mix(body, mix(uShallowColor * 1.55, vec3(0.52, 0.8, 0.74), 0.4), shelf * 0.75);
+
+  vec3 R = reflect(-V, N);
+  R.y = max(R.y, 0.02);
+  vec3 sky = mix(uHorizonColor * 0.55, uHorizonColor, smoothstep(0.0, 0.4, R.y));
+  vec3 color = mix(body, sky, fres);
+
+  vec3 L = normalize(uSunDir);
+  vec3 H = normalize(V + L);
+  float spec = pow(max(dot(N, H), 0.0), 96.0);
+  color += uSunColor * spec * mix(0.9, 0.35, shelf);
+  color = mix(color, vec3(0.86, 0.93, 0.96), vCrest * 0.28 * (1.0 - shelf));
+
+  float planar = length(vWorldPos.xz - uCameraPos.xz);
+  float far = smoothstep(uHalfExtent * 0.80, uHalfExtent * 0.98, planar);
+  color = mix(color, uHorizonColor * 0.85, far * 0.7);
+
+  gl_FragColor = vec4(color, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -328,9 +393,16 @@ export type OceanOptions = {
   segments?: number
   /** fewer noise octaves on weak GPUs */
   detailOctaves?: number
+  /** Skip fbm / GGX / cube-map — the path that compiles on picky phone GPUs. */
+  simple?: boolean
 }
 
-export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: OceanOptions = {}) {
+export function createOcean({
+  size = 560,
+  segments = 280,
+  detailOctaves = 4,
+  simple = false,
+}: OceanOptions = {}) {
   const geometry = new THREE.PlaneGeometry(size, size, segments, segments)
   geometry.rotateX(-Math.PI / 2)
 
@@ -361,15 +433,37 @@ export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: O
       uHalfExtent: { value: size * 0.5 },
     },
     vertexShader,
-    fragmentShader: fragmentShader.replaceAll('DETAIL_OCT', String(detailOctaves)),
-    transparent: true,
+    fragmentShader: simple
+      ? simpleFragmentShader
+      : fragmentShader.replaceAll('DETAIL_OCT', String(detailOctaves)),
+    // Opaque + depth write so the island's underwater apron cannot show
+    // through. Transparency is switched on only while the camera is submerged
+    // (see setSubmerged) so Snell's window can still open.
+    transparent: false,
     side: THREE.DoubleSide,
-    depthWrite: false,
+    depthWrite: true,
+    fog: false,
   })
 
   const mesh = new THREE.Mesh(geometry, material)
   mesh.name = 'Ocean'
   mesh.frustumCulled = false
+  mesh.renderOrder = 1
+
+  // Solid stand-in under the shaded surface. If a driver skips the custom
+  // program, this is still water — not the island's grey-green apron.
+  const fallback = new THREE.Mesh(
+    new THREE.PlaneGeometry(size, size),
+    new THREE.MeshBasicMaterial({ color: 0x0c5c6b, fog: true }),
+  )
+  fallback.name = 'OceanFallback'
+  fallback.rotation.x = -Math.PI / 2
+  fallback.position.y = -0.04
+  fallback.visible = false
+  fallback.frustumCulled = false
+  mesh.add(fallback)
+  let fallbackNeeded = false
+  let programChecked = false
 
   const step = size / segments
 
@@ -387,5 +481,33 @@ export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: O
     material.uniforms.uChopScale.value = chopScale
   }
 
-  return { mesh, material, follow, syncWaves }
+  /** See-through only from below, so the shelf can never punch through from the air. */
+  function setSubmerged(underwater: boolean) {
+    fallback.position.y = (material.uniforms.uTide.value as number) - 0.04
+    ;(fallback.material as THREE.MeshBasicMaterial).color.copy(
+      material.uniforms.uShallowColor.value as THREE.Color,
+    )
+    fallback.visible = fallbackNeeded && !underwater
+    if (material.transparent === underwater) return
+    material.transparent = underwater
+    material.depthWrite = !underwater
+    material.needsUpdate = true
+  }
+
+  /**
+   * After the first draw, if the custom program failed to compile, lift the
+   * flat stand-in so the shelf cannot read as the sea.
+   */
+  function reviewProgram(renderer: THREE.WebGLRenderer) {
+    if (programChecked) return
+    const props = renderer.properties.get(material) as {
+      program?: { diagnostics?: unknown }
+    }
+    if (!props?.program) return
+    programChecked = true
+    fallbackNeeded = Boolean(props.program.diagnostics)
+    fallback.visible = fallbackNeeded && !material.transparent
+  }
+
+  return { mesh, material, follow, syncWaves, setSubmerged, reviewProgram }
 }

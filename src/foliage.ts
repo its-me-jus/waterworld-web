@@ -27,6 +27,8 @@ export type FoliageRig = {
   ) => void
   /** The key light the leaf backlight reads from. */
   setSun: (dir: THREE.Vector3, color: THREE.Color) => void
+  /** Hide the underwater apron when the camera is in the air. */
+  setAboveWater: (above: boolean) => void
   /**
    * A lit material with aerial perspective, and optionally wind and leaf
    * backlight. `wind` is metres of sway at the tip of a fully-weighted vertex.
@@ -322,6 +324,11 @@ const groundNormalBody = /* glsl */ `
 
 const groundColorBody = /* glsl */ `
   {
+    // The island mesh includes a huge underwater apron painted grey-green.
+    // From the air that apron is the "missing water": hide it once the
+    // camera is above the surface so a failed or thin ocean cannot reveal
+    // a dry shelf. Divers still need the sand, so this is gated.
+    if (uAboveWater > 0.5 && vGroundPos.y < uTide - 0.28) discard;
     vec2 gp = vGroundPos.xz;
     // None of these bands fade with distance: the whole point is that a
     // hillside seen from four hundred metres still has patches on it. Only the
@@ -388,6 +395,7 @@ const groundColorBody = /* glsl */ `
 
 const groundWetPars = /* glsl */ `
 uniform float uTide;
+uniform float uAboveWater;
 float gWetness = 0.0;
 `
 
@@ -408,6 +416,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
   const uCloudDrift = { value: new THREE.Vector2() }
   const uCloudShadow = { value: 0.45 }
   const uTide = { value: 0 }
+  const uAboveWater = { value: 1 }
   const depthMaterials = new WeakMap<THREE.Material, THREE.MeshDepthMaterial>()
 
   function material(params: FoliageParams) {
@@ -486,6 +495,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
 
       if (ground) {
         shader.uniforms.uTide = uTide
+        shader.uniforms.uAboveWater = uAboveWater
         shader.fragmentShader = shader.fragmentShader
           .replace('#include <color_fragment>', `#include <color_fragment>\n${groundColorBody}`)
           .replace(
@@ -555,6 +565,10 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     uTide.value = tide
   }
 
+  function setAboveWater(above: boolean) {
+    uAboveWater.value = above ? 1 : 0
+  }
+
   function setSun(dir: THREE.Vector3, color: THREE.Color) {
     uSunDir.value.copy(dir)
     uSunColor.value.copy(color)
@@ -567,5 +581,5 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     return m
   }
 
-  return { update, setSun, material, mesh }
+  return { update, setSun, setAboveWater, material, mesh }
 }
