@@ -491,11 +491,20 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     smokedFish += Math.max(0, n)
   }
 
-  /** Pull smoked fish out of the arms for crate Stow. */
-  function takeSmoked(n: number) {
-    const take = Math.min(smokedFish, Math.max(0, Math.floor(n)))
-    smokedFish -= take
-    return take
+  /** Move smoked fish out of the Pack (crate Stow / raft provisions). */
+  function takeSmoked(n = 1) {
+    const want = Math.max(0, Math.floor(n))
+    const got = Math.min(smokedFish, want)
+    smokedFish -= got
+    return got
+  }
+
+  /** Move raw fish out of the Pack (into voyage stores). */
+  function takeRaw(n = 1) {
+    const want = Math.max(0, Math.floor(n))
+    const got = Math.min(rawFish, want)
+    rawFish -= got
+    return got
   }
 
   function eatSmoked() {
@@ -596,6 +605,7 @@ export function createForage(hud: Hud, vitals: Vitals, deps: ForageDeps) {
     takeRawForSmoke,
     addSmoked,
     takeSmoked,
+    takeRaw,
     eatSmoked,
   }
 }
