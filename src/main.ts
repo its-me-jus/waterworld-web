@@ -1229,40 +1229,6 @@ function frame() {
   spar.update(t)
 
   const reachable = vitals.alive ? interactions.find(camera) : null
-  // #region agent log
-  {
-    const promptText = reachable ? `${reachable.verb} ${reachable.label}` : null
-    const interesting = /strike|shelf|wall|anchor|climb|hang door|hang window|raise wall|lay bed/i.test(
-      promptText ?? '',
-    )
-    const now = Date.now()
-    const g = globalThis as typeof globalThis & { __wwPromptLogAt?: number }
-    if (interesting && now - (g.__wwPromptLogAt ?? 0) > 350) {
-      g.__wwPromptLogAt = now
-      const cands = interactions.candidates(camera).filter((c) => {
-        const key = `${c.verb} ${c.label}`.toLowerCase()
-        return /strike|shelf|climb|hang|raise|sleep|door|window|bed|anchor/i.test(key)
-      })
-      fetch('http://127.0.0.1:7399/ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          hypothesisId: 'A/D',
-          location: 'main.ts:prompt',
-          message: 'F-prompt winner vs candidates',
-          data: {
-            prompt: promptText,
-            player: { x: +player.x.toFixed(2), y: +player.y.toFixed(2), z: +player.z.toFixed(2) },
-            yaw: +player.yaw.toFixed(3),
-            pitch: +player.pitch.toFixed(3),
-            cands,
-          },
-          timestamp: now,
-        }),
-      }).catch(() => {})
-    }
-  }
-  // #endregion
   // Drop only when nothing else is in reach — the stash is a last resort,
   // not a verb that steals Take / Climb / Lash.
   const dropKind =
