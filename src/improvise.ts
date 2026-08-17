@@ -5388,6 +5388,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     radius: REACH,
     available: () => {
       if (!deps.vitals.alive || !deps.salvage.has(SHELF_COST)) return false
+      // Strike Wall owns the F prompt when you're squared up on a wall
+      if (striking('wall', 2.5)) return false
       const wall = nearestOfKind(px, pz, 'wall', 2.6, live?.y)
       if (!wall || facingDot(wall.x, wall.z) < 0.2) return false
       return !nearestOfKind(wall.x, wall.z, 'shelf', 1.2, live?.y)
@@ -5483,6 +5485,8 @@ export function createImprovise(scene: THREE.Scene, camera: THREE.Camera, deps: 
     verb: 'Strike',
     label: 'Wall',
     radius: 2.7,
+    // Beat Hang Shelf / other wall-facing builds for the F prompt
+    priority: 2.6,
     available: () => !!striking('wall', 2.5),
     use: () => {
       const b = striking('wall', 2.5)
