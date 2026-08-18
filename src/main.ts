@@ -98,11 +98,9 @@ const skyRig = createSky(scene, 30, 38, {
 })
 scene.background = skyRig.horizonColor.clone()
 
-const { mesh: ocean, material: oceanMat, follow, syncWaves, setSubmerged, reviewProgram } =
-  createOcean({
-  // Match desktop span on phones so the colour-only rim sits past the island
-  // shelf. Coverage is opaque now; this is only so the square edge hides.
-  size: 1400,
+const { mesh: ocean, material: oceanMat, follow, syncWaves } = createOcean({
+  // Big enough that fog + radial rim fade eat the edge before a square shows
+  size: lowPower ? 900 : 1400,
   segments: lowPower ? 150 : 300,
   detailOctaves: lowPower ? 2 : 4,
 })
@@ -1093,7 +1091,6 @@ function frame() {
   oceanMat.uniforms.uSunDir.value.copy(skyRig.sunDir)
   oceanMat.uniforms.uHorizonColor.value.copy(skyRig.horizonColor)
   oceanMat.uniforms.uUnderwater.value = underwater ? 1 : 0
-  setSubmerged(underwater)
   oceanMat.uniforms.uSunColor.value.setRGB(1, 0.95, 0.85).lerp(new THREE.Color('#6a7a9a'), 1 - weather.daylight)
   // Body colour used to stay noon-teal after dark, and night exposure is
   // *higher* than midday — the shelf glowed like a pool. Walk it down with
@@ -1300,7 +1297,6 @@ function frame() {
   skyRig.focusShadow(camera.position.x, Math.max(view.groundY, 0), camera.position.z)
 
   post.render(scene, camera)
-  reviewProgram(renderer)
   requestAnimationFrame(frame)
 }
 

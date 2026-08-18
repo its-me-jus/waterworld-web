@@ -2304,7 +2304,6 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // abyss wall on the wreck approach — keep the terrain once you're diving it.
     const range = Math.hypot(camera.position.x - centre.x, camera.position.z - centre.z)
     group.visible = !underwater || range < 540
-    foliage.setAboveWater(!underwater)
 
     // Drop the undergrowth once it's too far away to resolve. Measured from
     // the island's centre rather than the nearest ground, so the switch happens
