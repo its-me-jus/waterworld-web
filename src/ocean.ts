@@ -207,6 +207,10 @@ void main() {
 
     float snell = smoothstep(0.24, 0.95, upness);
     vec3 mirror = mix(murk * 1.15, vec3(0.3, 0.55, 0.6), 0.25);
+    // Outside the window the surface is a rippled mirror of the sea below —
+    // let the swell and chop modulate it so it reads as moving water, not a lid
+    float ripple = clamp(0.5 + (N.x * 0.7 + N.z * 0.5) * 2.2, 0.0, 1.0);
+    mirror *= 0.72 + 0.55 * ripple + pow(caus, 1.4) * 0.7;
     // Haze the sky patch so the window edge feels like water, not a cutout
     sky = mix(mirror, sky, 0.72);
     vec3 col = mix(mirror, sky, snell);
@@ -282,7 +286,9 @@ void main() {
   foam *= smoothstep(0.35, 0.8, facing);
   foam = min(1.0, foam * (1.0 + uChopScale * 0.55));
   foam *= 1.0 - 0.9 * shelf; // no open-ocean whitecaps in the lap
-  color = mix(color, vec3(0.88, 0.94, 0.97), foam * (0.5 + uChopScale * 0.12));
+  // Foam is only as white as the light on it — moonlit it should read grey-blue
+  float foamLight = 0.4 + 0.6 * smoothstep(0.62, 1.0, uSunColor.r);
+  color = mix(color, vec3(0.88, 0.94, 0.97) * foamLight, foam * (0.5 + uChopScale * 0.12));
 
   // Soft lace of white at the waterline — complements shore.ts foam flakes
   float laceNoise = fbm(vWorldPos.xz * 1.6 + vec2(uTime * 0.4, -uTime * 0.28), 3);
@@ -292,7 +298,7 @@ void main() {
     smoothstep(0.28, 0.82, laceNoise) *
     lacePulse *
     (0.35 + 0.65 * (1.0 - facing));
-  color = mix(color, vec3(0.93, 0.97, 0.99), shoreLace * 0.42);
+  color = mix(color, vec3(0.93, 0.97, 0.99) * foamLight, shoreLace * 0.42);
 
   // Blend toward the sky near the mesh rim so a finite square doesn't silhouette
   float planar = length(vWorldPos.xz - uCameraPos.xz);

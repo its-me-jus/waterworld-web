@@ -16,7 +16,7 @@ const damp = (current: number, target: number, lambda: number, dt: number) =>
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
 
-export type AudioGround = 'water' | 'sand' | 'wet-sand' | 'rock' | 'wood' | 'scrub'
+export type AudioGround = 'water' | 'sand' | 'wet-sand' | 'rock' | 'scrub'
 
 export type AudioFrame = {
   dt: number
@@ -40,11 +40,7 @@ export type AudioFrame = {
   lightning: number
   /** One-shot clap intensity this frame (0 most of the time). */
   thunder: number
-  /** PACK / op menu open — Lyria music beds only play while this is true. */
-  menuOpen: boolean
 }
-
-export type SfxKind = 'lash' | 'wood' | 'splash' | 'sail' | 'haul'
 
 function noiseBuffer(ctx: AudioContext, seconds = 3) {
   const length = Math.floor(ctx.sampleRate * seconds)
@@ -133,7 +129,6 @@ export function createOceanAudio() {
   let ambientBus: GainNode | null = null
   let weatherBus: GainNode | null = null
   let foleyBus: GainNode | null = null
-  let musicBus: GainNode | null = null
   let ready = false
   let unlocking: Promise<void> | null = null
 
@@ -158,27 +153,13 @@ export function createOceanAudio() {
   let chirpTimer = 18 + Math.random() * 20
 
   // Optional baked beds / one-shots
-  let surfaceBed: { gain: GainNode } | null = null
-  let underBed: { gain: GainNode } | null = null
-  let stormBed: { gain: GainNode } | null = null
-  let shoreBed: { gain: GainNode } | null = null
   let shoreLapBed: { gain: GainNode } | null = null
   let rainBed: { gain: GainNode } | null = null
   let windBed: { gain: GainNode } | null = null
   let heavySurfBed: { gain: GainNode } | null = null
   const samples: Partial<Record<string, AudioBuffer>> = {}
 
-  // Vitals & danger layers
-  let dangerGain: GainNode | null = null
-  let breathShortage = 0
-  let hungerShortage = 0
-  let heartbeatTimer = 0
-  let growlTimer = 12
   let seaWeight = 1
-  let dangerLevel = 0
-  let dimLevel = 0
-  let menuOpen = false
-  let gMusic = 0
 
   let lastSub = 0
   let lastMode: 'swim' | 'walk' | null = null
@@ -203,10 +184,6 @@ export function createOceanAudio() {
   let gWind = 0
   let gLand = 0
   let gMaster = 0
-  let gSurfaceBed = 0
-  let gUnderBed = 0
-  let gStormBed = 0
-  let gShoreBed = 0
   let gHeavySurf = 0
   let underCutoff = 900
 
@@ -234,10 +211,6 @@ export function createOceanAudio() {
     foleyBus = ctx.createGain()
     foleyBus.gain.value = 1
     foleyBus.connect(master)
-    // Lyria beds live here — muted in-world, only when the PACK menu is open
-    musicBus = ctx.createGain()
-    musicBus.gain.value = 0
-    musicBus.connect(master)
 
     const noise = noiseBuffer(ctx, 4)
 
@@ -307,24 +280,8 @@ export function createOceanAudio() {
     landFilter.connect(ambientBus)
     landNoise = startNoise(ctx, noise, landFilter)
 
-    // —— proximity dread: two detuned lows beating against each other ————
-    dangerGain = ctx.createGain()
-    dangerGain.gain.value = 0
-    dangerGain.connect(master)
-    for (const freq of [52, 55.4]) {
-      const osc = ctx.createOscillator()
-      osc.type = 'sine'
-      osc.frequency.value = freq
-      osc.connect(dangerGain)
-      osc.start(0)
-    }
-
     // Optional beds / one-shots (generated offline — fail soft)
     const urls: [string, string][] = [
-      ['surfaceBed', '/audio/surface-bed.mp3'],
-      ['underBed', '/audio/underwater-bed.mp3'],
-      ['stormBed', '/audio/storm-bed.mp3'],
-      ['shoreBed', '/audio/shore-bed.mp3'],
       ['rainBed', '/audio/rain.mp3'],
       ['windBed', '/audio/wind.mp3'],
       ['heavySurf', '/audio/heavy-surf.mp3'],
@@ -336,21 +293,13 @@ export function createOceanAudio() {
       ['thunder', '/audio/thunder.mp3'],
       ['footSand', '/audio/foot-sand.mp3'],
       ['footRock', '/audio/foot-rock.mp3'],
-      ['footWood', '/audio/foot-wood.mp3'],
       ['bush', '/audio/bush-rustle.mp3'],
-      ['lash', '/audio/lash.mp3'],
-      ['woodKnock', '/audio/wood-knock.mp3'],
-      ['sailFlap', '/audio/sail-flap.mp3'],
       ['shoreLap', '/audio/shore-lap.mp3'],
     ]
     const loaded = await Promise.all(urls.map(async ([key, url]) => [key, await tryLoadSample(ctx!, url)] as const))
     for (const [key, buf] of loaded) {
       if (!buf) continue
-      if (key === 'surfaceBed') surfaceBed = startBed(ctx, buf, musicBus!)
-      else if (key === 'underBed') underBed = startBed(ctx, buf, musicBus!)
-      else if (key === 'stormBed') stormBed = startBed(ctx, buf, musicBus!)
-      else if (key === 'shoreBed') shoreBed = startBed(ctx, buf, musicBus!)
-      else if (key === 'rainBed') rainBed = startBed(ctx, buf, weatherBus)
+      if (key === 'rainBed') rainBed = startBed(ctx, buf, weatherBus)
       else if (key === 'windBed') windBed = startBed(ctx, buf, weatherBus)
       else if (key === 'heavySurf') heavySurfBed = startBed(ctx, buf, ambientBus)
       else if (key === 'shoreLap') {
@@ -385,11 +334,6 @@ export function createOceanAudio() {
     window.addEventListener('pointerdown', once, { passive: true })
     window.addEventListener('keydown', once)
     window.addEventListener('touchstart', once, { passive: true })
-  }
-
-  /** Soft plunge — kept for raft wash-off / generic callers. */
-  function playSplash(intensity = 0.5) {
-    playWaterMoment('splash', intensity, 0)
   }
 
   function noiseBurst(
@@ -628,104 +572,6 @@ export function createOceanAudio() {
     }
   }
 
-  /** Lub-dub. Rate and weight track how thin your air is running. */
-  function thump(intensity: number) {
-    if (!ctx || !master) return
-    const beat = (at: number, gain: number) => {
-      if (!ctx || !master) return
-      const osc = ctx.createOscillator()
-      osc.type = 'sine'
-      osc.frequency.setValueAtTime(58, at)
-      osc.frequency.exponentialRampToValueAtTime(38, at + 0.09)
-      const g = ctx.createGain()
-      g.gain.setValueAtTime(0.0001, at)
-      g.gain.exponentialRampToValueAtTime(gain, at + 0.015)
-      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.14)
-      osc.connect(g)
-      g.connect(master)
-      osc.start(at)
-      osc.stop(at + 0.2)
-    }
-    const now = ctx.currentTime
-    beat(now, 0.5 * intensity)
-    beat(now + 0.17, 0.34 * intensity)
-  }
-
-  /** Empty-belly gurgle — low noise through a wandering bandpass. */
-  function growl(intensity: number) {
-    if (!ctx || !master) return
-    const duration = 0.7 + Math.random() * 0.5
-    const length = Math.floor(ctx.sampleRate * duration)
-    const buffer = ctx.createBuffer(1, length, ctx.sampleRate)
-    const data = buffer.getChannelData(0)
-    let last = 0
-    const wobble = 2.2 + Math.random() * 2.6
-    for (let i = 0; i < length; i++) {
-      const t = i / length
-      const env = Math.sin(Math.PI * t) * (0.55 + 0.45 * Math.sin(t * wobble * Math.PI * 2))
-      const white = Math.random() * 2 - 1
-      last = (last + 0.06 * white) / 1.06
-      data[i] = last * 3.4 * env
-    }
-    const src = ctx.createBufferSource()
-    src.buffer = buffer
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'bandpass'
-    filter.frequency.value = 95 + Math.random() * 60
-    filter.Q.value = 1.1
-    const gain = ctx.createGain()
-    gain.gain.value = 0.4 * intensity
-    src.connect(filter)
-    filter.connect(gain)
-    gain.connect(master)
-    src.start(0)
-  }
-
-  /** A hard contact underwater — the spear finding flesh, or teeth finding you. */
-  function impact(intensity: number) {
-    if (!ctx || !master) return
-    const now = ctx.currentTime
-    const dest = foleyBus ?? master
-
-    // The blow itself: a fast low drop you feel in the jaw
-    const osc = ctx.createOscillator()
-    osc.type = 'sine'
-    osc.frequency.setValueAtTime(120, now)
-    osc.frequency.exponentialRampToValueAtTime(34, now + 0.16)
-    const g = ctx.createGain()
-    g.gain.setValueAtTime(0.0001, now)
-    g.gain.exponentialRampToValueAtTime(0.75 * intensity, now + 0.012)
-    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.26)
-    osc.connect(g)
-    g.connect(dest)
-    osc.start(now)
-    osc.stop(now + 0.3)
-
-    // The water the hit shoves aside
-    const length = Math.floor(ctx.sampleRate * 0.3)
-    const buffer = ctx.createBuffer(1, length, ctx.sampleRate)
-    const data = buffer.getChannelData(0)
-    let last = 0
-    for (let i = 0; i < length; i++) {
-      const t = i / length
-      const white = Math.random() * 2 - 1
-      last = (last + 0.05 * white) / 1.05
-      data[i] = last * 3.2 * Math.exp(-t * 7)
-    }
-    const src = ctx.createBufferSource()
-    src.buffer = buffer
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'bandpass'
-    filter.frequency.value = 300
-    filter.Q.value = 0.8
-    const ng = ctx.createGain()
-    ng.gain.value = 0.5 * intensity
-    src.connect(filter)
-    filter.connect(ng)
-    ng.connect(dest)
-    src.start(now)
-  }
-
   /** Distant→close thunder clap after a lightning flash. */
   function playThunder(intensity: number) {
     if (!ctx || !master || intensity <= 0) return
@@ -807,7 +653,7 @@ export function createOceanAudio() {
     }
 
     const sampleKey =
-      ground === 'wood' ? 'footWood' : ground === 'rock' ? 'footRock' : 'footSand'
+      ground === 'rock' ? 'footRock' : 'footSand'
     if (samples[sampleKey]) {
       playBuffer(ctx, dest, samples[sampleKey]!, {
         gain: 0.32 * intensity * (ground === 'wet-sand' ? 0.7 : 1),
@@ -844,7 +690,7 @@ export function createOceanAudio() {
     const filter = ctx.createBiquadFilter()
     filter.type = 'bandpass'
     filter.frequency.value =
-      ground === 'rock' ? 420 : ground === 'wood' ? 280 : ground === 'wet-sand' ? 190 : 150
+      ground === 'rock' ? 420 : ground === 'wet-sand' ? 190 : 150
     filter.Q.value = ground === 'rock' ? 1.2 : 0.7
     const gain = ctx.createGain()
     gain.gain.value = 0.34 * intensity * (ground === 'wet-sand' ? 0.75 : 1)
@@ -853,11 +699,11 @@ export function createOceanAudio() {
     gain.connect(dest)
     src.start(0)
 
-    if (ground === 'rock' || ground === 'wood') {
+    if (ground === 'rock') {
       const t0 = ctx.currentTime
       const osc = ctx.createOscillator()
       osc.type = 'sine'
-      osc.frequency.setValueAtTime(ground === 'wood' ? 90 : 110, t0)
+      osc.frequency.setValueAtTime(110, t0)
       osc.frequency.exponentialRampToValueAtTime(40, t0 + 0.06)
       const g = ctx.createGain()
       g.gain.setValueAtTime(0.0001, t0)
@@ -870,92 +716,9 @@ export function createOceanAudio() {
     }
   }
 
-  /** Build / raft foley — samples when present, procedural fallback. */
-  function sfx(kind: SfxKind, intensity = 0.7) {
-    if (!ctx || !master) return
-    const dest = foleyBus ?? master
-    const i = clamp01(intensity)
-
-    if (kind === 'splash') {
-      playSplash(0.5 + i * 0.5)
-      return
-    }
-    if (kind === 'lash' && samples.lash) {
-      playBuffer(ctx, dest, samples.lash, { gain: 0.4 * i, playbackRate: 0.95 + Math.random() * 0.1 })
-      return
-    }
-    if ((kind === 'wood' || kind === 'haul') && samples.woodKnock) {
-      playBuffer(ctx, dest, samples.woodKnock, { gain: 0.4 * i, playbackRate: 0.9 + Math.random() * 0.15 })
-      return
-    }
-    if (kind === 'sail' && samples.sailFlap) {
-      playBuffer(ctx, dest, samples.sailFlap, { gain: 0.35 * i, playbackRate: 0.92 + Math.random() * 0.16 })
-      return
-    }
-
-    // Procedural rope / wood / canvas
-    const now = ctx.currentTime
-    if (kind === 'lash') {
-      const duration = 0.25
-      const length = Math.floor(ctx.sampleRate * duration)
-      const buffer = ctx.createBuffer(1, length, ctx.sampleRate)
-      const data = buffer.getChannelData(0)
-      for (let n = 0; n < length; n++) {
-        const t = n / length
-        data[n] = (Math.random() * 2 - 1) * Math.exp(-t * 14) * (0.5 + 0.5 * Math.sin(t * 40))
-      }
-      playBuffer(ctx, dest, buffer, { gain: 0.35 * i, filterFreq: 900, filterQ: 1.4 })
-      return
-    }
-    if (kind === 'sail') {
-      const duration = 0.45
-      const length = Math.floor(ctx.sampleRate * duration)
-      const buffer = ctx.createBuffer(1, length, ctx.sampleRate)
-      const data = buffer.getChannelData(0)
-      let last = 0
-      for (let n = 0; n < length; n++) {
-        const t = n / length
-        const white = Math.random() * 2 - 1
-        last = (last + 0.05 * white) / 1.05
-        data[n] = last * 3 * Math.sin(Math.PI * t) * (0.6 + 0.4 * Math.sin(t * 18))
-      }
-      playBuffer(ctx, dest, buffer, { gain: 0.3 * i, filterFreq: 650, filterQ: 0.6 })
-      return
-    }
-    // wood / haul
-    const osc = ctx.createOscillator()
-    osc.type = 'triangle'
-    osc.frequency.setValueAtTime(140 + Math.random() * 40, now)
-    osc.frequency.exponentialRampToValueAtTime(70, now + 0.12)
-    const g = ctx.createGain()
-    g.gain.setValueAtTime(0.0001, now)
-    g.gain.exponentialRampToValueAtTime(0.35 * i, now + 0.01)
-    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.2)
-    osc.connect(g)
-    g.connect(dest)
-    osc.start(now)
-    osc.stop(now + 0.25)
-  }
-
-  /** Vitals, once per frame: breath shortage drives the heartbeat, hunger the growls. */
-  function setVitals(shortage: { breath: number; hunger: number }) {
-    breathShortage = shortage.breath
-    hungerShortage = shortage.hunger
-  }
-
   /** 0 calm → 1 heavy: the surface wash wears the sea state. */
   function setSeaWeight(w: number) {
     seaWeight = w
-  }
-
-  /** 0..1 — something big is in your water. */
-  function setDanger(level: number) {
-    dangerLevel = level
-  }
-
-  /** Duck everything (the long fade after the ocean wins). */
-  function dim(level: number) {
-    dimLevel = level
   }
 
   /** Occasional tiny bubble ticks while submerged. */
@@ -1031,9 +794,7 @@ export function createOceanAudio() {
       stroke,
       ground,
       thunder,
-      menuOpen: menu,
     } = frame
-    menuOpen = menu
 
     splashCool = Math.max(0, splashCool - dt)
     enterCool = Math.max(0, enterCool - dt)
@@ -1149,12 +910,7 @@ export function createOceanAudio() {
       storm < 0.45 &&
       (ground === 'scrub' || ground === 'rock')
     gLand = damp(gLand, inland ? 0.07 + (1 - shore) * 0.04 : 0, 2.6, dt)
-    gMaster = damp(gMaster, (0.9 + storm * 0.08) * (1 - dimLevel * 0.85), 2.2, dt)
-    gSurfaceBed = damp(gSurfaceBed, surfaceW * 0.55 * (1 + storm * 0.2), 2.5, dt)
-    gUnderBed = damp(gUnderBed, underW * 0.6, 2.5, dt)
-    gStormBed = damp(gStormBed, windAir * 0.5, 2.2, dt)
-    gShoreBed = damp(gShoreBed, Math.max(shoreW, onLand ? 0.35 : 0) * 0.45, 2.4, dt)
-    gMusic = damp(gMusic, menuOpen ? 0.55 : 0, 3.2, dt)
+    gMaster = damp(gMaster, 0.9 + storm * 0.08, 2.2, dt)
     gHeavySurf = damp(
       gHeavySurf,
       surfaceW * landDuck * clamp01((storm - 0.35) / 0.5) * 0.28 * seaLoud,
@@ -1172,7 +928,6 @@ export function createOceanAudio() {
     if (windNoise) windNoise.gain.gain.setTargetAtTime(gWind, now, 0.06)
     if (landNoise) landNoise.gain.gain.setTargetAtTime(gLand, now, 0.08)
     master.gain.setTargetAtTime(gMaster, now, 0.05)
-    if (musicBus) musicBus.gain.setTargetAtTime(gMusic, now, 0.08)
     // Dive muffles the world through your ears for a beat
     if (earFilter) {
       const cut = 18000 - earMuffle * 15500
@@ -1180,35 +935,10 @@ export function createOceanAudio() {
     }
     if (underFilter) underFilter.frequency.setTargetAtTime(underCutoff, now, 0.08)
     if (rumbleGain) rumbleGain.gain.setTargetAtTime(underW * (0.08 + murk * 0.1), now, 0.08)
-    if (dangerGain) dangerGain.gain.setTargetAtTime(dangerLevel * 0.16 * (onLand ? 0.25 : 1), now, 0.45)
-    if (surfaceBed) surfaceBed.gain.gain.setTargetAtTime(gSurfaceBed, now, 0.08)
-    if (underBed) underBed.gain.gain.setTargetAtTime(gUnderBed, now, 0.08)
-    if (stormBed) stormBed.gain.gain.setTargetAtTime(gStormBed, now, 0.08)
-    if (shoreBed) shoreBed.gain.gain.setTargetAtTime(gShoreBed, now, 0.08)
     if (shoreLapBed) shoreLapBed.gain.gain.setTargetAtTime(gShore * 0.9, now, 0.08)
     if (rainBed) rainBed.gain.gain.setTargetAtTime(gRain * 0.85, now, 0.08)
     if (windBed) windBed.gain.gain.setTargetAtTime(gWind * 0.85, now, 0.08)
     if (heavySurfBed) heavySurfBed.gain.gain.setTargetAtTime(gHeavySurf, now, 0.08)
-
-    // —— vitals-driven one-shots ————————————————————————————
-    if (breathShortage > 0.04) {
-      heartbeatTimer -= dt
-      if (heartbeatTimer <= 0) {
-        thump(0.45 + breathShortage * 0.55)
-        heartbeatTimer = 1.7 - breathShortage * 1.15
-      }
-    } else {
-      heartbeatTimer = 0.3
-    }
-    if (hungerShortage > 0.45) {
-      growlTimer -= dt
-      if (growlTimer <= 0) {
-        growl(0.5 + hungerShortage * 0.5)
-        growlTimer = 17 + Math.random() * 16
-      }
-    } else {
-      growlTimer = 12
-    }
 
     // Swell breathing on the surface filter — storms push it brighter / windier
     if (surfaceFilter) {
@@ -1256,5 +986,5 @@ export function createOceanAudio() {
 
   bindUnlock()
 
-  return { unlock, update, setVitals, setSeaWeight, setDanger, dim, impact, sfx, playSplash }
+  return { unlock, update, setSeaWeight }
 }

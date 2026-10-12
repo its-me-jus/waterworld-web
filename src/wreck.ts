@@ -699,7 +699,7 @@ function addBarnacles(parent: THREE.Object3D, material: THREE.Material, low: boo
 
 // —— flotsam ————————————————————————————————————————————————
 
-/** What this piece of wreckage is worth to someone salvaging it. */
+/** The kinds of wreckage that drift around the hulk. */
 export type FlotsamKind = 'plank' | 'barrel' | 'crate'
 
 type Flotsam = {
@@ -712,10 +712,6 @@ type Flotsam = {
   phase: number
   /** How the item lies in the water, before the swell tilts it. */
   rest: THREE.Quaternion
-  /** Named items the survival loop can interact with. */
-  id?: string
-  /** Once pried open, it stops riding the swell. */
-  taken?: boolean
 }
 
 export function plankObject(length: number, width: number, mat: THREE.Material) {
@@ -1167,9 +1163,6 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
 
   // —— flotsam on the surface, riding the real swell ——
   const flotsam: Flotsam[] = []
-  /** World position of the provision crate, refreshed each frame as it bobs. */
-  const provision = new THREE.Vector3()
-  let provisionItem: Flotsam | null = null
   {
     const add = (
       kind: FlotsamKind,
@@ -1179,7 +1172,6 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
       lift: number,
       spin: number,
       phase: number,
-      id?: string,
     ) => {
       group.add(object)
       const item: Flotsam = {
@@ -1191,19 +1183,14 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
         spin,
         phase,
         rest: object.quaternion.clone(),
-        id,
       }
       flotsam.push(item)
-      if (id === 'provision') provisionItem = item
     }
     // The plank he first went overboard clinging to
     add('plank', plankObject(2.7, 0.36, mat.plank), 5.5, 6.5, 0.04, 0.05, 0)
     add('plank', plankObject(1.9, 0.28, mat.plank), 11.5, 12.5, 0.03, -0.04, 1.9)
     add('plank', plankObject(1.4, 0.22, mat.plank), -6.5, 14, 0.03, 0.07, 3.4)
     add('barrel', barrelObject(mat.plank, mat.iron), 8.5, -4.5, 0.12, -0.06, 2.6)
-    // The ship's provision crate — first food in the run, lashed shut and
-    // still floating. Its lid battens are prised off by hand.
-    add('crate', crateObject(mat.plank), 16, 3.5, 0.16, 0.05, 4.8, 'provision')
     add('plank', plankObject(2.2, 0.3, mat.plank), 19.5, -9, 0.03, -0.03, 5.6)
   }
 
@@ -1253,24 +1240,6 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     return perchGround(x - opts.x, z - opts.z)
   }
 
-  // —— salvage state —————————————————————————————————————————
-  let knifeTaken = false
-  let locker: 'sealed' | 'cut' | 'stripped' = 'sealed'
-  let gearState: 'shut' | 'open' | 'stripped' = 'shut'
-  let tinTaken = false
-  let logTaken = false
-  let lanternTaken = false
-  /** Time the lashing was cut, so the lid can swing open over a beat. */
-  let lidFrom = -1
-  /** Time the gear door was pried, so it swings rather than snaps. */
-  let gearFrom = -1
-  const knifeWorld = new THREE.Vector3()
-  const lockerWorld = new THREE.Vector3()
-  const gearWorld = new THREE.Vector3()
-  const tinWorld = new THREE.Vector3()
-  const logWorld = new THREE.Vector3()
-  const lanternWorld = new THREE.Vector3()
-
   // —— per-frame ————————————————————————————————————————————
   const centre = new THREE.Vector3(opts.x, -12, opts.z)
   group.updateMatrixWorld(true)
@@ -1285,32 +1254,13 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   const sailPos = sailGeo.attributes.position
 
   function update(time: number, camera: THREE.Camera) {
-    // Once the lashing parts, the lid swings wide on its own — no hand model,
-    // just the chest giving up its weight to buoyancy and a nudge
-    if (locker !== 'sealed') {
-      if (lidFrom < 0) lidFrom = time
-      const f = Math.min(1, (time - lidFrom) / 1.6)
-      lid.rotation.x = -1.78 * (f * f * (3 - 2 * f))
-    }
-
-    // The hold door, once the knife has persuaded it
-    if (gearState !== 'shut') {
-      if (gearFrom < 0) gearFrom = time
-      const f = Math.min(1, (time - gearFrom) / 1.9)
-      gearDoor.rotation.y = 1.42 * (f * f * (3 - 2 * f))
-    }
-
     for (const item of flotsam) {
-      if (item.taken) continue
       const water = sampleOcean(opts.x + item.x, opts.z + item.z, time)
       item.object.position.set(item.x, water.y + item.lift, item.z)
       waveUp.set(water.normal.x, water.normal.y, water.normal.z)
       tilt.setFromUnitVectors(UP, waveUp)
       yaw.setFromAxisAngle(UP, item.phase + time * item.spin)
       item.object.quaternion.copy(tilt).multiply(yaw).multiply(item.rest)
-      if (item === provisionItem) {
-        provision.set(opts.x + item.x, water.y + item.lift, opts.z + item.z)
-      }
     }
 
     // Per-vertex work only earns its keep once you're close enough to read it
@@ -1335,216 +1285,6 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     sailGeo.computeVertexNormals()
   }
 
-  /**
-   * The provision crate, while it still floats. Null once it's been pried
-   * open and stripped — the hulk slips under a swell and is gone.
-   */
-  function provisionSpot() {
-    return provisionItem && !provisionItem.taken ? provision : null
-  }
-
-  /** Pry the crate open: take the food, lose the box to the sea. */
-  function takeProvision() {
-    if (!provisionItem || provisionItem.taken) return false
-    provisionItem.taken = true
-    provisionItem.object.visible = false
-    return true
-  }
-
-  /** World position of the knife on the bow deck, or null once it's yours. */
-  function knifeSpot() {
-    return knifeTaken ? null : knife.getWorldPosition(knifeWorld)
-  }
-
-  /** Work the knife free of the deck — one time only. */
-  function takeKnife() {
-    if (knifeTaken) return false
-    knifeTaken = true
-    knife.visible = false
-    return true
-  }
-
-  /** World position of the mate's chest by the stern. */
-  function lockerSpot() {
-    return chest.getWorldPosition(lockerWorld)
-  }
-
-  /** Part the rope lashing: the lid swings wide. Needs the knife, one time. */
-  function cutLashing() {
-    if (locker !== 'sealed') return false
-    locker = 'cut'
-    chest.remove(lashing)
-    return true
-  }
-
-  /** Take the pouch and the spear, leaving the empty chest to the dark. */
-  function stripLocker() {
-    if (locker !== 'cut') return false
-    locker = 'stripped'
-    contents.visible = false
-    return true
-  }
-
-  /** World position of the gear locker in the bow hold. */
-  function gearSpot() {
-    return gear.getWorldPosition(gearWorld)
-  }
-
-  /** Force the swollen door. Needs the knife; one time only. */
-  function pryGear() {
-    if (gearState !== 'shut') return false
-    gearState = 'open'
-    return true
-  }
-
-  /** Take the immersion suit off its hook — lantern can still hang beside it. */
-  function takeSuit() {
-    if (gearState === 'shut') return false
-    if (!suitHanging.visible) return false
-    suitHanging.visible = false
-    gearState = lanternTaken ? 'stripped' : 'open'
-    return true
-  }
-
-  /** Diving lantern hanging beside the suit — independent take. */
-  function lanternSpot() {
-    if (gearState === 'shut' || lanternTaken) return null
-    return lanternProp.getWorldPosition(lanternWorld)
-  }
-
-  function takeLantern() {
-    if (gearState === 'shut' || lanternTaken) return false
-    lanternTaken = true
-    lanternProp.visible = false
-    gearState = suitHanging.visible ? 'open' : 'stripped'
-    return true
-  }
-
-  /** The galley's bread tin in the hold, until it's been opened. */
-  function tinSpot() {
-    return tinTaken ? null : tin.getWorldPosition(tinWorld)
-  }
-
-  function takeTin() {
-    if (tinTaken) return false
-    tinTaken = true
-    tin.visible = false
-    return true
-  }
-
-  /** The ship's log under the stern transom, until it's been read. */
-  function logSpot() {
-    return logTaken ? null : logBook.getWorldPosition(logWorld)
-  }
-
-  function takeLog() {
-    if (logTaken) return false
-    logTaken = true
-    logBook.visible = false
-    return true
-  }
-
-  /** A new run: the knife is back on the deck, the locker roped shut, the
-   *  provision crate riding the swell again. */
-  function reset() {
-    knifeTaken = false
-    knife.visible = true
-    locker = 'sealed'
-    lidFrom = -1
-    lid.rotation.x = 0
-    gearState = 'shut'
-    gearFrom = -1
-    gearDoor.rotation.y = 0
-    suitHanging.visible = true
-    lanternTaken = false
-    lanternProp.visible = true
-    tinTaken = false
-    tin.visible = true
-    logTaken = false
-    logBook.visible = true
-    if (lashing.parent !== chest) chest.add(lashing)
-    contents.visible = true
-    if (provisionItem) {
-      provisionItem.taken = false
-      provisionItem.object.visible = true
-    }
-  }
-
-  function snapshot() {
-    return {
-      provisionTaken: !!provisionItem?.taken,
-      knifeTaken,
-      locker,
-      gearLocker: gearState,
-      tinTaken,
-      logTaken,
-      lanternTaken,
-      suitTaken: !suitHanging.visible,
-    }
-  }
-
-  function restore(
-    saved:
-      | {
-          provisionTaken: boolean
-          knifeTaken: boolean
-          locker: 'sealed' | 'cut' | 'stripped'
-          gearLocker: 'shut' | 'open' | 'stripped'
-          tinTaken: boolean
-          logTaken: boolean
-          lanternTaken?: boolean
-          suitTaken?: boolean
-        }
-      | undefined,
-  ) {
-    reset()
-    if (!saved) return
-
-    knifeTaken = !!saved.knifeTaken
-    knife.visible = !knifeTaken
-    tinTaken = !!saved.tinTaken
-    tin.visible = !tinTaken
-    logTaken = !!saved.logTaken
-    logBook.visible = !logTaken
-
-    if (provisionItem) {
-      provisionItem.taken = !!saved.provisionTaken
-      provisionItem.object.visible = !provisionItem.taken
-    }
-
-    locker = saved.locker
-    if (locker !== 'sealed') {
-      lidFrom = 0
-      lid.rotation.x = -1.78
-      if (lashing.parent) lashing.parent.remove(lashing)
-      contents.visible = locker !== 'stripped'
-    }
-
-    gearState = saved.gearLocker
-    const suitTaken = saved.suitTaken ?? gearState === 'stripped'
-    // Legacy stripped saves: suit was taken; lantern didn't exist yet → treat as taken
-    lanternTaken =
-      saved.lanternTaken ?? (gearState === 'stripped' && saved.suitTaken === undefined)
-
-    if (gearState === 'shut') {
-      gearFrom = -1
-      gearDoor.rotation.y = 0
-      suitHanging.visible = true
-      lanternProp.visible = true
-      lanternTaken = false
-    } else {
-      gearFrom = 0
-      gearDoor.rotation.y = 1.42
-      const suitGone = gearState === 'stripped' || !!suitTaken
-      suitHanging.visible = !suitGone
-      lanternProp.visible = !lanternTaken
-      if (!suitHanging.visible && lanternTaken) gearState = 'stripped'
-      else if (gearState === 'stripped' && (!suitGone || !lanternTaken)) {
-        gearState = 'open'
-      }
-    }
-  }
-
   return {
     group,
     centre,
@@ -1562,36 +1302,5 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
       opts.z + PERCH.z + Math.sin(PERCH.rampDir) * (PERCH.flat + PERCH.cliffRun + PERCH.rampRun),
     ),
     update,
-    provisionSpot,
-    takeProvision,
-    knifeSpot,
-    takeKnife,
-    lockerSpot,
-    cutLashing,
-    stripLocker,
-    gearSpot,
-    pryGear,
-    takeSuit,
-    lanternSpot,
-    takeLantern,
-    tinSpot,
-    takeTin,
-    logSpot,
-    takeLog,
-    reset,
-    snapshot,
-    restore,
-    get lockerState() {
-      return locker
-    },
-    get gearLockerState() {
-      return gearState
-    },
-    get suitLeft() {
-      return suitHanging.visible
-    },
-    get lanternLeft() {
-      return !lanternTaken && gearState !== 'shut'
-    },
   }
 }

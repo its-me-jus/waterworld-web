@@ -1,345 +1,43 @@
-import { WOUND_CLOT, type Cause, type Vitals } from './survival'
-import type { Stash, StashKind } from './salvage'
-
 /**
  * The HUD stays out of the way on purpose: nothing here tells you where to go
- * or what exists. A vital only draws itself once it's worth worrying about, the
- * breath ring only shows while you're holding it, and the action prompt only
- * appears when something is already within arm's reach. Counts and full body
- * readouts live in the Pack hub — the map is for acting.
- *
- * Two quiet layers on top of that:
- *
- *  - Whispers: one fading line that names what the body already told you
- *    ("Your stomach knots."). Queued so a run of them can't stomp each other.
- *  - Veils: diegetic vignettes — the closing dark of a held breath, the grey
- *    weariness of an empty belly, the red pulse of an open wound.
+ * or what exists. The one thing it carries is the whisper — a single fading
+ * line that names something the world is already doing ("The tide is
+ * turning."), queued so a run of them can't stomp each other.
  */
 
-export type Prompt = { verb: string; label: string } | null
+const WHISPER_SECONDS = 4.2
+const WHISPER_QUEUE_MAX = 4
 
-const RING_RADIUS = 30
-const RING = 2 * Math.PI * RING_RADIUS
-
-const damp = (current: number, target: number, lambda: number, dt: number) =>
-  current + (target - current) * (1 - Math.exp(-lambda * dt))
-
-const ROWS: { key: keyof Vitals; label: string; from: number }[] = [
-  { key: 'health', label: 'Condition', from: 0.99 },
-  { key: 'stamina', label: 'Strength', from: 0.7 },
-  { key: 'energy', label: 'Energy', from: 0.68 },
-  { key: 'warmth', label: 'Warmth', from: 0.72 },
-  { key: 'water', label: 'Water', from: 0.72 },
-  { key: 'food', label: 'Food', from: 0.72 },
-]
-
-const DEATH_TITLE: Record<Cause, string> = {
-  drowned: 'You drowned',
-  exposure: 'The cold took you',
-  thirst: 'You died of thirst',
-  hunger: 'You starved',
-  taken: 'The ocean kept you',
-  fall: 'You fell',
-}
-
-export function createHud(app: HTMLElement, opts: { touch: boolean; onRestart: () => void }) {
-  const root = document.createElement('div')
-  root.id = 'hud'
-  root.innerHTML = `
-    <svg id="breath" viewBox="0 0 80 80" aria-hidden="true">
-      <circle class="breath-track" cx="40" cy="40" r="${RING_RADIUS}" />
-      <circle class="breath-fill" cx="40" cy="40" r="${RING_RADIUS}" />
-    </svg>
-    <div id="day"></div>
-    <div id="craft"></div>
-    <div id="vitals"></div>
-    <div id="stash"></div>
-    <div id="prompt"><kbd>F</kbd><span class="prompt-main"></span><span class="prompt-more"></span></div>
-    <div id="hurt"></div>
-  `
-  app.appendChild(root)
-
+export function createHud(app: HTMLElement) {
   const whisperBox = document.createElement('div')
   whisperBox.id = 'whisper'
   app.appendChild(whisperBox)
 
-  const breathVeil = document.createElement('div')
-  breathVeil.id = 'breath-veil'
-  app.appendChild(breathVeil)
-  const wearyVeil = document.createElement('div')
-  wearyVeil.id = 'weary-veil'
-  app.appendChild(wearyVeil)
-  const woundVeil = document.createElement('div')
-  woundVeil.id = 'wound-veil'
-  app.appendChild(woundVeil)
-  const sleepVeil = document.createElement('div')
-  sleepVeil.id = 'sleep-veil'
-  sleepVeil.innerHTML = '<i class="sleep-lid sleep-lid-top"></i><i class="sleep-lid sleep-lid-bot"></i>'
-  app.appendChild(sleepVeil)
-  const sleepLidTop = sleepVeil.querySelector('.sleep-lid-top') as HTMLElement
-  const sleepLidBot = sleepVeil.querySelector('.sleep-lid-bot') as HTMLElement
-
-  const breath = root.querySelector('#breath') as SVGSVGElement
-  const breathFill = root.querySelector('.breath-fill') as SVGCircleElement
-  breathFill.style.strokeDasharray = String(RING)
-
-  const vitalsBox = root.querySelector('#vitals') as HTMLElement
-  const stashBox = root.querySelector('#stash') as HTMLElement
-  const promptBox = root.querySelector('#prompt') as HTMLElement
-  const promptText = promptBox.querySelector('.prompt-main') as HTMLElement
-  const promptMore = promptBox.querySelector('.prompt-more') as HTMLElement
-  const hurt = root.querySelector('#hurt') as HTMLElement
-  const dayChip = root.querySelector('#day') as HTMLElement
-  const craftChip = root.querySelector('#craft') as HTMLElement
-  if (opts.touch) promptBox.classList.add('no-key')
-
-  const rows = ROWS.map(({ key, label, from }) => {
-    const row = document.createElement('div')
-    row.className = 'vital'
-    row.innerHTML = `<span>${label}</span><i><b></b></i>`
-    vitalsBox.appendChild(row)
-    return { key, from, row, fill: row.querySelector('b') as HTMLElement }
-  })
-
-  // Wound clot meter — only draws while you're bleeding
-  const woundRow = document.createElement('div')
-  woundRow.className = 'vital wound'
-  woundRow.innerHTML = `<span>Bleeding</span><i><b></b></i>`
-  vitalsBox.appendChild(woundRow)
-  const woundFill = woundRow.querySelector('b') as HTMLElement
-  woundRow.classList.remove('on')
-
-  const death = document.createElement('div')
-  death.id = 'death'
-  death.innerHTML = `
-    <h1></h1>
-    <p></p>
-    <button type="button">Swim again</button>
-  `
-  app.appendChild(death)
-  const deathTitle = death.querySelector('h1') as HTMLElement
-  const deathLine = death.querySelector('p') as HTMLElement
-  ;(death.querySelector('button') as HTMLButtonElement).addEventListener('click', (e) => {
-    e.stopPropagation()
-    opts.onRestart()
-  })
-
-  let lastPrompt = ''
-  let lastPromptMore = -1
-  let lastStash = ''
-  /** 0 open … 1 eyes shut — Rest/Sleep close-eyes sequence. */
-  let sleepAmt = 0
-  let sleepTarget = 0
-  let lastDay = 0
-  let lastCraft = ''
-
-  const whisperQueue: string[] = []
-  let whisperT = 0
-  let whisperOn = false
-
-  let veilBreath = 0
-  let veilWeary = 0
-  let veilWound = 0
+  const queue: string[] = []
+  let timer = 0
+  let showing = false
 
   /** A quiet one-liner, queued so several can't stomp each other. */
   function whisper(text: string) {
-    if (whisperQueue.length < 5) whisperQueue.push(text)
+    if (queue.length < WHISPER_QUEUE_MAX) queue.push(text)
   }
 
-  /** Raft drive/state chip — only while you're aboard. */
-  function setCraft(text: string | null) {
-    const next = text ?? ''
-    if (next === lastCraft) return
-    lastCraft = next
-    craftChip.textContent = next
-    craftChip.classList.toggle('on', next !== '')
-  }
-
-  /**
-   * Soft F prompt — facing-best verb. When several actions are ready, `more`
-   * adds "N more · Actions" so the hand sheet is discoverable without clutter.
-   */
-  function setPrompt(prompt: Prompt | string | null, more = 0) {
-    const text =
-      typeof prompt === 'string'
-        ? prompt
-        : prompt
-          ? `${prompt.verb} ${prompt.label.toLowerCase()}`
-          : ''
-    const extra = text && more > 0 ? more : 0
-    if (text === lastPrompt && extra === lastPromptMore) return
-    lastPrompt = text
-    lastPromptMore = extra
-    promptText.textContent = text
-    promptMore.textContent = extra > 0 ? `${extra} more · Actions` : ''
-    promptMore.classList.toggle('on', extra > 0)
-    promptBox.classList.toggle('on', text !== '')
-    promptBox.classList.toggle('crowded', extra > 0)
-  }
-
-  function setStash(
-    stash: Stash,
-    labels: Record<StashKind, { one: string; many: string }>,
-    held?: { rawFish?: number; smokedFish?: number },
-  ) {
-    const parts: string[] = []
-    for (const key of Object.keys(stash) as StashKind[]) {
-      const count = stash[key]
-      if (count > 0) parts.push(`${count === 1 ? labels[key].one : labels[key].many} ${count}`)
-    }
-    const fish = held?.rawFish ?? 0
-    if (fish > 0) parts.push(`Raw fish ${fish}`)
-    const smoked = held?.smokedFish ?? 0
-    if (smoked > 0) parts.push(`Smoked fish ${smoked}`)
-    const text = parts.join('  ·  ')
-    if (text === lastStash) return
-    lastStash = text
-    stashBox.textContent = text
-  }
-
-  function update(vitals: Vitals, submerged: boolean, dt: number) {
-    const showBreath = submerged || vitals.breath < 0.995
-    breath.style.opacity = showBreath ? '1' : '0'
-    if (showBreath) {
-      breathFill.style.strokeDashoffset = String(RING * (1 - vitals.breath))
-      breathFill.classList.toggle('low', vitals.breath < 0.3)
-    }
-
-    for (const { key, from, row, fill } of rows) {
-      const value = vitals[key] as number
-      row.classList.toggle('on', value < from)
-      fill.style.transform = `scaleX(${Math.max(0, value)})`
-      fill.classList.toggle('low', value < 0.25)
-    }
-
-    // Clot progress: full bar at the bite, empties as it seals
-    if (vitals.wounded) {
-      const left = Math.max(0, 1 - vitals.woundClock / WOUND_CLOT)
-      woundRow.classList.add('on')
-      woundFill.style.transform = `scaleX(${left})`
-      woundFill.classList.toggle('low', left < 0.35)
-    } else {
-      woundRow.classList.remove('on')
-    }
-
-    hurt.style.opacity = String(
-      Math.max(0, 1 - vitals.health / 0.55) * 0.55 + (vitals.wounded ? 0.18 : 0),
-    )
-
-    // —— whispers ————————————————————————————————————————————
-    whisperT -= dt
-    if (whisperT <= 0) {
-      const next = whisperQueue.shift()
-      if (next) {
-        whisperBox.textContent = next
-        whisperBox.classList.add('on')
-        whisperOn = true
-        whisperT = 3.6
-      } else if (whisperOn) {
-        whisperBox.classList.remove('on')
-        whisperOn = false
-      }
-    }
-
-    // —— veils: the body as readout ———————————————————————————
-    const breathShort = vitals.breath < 0.35 ? (0.35 - vitals.breath) / 0.35 : 0
-    veilBreath = damp(veilBreath, breathShort * (submerged ? 1 : 0.35), 5, dt)
-    breathVeil.style.opacity = veilBreath.toFixed(3)
-    breathVeil.classList.toggle('critical', submerged && vitals.breath < 0.18)
-    if (!submerged && vitals.breath >= 0.99) breathVeil.style.opacity = '0'
-
-    const weary =
-      Math.max(
-        vitals.food < 0.3 ? (0.3 - vitals.food) / 0.3 : 0,
-        vitals.energy < 0.3 ? (0.3 - vitals.energy) / 0.3 : 0,
-        1 - vitals.stamina,
-      ) * 0.55
-    veilWeary = damp(veilWeary, weary, 2.5, dt)
-    wearyVeil.style.opacity = veilWeary.toFixed(3)
-
-    const woundAmt = vitals.wounded ? 0.72 + Math.sin(vitals.elapsed * 3.6) * 0.06 : 0
-    veilWound = damp(veilWound, woundAmt, vitals.wounded ? 5 : 1.2, dt)
-    woundVeil.style.opacity = veilWound.toFixed(3)
-    woundVeil.classList.toggle('bleeding', vitals.wounded)
-
-    // Close-eyes Rest — lids meet in the middle, world goes dark
-    sleepAmt = damp(sleepAmt, sleepTarget, sleepTarget > sleepAmt ? 7 : 4.2, dt)
-    const lid = Math.min(1, Math.max(0, sleepAmt))
-    sleepLidTop.style.transform = `translateY(${(-50 + lid * 50).toFixed(2)}%)`
-    sleepLidBot.style.transform = `translateY(${(50 - lid * 50).toFixed(2)}%)`
-    sleepVeil.style.opacity = lid > 0.02 ? '1' : '0'
-    sleepVeil.classList.toggle('on', lid > 0.02)
-  }
-
-  /** Drive the sleep lids: 0 = open, 1 = shut. */
-  function setSleepVeil(amount: number) {
-    sleepTarget = Math.min(1, Math.max(0, amount))
-  }
-
-  /** Instant snap (reset / death). */
-  function clearSleepVeil() {
-    sleepTarget = 0
-    sleepAmt = 0
-    sleepLidTop.style.transform = 'translateY(-50%)'
-    sleepLidBot.style.transform = 'translateY(50%)'
-    sleepVeil.style.opacity = '0'
-    sleepVeil.classList.remove('on')
-  }
-
-  /** The one scoreboard the game keeps: which day of the run you're on. */
-  function setDay(day: number) {
-    if (day === lastDay) return
-    const first = lastDay === 0
-    lastDay = day
-    dayChip.textContent = `Day ${day}`
-    if (!first) {
-      // Re-arm the dawn pulse
-      dayChip.classList.remove('turn')
-      void dayChip.offsetWidth
-      dayChip.classList.add('turn')
+  function update(dt: number) {
+    timer -= dt
+    if (timer > 0) return
+    const next = queue.shift()
+    if (next) {
+      whisperBox.textContent = next
+      whisperBox.classList.add('on')
+      showing = true
+      timer = WHISPER_SECONDS
+    } else if (showing) {
+      whisperBox.classList.remove('on')
+      showing = false
     }
   }
 
-  function setDead(cause: Cause | null, day: number) {
-    deathTitle.textContent = cause ? DEATH_TITLE[cause] : 'You died'
-    let line = `Survived ${day} ${day === 1 ? 'day' : 'days'} · no save, no shortcut back`
-    try {
-      const best = Math.max(day, Number(localStorage.getItem('ww.bestDays') ?? 0))
-      localStorage.setItem('ww.bestDays', String(best))
-      if (best > day) line += ` · longest drift ${best} ${best === 1 ? 'day' : 'days'}`
-    } catch {
-      // Private-mode storage is a nice-to-have, never a reason to lose the ending
-    }
-    deathLine.textContent = line
-    death.classList.add('on')
-    root.classList.add('dim')
-  }
-
-  function clearDead() {
-    death.classList.remove('on')
-    root.classList.remove('dim')
-    whisperQueue.length = 0
-    whisperT = 0
-    lastDay = 0
-    clearSleepVeil()
-    setCraft(null)
-  }
-
-  return {
-    update,
-    whisper,
-    setPrompt,
-    setCraft,
-    setStash,
-    setDay,
-    setDead,
-    clearDead,
-    setSleepVeil,
-    clearSleepVeil,
-    get promptShowing() {
-      return promptBox.classList.contains('on')
-    },
-  }
+  return { whisper, update }
 }
 
 export type Hud = ReturnType<typeof createHud>

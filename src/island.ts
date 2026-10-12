@@ -37,36 +37,6 @@ export type Island = {
   readonly rockColliders: number
   /** Beach-level world positions, for anything that wants to sit on the sand. */
   shore: THREE.Vector3[]
-  /**
-   * Rain caught in rock hollows above the beach. This is the one thing the
-   * island has that the ocean and the wreck cannot give you at all: water that
-   * keeps coming back. It's what turns landfall into somewhere you could stay.
-   */
-  pools: THREE.Vector3[]
-  /**
-   * One inland rock stack — someone marked a place. No marker pointing at it;
-   * you find it by walking the green band. Null only if the terrain couldn't
-   * host one (shouldn't happen on the stock island).
-   */
-  cairn: THREE.Vector3 | null
-  /**
-   * Dry ledge past the cairn — natural drip + windbreak niche. Null if terrain
-   * couldn't host one.
-   */
-  ledge: THREE.Vector3 | null
-  /**
-   * Shore crabs that scuttle the wet sand. Grab one when you're close enough —
-   * same rule as fish and shellfish, nothing points at them.
-   */
-  crabs: {
-    nearest: (point: THREE.Vector3, maxDist: number) => { index: number; dist: number } | null
-    positionAt: (index: number, out: THREE.Vector3) => THREE.Vector3
-    /** Hide and eat; the shell comes back later. */
-    take: (index: number) => boolean
-    reset: () => void
-    snapshot: () => { returnIn: number }[]
-    restore: (saved?: { returnIn: number }[]) => void
-  }
   update: (camera: THREE.Camera, underwater: boolean, time?: number) => void
   /** Keep aerial perspective matched to the live horizon. */
   setHaze: (color: THREE.Color) => void
@@ -1083,6 +1053,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   // silhouette — much smaller than it used to be, and warmer, or the whole
   // island reads as a cold day.
   const skylight = { emissive: new THREE.Color('#1b2a2b'), emissiveIntensity: 0.26 }
+  // Stone and driftwood have no translucency to carry light into the shade the
+  // way leaves do, so under the canopy they crush to black. A warm, stronger
+  // fill keeps them reading as rock and wood rather than holes.
+  const stoneFill = { emissive: new THREE.Color('#7a7160'), emissiveIntensity: 0.85 }
+  const woodFill = { emissive: new THREE.Color('#6b5a44'), emissiveIntensity: 0.7 }
 
   const terrain = new THREE.Mesh(
     geometry,
@@ -1668,6 +1643,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     throughColor?: string
     shadowedBleed?: boolean
     doubleSided?: boolean
+    /** Overrides the default skylight lift for materials that need more. */
+    fill?: { emissive: THREE.Color; emissiveIntensity: number }
     /** Metres past which this layer stops being drawn at all. */
     range?: number
   }[] = [
@@ -1753,11 +1730,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     },
     { parts: wrackParts,
       range: 300, color: 0x4f5c3a, roughness: 0.95 },
-    { parts: rocks, color: 0x8b8371, roughness: 0.97 },
-    { parts: boulderParts, color: 0x79715f, roughness: 0.97 },
-    { parts: wood, color: 0xa08a6a, roughness: 1 },
-    { parts: fallenParts, color: 0x63513a, roughness: 1 },
-    { parts: deadParts, color: 0xa89b86, roughness: 1, wind: 0.05 },
+    { parts: rocks, color: 0x8b8371, roughness: 0.97, fill: stoneFill },
+    { parts: boulderParts, color: 0x79715f, roughness: 0.97, fill: stoneFill },
+    { parts: wood, color: 0xa08a6a, roughness: 1, fill: woodFill },
+    { parts: fallenParts, color: 0x63513a, roughness: 1, fill: woodFill },
+    { parts: deadParts, color: 0xa89b86, roughness: 1, wind: 0.05, fill: woodFill },
     { parts: pathParts,
       range: 320, color: 0x8f8674, roughness: 0.98 },
   ]
@@ -1783,7 +1760,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       translucency: layer.translucency,
       throughColor: layer.throughColor,
       shadowedBleed: layer.shadowedBleed,
-      ...skylight,
+      ...(layer.fill ?? skylight),
     })
     const mesh = foliage.mesh(
       mergeGeometries(layer.parts, false) as THREE.BufferGeometry,
@@ -1811,7 +1788,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       transparent: true,
       opacity: 0.92,
     })
-    const rimMaterial = foliage.material({ color: 0x6e6656, roughness: 0.95, ...skylight })
+    const rimMaterial = foliage.material({ color: 0x6e6656, roughness: 0.95, ...stoneFill })
 
     // Still water is level water: on any real slope a disc of it saws straight
     // through the hillside. So every candidate is scored for flatness and only
@@ -1863,10 +1840,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   // A small stack on flat green ground. Not a waypoint — just proof someone
   // walked inland and left rope. Salvage hangs a takeable find on the world
   // position; this mesh is the thing you notice first.
-  let cairn: THREE.Vector3 | null = null
   let cairnSpot: { lx: number; lz: number; h: number } | null = null
   {
-    const stoneMat = foliage.material({ color: 0x6a6358, roughness: 0.97, ...skylight })
+    const stoneMat = foliage.material({ color: 0x6a6358, roughness: 0.97, ...stoneFill })
     const candidates: { lx: number; lz: number; h: number; slope: number }[] = []
     for (let i = 0; i < 700; i++) {
       const angle = i * 2.618 + 1.1
@@ -1917,17 +1893,15 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       stack.add(stick)
       group.add(stack)
       cairnSpot = { lx, lz, h }
-      cairn = new THREE.Vector3(opts.x + lx, h, opts.z + lz)
     }
   }
 
   // —— inland ledge ————————————————————————————————————————————
   // Dry shelf past the cairn: flat rock, a seep under an overhang, stones
   // cut the wind. No marker — you keep walking inland after the stack.
-  let ledge: THREE.Vector3 | null = null
   if (cairnSpot) {
-    const stoneMat = foliage.material({ color: 0x6a6358, roughness: 0.97, ...skylight })
-    const darkStone = foliage.material({ color: 0x5a5448, roughness: 0.98, ...skylight })
+    const stoneMat = foliage.material({ color: 0x6a6358, roughness: 0.97, ...stoneFill })
+    const darkStone = foliage.material({ color: 0x5a5448, roughness: 0.98, ...stoneFill })
     const dripWater = new THREE.MeshStandardMaterial({
       color: 0x3f757b,
       roughness: 0.28,
@@ -2023,7 +1997,6 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       ledgeGroup.add(alcove)
 
       group.add(ledgeGroup)
-      ledge = new THREE.Vector3(opts.x + lx + dripX, h + 0.08, opts.z + lz + dripZ)
     }
   }
 
@@ -2236,67 +2209,6 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     }
   }
 
-  const crabsApi = {
-    nearest(point: THREE.Vector3, maxDist: number) {
-      let best = -1
-      let bestD = maxDist
-      for (let i = 0; i < crabs.length; i++) {
-        const c = crabs[i]
-        if (c.goneUntil > 0 || !c.mesh.visible) continue
-        const wx = opts.x + c.x
-        const wz = opts.z + c.z
-        const d = Math.hypot(point.x - wx, point.z - wz)
-        if (d < bestD) {
-          bestD = d
-          best = i
-        }
-      }
-      return best < 0 ? null : { index: best, dist: bestD }
-    },
-    positionAt(index: number, out: THREE.Vector3) {
-      const c = crabs[index]
-      const h = surface(c.x, c.z)
-      return out.set(opts.x + c.x, h + 0.05, opts.z + c.z)
-    },
-    take(index: number) {
-      const c = crabs[index]
-      if (!c || c.goneUntil > 0 || !c.mesh.visible) return false
-      c.mesh.visible = false
-      // Respawn delay set from update's clock on first hidden frame
-      c.goneUntil = -1
-      return true
-    },
-    reset() {
-      for (const c of crabs) {
-        c.x = c.homeX
-        c.z = c.homeZ
-        c.spook = 0
-        c.goneUntil = 0
-        c.mesh.visible = true
-      }
-    },
-    snapshot() {
-      return crabs.map((c) => ({
-        returnIn:
-          c.goneUntil < 0
-            ? 75 + c.phase * 8
-            : c.goneUntil > wildlifeTime
-              ? c.goneUntil - wildlifeTime
-              : 0,
-      }))
-    },
-    restore(saved?: { returnIn: number }[]) {
-      crabs.forEach((c, i) => {
-        const remaining = Math.max(0, saved?.[i]?.returnIn ?? 0)
-        c.x = c.homeX
-        c.z = c.homeZ
-        c.spook = 0
-        c.goneUntil = remaining > 0 ? wildlifeTime + remaining : 0
-        c.mesh.visible = remaining <= 0
-      })
-    },
-  }
-
   let wildlifeTime = 0
 
   function update(camera: THREE.Camera, underwater: boolean, time = 0) {
@@ -2499,10 +2411,6 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     heightAt,
     resolve,
     shore,
-    pools,
-    cairn,
-    ledge,
-    crabs: crabsApi,
     update,
     setHaze,
     setWeather,

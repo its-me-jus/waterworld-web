@@ -11,8 +11,6 @@ export type InputState = {
   lookDeltaY: number
   rise: boolean
   dive: boolean
-  /** One-shot: set on the frame the use key/button goes down, cleared by the game. */
-  interact: boolean
 }
 
 export function createInputState(): InputState {
@@ -23,7 +21,6 @@ export function createInputState(): InputState {
     lookDeltaY: 0,
     rise: false,
     dive: false,
-    interact: false,
   }
 }
 

@@ -9,6 +9,8 @@ export type SkyRig = {
   milky: THREE.Mesh
   moon: THREE.Group
   sunDir: THREE.Vector3
+  /** Where the moon sits in the sky — the sea catches it once the sun is down. */
+  moonDir: THREE.Vector3
   sunLight: THREE.DirectionalLight
   hemi: THREE.HemisphereLight
   horizonColor: THREE.Color
@@ -281,6 +283,8 @@ const DAY_CLOUD_SHADOW = new THREE.Color('#5d7c94')
 const STORM_CLOUD = new THREE.Color('#8a9198')
 const STORM_CLOUD_SHADOW = new THREE.Color('#2a3238')
 const NIGHT_CLOUD = new THREE.Color('#1a222c')
+/** Low sun lights the cloud deck from underneath — rose and amber, not grey. */
+const DUSK_CLOUD = new THREE.Color('#d98f78')
 const NIGHT_CLOUD_SHADOW = new THREE.Color('#05080c')
 
 /** See the note where it's wired in — brings Preetham's radiances into the
@@ -400,7 +404,7 @@ export function createSky(
   scene.add(clouds)
 
   // Varied starfield — sizes and brightness seeded once, twinkle in the shader
-  const starCount = 1500
+  const starCount = 2600
   const starPos = new Float32Array(starCount * 3)
   const starSize = new Float32Array(starCount)
   const starBright = new Float32Array(starCount)
@@ -418,7 +422,7 @@ export function createSky(
     // Power curve: many dim, few bright
     const mag = Math.pow(Math.random(), 2.4)
     starBright[i] = 0.25 + mag * 0.75
-    starSize[i] = 2.2 + mag * 5.5
+    starSize[i] = 1.3 + mag * 3.4
     starPhase[i] = Math.random()
   }
   const starGeo = new THREE.BufferGeometry()
@@ -554,6 +558,7 @@ export function createSky(
     milky,
     moon,
     sunDir,
+    moonDir,
     sunLight,
     hemi,
     horizonColor,
@@ -575,15 +580,19 @@ export function createSky(
       const day = climate.daylight
       const storm = climate.storm
       const fair = climate.fair
-      const dusk = THREE.MathUtils.clamp(1 - Math.abs(climate.sunElevation - 4) / 14, 0, 1)
+      // Warmth peaks with the sun at the horizon and fades either side of it
+      const dusk = THREE.MathUtils.clamp(1 - Math.abs(climate.sunElevation - 3) / 15, 0, 1)
       const night = Math.max(0, 1 - day)
+      // The night sky itself — stars, moon, Milky Way — waits until the sun is
+      // properly below the horizon rather than fading in at sunset
+      const dark = Math.pow(THREE.MathUtils.clamp((4 - climate.sunElevation) / 16, 0, 1), 1.5)
 
       // Horizon: day → dusk blush → night, then storm greys it out.
       // Floor the night mix so the sky never goes pure black — open ocean
       // at midnight still needs a readable horizon.
       const nightAmt = Math.min(0.9, night)
       scratch.copy(DAY_HORIZON).lerp(NIGHT_HORIZON, nightAmt)
-      scratch.lerp(DUSK_HORIZON, dusk * Math.max(day, 0.15) * 0.7)
+      scratch.lerp(DUSK_HORIZON, dusk * 0.8)
       scratch.lerp(STORM_HORIZON, storm * 0.75)
       horizonColor.copy(scratch)
 
@@ -601,6 +610,7 @@ export function createSky(
       cloudMat.uniforms.uTint.value
         .copy(DAY_CLOUD)
         .lerp(NIGHT_CLOUD, night)
+        .lerp(DUSK_CLOUD, dusk * 0.6 * (1 - storm))
         .lerp(STORM_CLOUD, storm)
       cloudMat.uniforms.uShadow.value
         .copy(DAY_CLOUD_SHADOW)
@@ -663,22 +673,22 @@ export function createSky(
       // light, not the least, so it gets its own bump.
       const twilight = THREE.MathUtils.clamp(1 - Math.abs(climate.sunElevation - 6) / 22, 0, 1)
       hemi.intensity =
-        THREE.MathUtils.lerp(0.28, 0.5, day) * (1 + storm * 0.85) +
+        THREE.MathUtils.lerp(0.36, 0.7, day) * (1 + storm * 0.85) +
         twilight * twilight * 2.2 +
         flash * 0.55
 
       // Stars fade in after dusk, wash out under a storm
-      const starOp = Math.max(0, night * 0.95 - storm * 0.7)
+      const starOp = Math.max(0, dark * 0.95 - storm * 0.7)
       starMat.uniforms.uOpacity.value = starOp
       stars.visible = starOp > 0.02
 
       // Milky Way only on open, fair nights
-      const milkyOp = Math.max(0, night * fair * (1 - storm * 1.2))
+      const milkyOp = Math.max(0, dark * fair * (1 - storm * 1.2))
       milkyMat.uniforms.uOpacity.value = milkyOp
       milky.visible = milkyOp > 0.03
 
       // Moon disc eases in with night, dims hard under cloud cover
-      const moonOp = Math.max(0, night * (0.55 + fair * 0.45) * (1 - storm * 0.85))
+      const moonOp = Math.max(0, dark * (0.55 + fair * 0.45) * (1 - storm * 0.85))
       discMat.uniforms.uOpacity.value = moonOp
       haloMat.uniforms.uOpacity.value = moonOp * 0.85
       moon.visible = moonOp > 0.04

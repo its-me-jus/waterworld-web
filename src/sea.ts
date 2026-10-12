@@ -111,43 +111,13 @@ export function createSeaState(events: SeaEvents = {}) {
     drift.strength = strength
   }
 
-  function snapshot() {
-    return {
-      amp,
-      glassy,
-      glassLeft,
-      glassLength,
-      nextGlassIn,
-    }
-  }
-
-  function restore(
-    saved:
-      | {
-          amp: number
-          glassy: boolean
-          glassLeft: number
-          glassLength: number
-          nextGlassIn: number
-        }
-      | undefined,
-  ) {
-    if (!saved) return
-    amp = Math.max(0.4, saved.amp)
-    glassy = !!saved.glassy
-    glassLeft = saved.glassLeft
-    glassLength = Math.max(1e-3, saved.glassLength)
-    nextGlassIn = Math.max(0, saved.nextGlassIn)
-    oceanState.amp = amp
-  }
-
   return {
     update,
     /** Feed the climate's fair-weather share in; glass-offs follow the sky. */
     setFair(value: number) {
       fair = Math.min(1, Math.max(0, value))
     },
-    /** Squall strength — same 0..1 the waves and vitals already read. */
+    /** Squall strength — the same 0..1 the waves already read. */
     setStorm(value: number) {
       storm = Math.min(1, Math.max(0, value))
     },
@@ -158,12 +128,10 @@ export function createSeaState(events: SeaEvents = {}) {
     get glassy() {
       return glassy
     },
-    /** Live set — player and raft read this each frame. */
+    /** Live set — the player reads this each frame. */
     get current(): SeaCurrent {
       return drift
     },
-    snapshot,
-    restore,
     /** Debug/tuning: pin the sea glass-calm (?calm=1). */
     pinCalm() {
       glassy = true
