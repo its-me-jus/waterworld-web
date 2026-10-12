@@ -1,7 +1,7 @@
 {
   "name": "WaterWorld",
   "short_name": "WaterWorld",
-  "description": "First-person open-ocean survival. Swim the wreck, find the island, last as long as the sea lets you.",
+  "description": "A calm first-person ocean to drift and wander in — swell, sky, a wreck on the reef, an island on the horizon.",
   "id": "/",
   "start_url": "/",
   "scope": "/",
@@ -10,7 +10,7 @@
   "orientation": "any",
   "background_color": "#08384f",
   "theme_color": "#17708c",
-  "categories": ["games"],
+  "categories": ["games", "entertainment"],
   "icons": [
     {
       "src": "/icon-192.png",

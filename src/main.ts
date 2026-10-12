@@ -1,43 +1,26 @@
 import './style.css'
 import * as THREE from 'three'
 import { createOceanAudio, type AudioGround } from './audio'
-import { createClimate, DAY_LENGTH } from './climate'
+import { createCaustics } from './caustics'
+import { createClimate } from './climate'
+import { createCreatures } from './creatures'
 import { createTouchControls } from './controls'
-import { createForage } from './forage'
-import { createHarvest } from './harvest'
 import { createHud } from './hud'
-import { createImprovise } from './improvise'
 import { createInputState, isLowPowerDevice, preferTouchUI } from './input'
-import { createInteractions } from './interact'
 import { createIsland } from './island'
 import { createLittoral } from './littoral'
 import { createOcean } from './ocean'
-import { createOpMenu, type TeleportSpot } from './opmenu'
-import { createNearbyActions } from './nearby'
-import { applyVitals, clearSave, legacyWreck, readSave, writeSave, type SavedRun } from './persist'
 import { bindKeyboardMouse, createPlayer, updatePlayer } from './player'
 import { createPostChain } from './post'
-import { createSalvage } from './salvage'
 import { createSeaState } from './sea'
-import { createShark } from './shark'
 import { createShoreSurf } from './shore'
 import { createSky } from './sky'
 import { createSparBuoy } from './spar'
 import { createSplashLayer } from './splash'
 import { createSwimmer } from './swimmer'
-import {
-  createVitals,
-  debugSetVitals,
-  landHard,
-  resetVitals,
-  swimLimits,
-  updateVitals,
-} from './survival'
-import { burdenOf, burdenSpeedScale, heaviestKind, swimAidOf } from './logistics'
 import { createUnderwaterWorld } from './underwater'
 import { applyStormToWaves, oceanState, sampleOcean, setShelter, shelterAt } from './waves'
 import { createWreck } from './wreck'
-import { createWreckLoot } from './wreckloot'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('#app missing')
@@ -48,10 +31,6 @@ const lowPower = isLowPowerDevice()
 const depthReadout = document.createElement('div')
 depthReadout.id = 'depth'
 app.appendChild(depthReadout)
-
-const crosshair = document.createElement('div')
-crosshair.id = 'crosshair'
-app.appendChild(crosshair)
 
 const underOverlay = document.createElement('div')
 underOverlay.id = 'under-overlay'
@@ -166,11 +145,8 @@ const collide = (p: { x: number; y: number; z: number }) => {
   island.resolve(p)
 }
 
-// Terrain you can plant on — island shelf and reef spire. Raft decks layer on
-// top via improvise.standAt once that system is wired below.
-const terrainAt = (x: number, z: number) => Math.max(island.heightAt(x, z), wreck.standAt(x, z))
-let raftAt = (_x: number, _z: number) => -1000
-const groundAt = (x: number, z: number) => Math.max(terrainAt(x, z), raftAt(x, z))
+// What you can stand on — the island shelf and the reef spire.
+const groundAt = (x: number, z: number) => Math.max(island.heightAt(x, z), wreck.standAt(x, z))
 /** True while the ground under you is the spire rather than the island. */
 const onPerchAt = (x: number, z: number) => wreck.standAt(x, z) > island.heightAt(x, z)
 
@@ -190,21 +166,12 @@ const climate = createClimate({
   storm: params.has('storm') ? Number(params.get('storm')) : undefined,
 })
 
-// The run's score is days alive. The counter turns at world midnight, so
-// waking after your first night reads Day 2 — resting skips the clock ahead
-// and the dawn you reach still counts. Measured off the climate, not vitals.
-let runStart = climate.getElapsed()
-let lastDay = 1
-const runElapsed = () => Math.max(0, climate.getElapsed() - runStart)
-const dayAlive = () =>
-  Math.floor(climate.getElapsed() / DAY_LENGTH) - Math.floor(runStart / DAY_LENGTH) + 1
-
 // The sea's slow breathing — seasons, glass-offs, and the set that carries you.
 // Whispers attach after the HUD exists (see glassWhisper below).
 let glassWhisper: ((text: string) => void) | null = null
 const sea = createSeaState({
-  onGlassOff: () => glassWhisper?.('The sea lies flat. Dive while it holds.'),
-  onSwellUp: () => glassWhisper?.('The swell stands back up.'),
+  onGlassOff: () => glassWhisper?.('The sea lies flat and clear.'),
+  onSwellUp: () => glassWhisper?.('The swell finds its shape again.'),
 })
 if (params.has('calm')) sea.pinCalm()
 
@@ -259,133 +226,51 @@ function spawn() {
 }
 spawn()
 
-const vitals = createVitals()
-// ?breath / ?food / ?water / ?warmth / ?energy / ?wound pre-set the body, for tuning
-debugSetVitals(vitals, {
-  breath: params.has('breath') ? Number(params.get('breath')) : undefined,
-  food: params.has('food') ? Number(params.get('food')) : undefined,
-  water: params.has('water') ? Number(params.get('water')) : undefined,
-  warmth: params.has('warmth') ? Number(params.get('warmth')) : undefined,
-  energy: params.has('energy') ? Number(params.get('energy')) : undefined,
-  wound: params.has('wound') ? true : undefined,
-})
-
-const interactions = createInteractions()
-const salvage = createSalvage(scene, {
-  interactions,
-  vitals,
-  lowPower,
-  wreckFlotsam: wreck.flotsam,
-  wreckOrigin: wreck.group.position,
-  reefResolve: wreck.resolve,
-  hatch: wreck.hatch,
-  shore: island.shore,
-  pools: island.pools,
-  cairn: island.cairn,
-  ledge: island.ledge,
-  knowsLog: () => wreck.snapshot().logTaken,
-  whisper: (text) => hud.whisper(text),
-})
-
 const input = createInputState()
-/** Filled once Nearby Actions exists — crowded +N chip opens the sheet. */
-let openNearbyActions = () => {}
-const touch = createTouchControls(app, {
-  onMoreActions: () => openNearbyActions(),
-})
-touch.setVisible(true)
+const touch = createTouchControls(app)
+// Sticks and swim buttons are for fingers; a keyboard and mouse don't need them
+touch.setVisible(mobile)
 
-const hud = createHud(app, { touch: mobile, onRestart: restart })
+const hud = createHud(app)
 glassWhisper = hud.whisper
-let dead = false
-let deathT = 0
-let hasDived = false
+// Arrive gently: the world fades up out of the dark, and only then does one
+// quiet line say how to move. After that the world speaks for itself.
+// (Skipped under test automation, so screenshots catch the finished picture.)
+if (!navigator.webdriver) {
+  const introFade = document.createElement('div')
+  introFade.id = 'intro-fade'
+  app.appendChild(introFade)
+  requestAnimationFrame(() => requestAnimationFrame(() => introFade.classList.add('done')))
+  window.setTimeout(() => introFade.remove(), 4200)
+}
+window.setTimeout(
+  () =>
+    hud.whisper(
+      mobile
+        ? 'Drag to look around. The stick swims.'
+        : 'WASD to swim · click to look · Space and Shift to rise and dive',
+    ),
+  navigator.webdriver ? 0 : 2600,
+)
 
-// First time out of the water, whichever way you managed it. The line is the
-// only reward — no counter, no achievement, just the body noticing.
+// First time out of the water, whichever way you managed it
 let saidPerch = false
 let saidShore = false
-let saidBurden = false
-let saidAid = false
-/** Seconds since last autosave. */
-let saveTimer = 0
 
 function landfall(onPerch: boolean) {
   if (onPerch) {
     if (saidPerch) return
     saidPerch = true
-    hud.whisper('Rock under you, and the sea below it. Your heat comes back slowly.')
+    hud.whisper('Warm rock under you, and the sea all around.')
     return
   }
   if (saidShore) return
   saidShore = true
-  hud.whisper('Sand. You are out of the ocean, and it cannot reach you here.')
+  hud.whisper('Soft sand underfoot.')
 }
-
-// —— the shark, and the wreck's answer to it ————————————————————————
-// The fin is a rare event until you've dived the wreck; the mate's spear,
-// once found, makes a run a question you can answer.
-let loot: ReturnType<typeof createWreckLoot>
-const shark = createShark(scene, {
-  resolve: wreck.resolve,
-  whisper: hud.whisper,
-  // ?shark=8 summons the first pass in eight seconds, for tuning
-  summonIn: params.has('shark') ? Number(params.get('shark')) : undefined,
-  // ?commit=1 makes every armed pass run at you — combat tuning
-  alwaysCommit: params.has('commit'),
-  onCommit: () => {
-    hud.whisper('It comes.')
-  },
-  onBite: () => loot.onBite(),
-})
-
-loot = createWreckLoot(app, camera, hud, vitals, {
-  interactions,
-  knifeSpot: wreck.knifeSpot,
-  takeKnife: wreck.takeKnife,
-  lockerSpot: wreck.lockerSpot,
-  lockerState: () => wreck.lockerState,
-  cutLashing: wreck.cutLashing,
-  stripLocker: wreck.stripLocker,
-  gearSpot: wreck.gearSpot,
-  gearState: () => wreck.gearLockerState,
-  pryGear: wreck.pryGear,
-  takeSuit: wreck.takeSuit,
-  lanternSpot: wreck.lanternSpot,
-  takeLantern: wreck.takeLantern,
-  suitLeft: () => wreck.suitLeft,
-  tinSpot: wreck.tinSpot,
-  takeTin: wreck.takeTin,
-  logSpot: wreck.logSpot,
-  takeLog: wreck.takeLog,
-  onSuit: () => swimmer.setSurvivalSuit(true),
-  shark,
-  thump: (i) => oceanAudio.impact(i),
-})
-// ?knife=1 skips the deck dive; ?spear=1, ?suit=1, and ?lantern=1 grant wreck gear
-if (params.has('knife')) loot.grant('knife')
-if (params.has('spear')) loot.grant('spear')
-if (params.has('suit')) loot.grant('suit')
-if (params.has('lantern')) loot.grant('lantern')
-
-const forage = createForage(hud, vitals, {
-  interactions,
-  camera,
-  scene,
-  sfx: (kind, intensity) => {
-    if (kind === 'splash') oceanAudio.sfx(kind, intensity)
-  },
-  provisionSpot: wreck.provisionSpot,
-  takeProvision: wreck.takeProvision,
-  fish: underwaterWorld.fish,
-  crabs: island.crabs,
-  hasSpear: () => loot.hasSpear,
-})
 
 const beach = island.shore.length > 0 ? island.shore[0] : island.centre
 const littoral = createLittoral(scene, {
-  interactions,
-  vitals,
   hud,
   heightAt: island.heightAt,
   origin: { x: island.centre.x, z: island.centre.z },
@@ -395,284 +280,15 @@ const littoral = createLittoral(scene, {
   lowPower,
 })
 
-const harvest = createHarvest(scene, {
-  interactions,
-  salvage,
-  vitals,
-  hud,
-  heightAt: island.heightAt,
-  shore: island.shore,
-  islandCentre: island.centre,
-  hasKnife: () => loot.hasKnife,
+// Dolphins, turtles and rays — larger life to stop and watch
+const creatures = createCreatures(scene, {
+  wreckCentre: wreck.group.position,
+  wreckResolve: wreck.resolve,
+  island: { centre: island.centre, heightAt: island.heightAt, resolve: island.resolve },
+  cove: { x: beach.x, z: beach.z },
   lowPower,
+  pixelRatio: renderer.getPixelRatio(),
 })
-
-const improvise = createImprovise(scene, camera, {
-  interactions,
-  salvage,
-  vitals,
-  hud,
-  groundAt: terrainAt,
-  rawFish: () => forage.rawFish,
-  eatRawFish: () => forage.eatRaw(),
-  cookFish: () => forage.cook(),
-  takeRawForSmoke: () => forage.takeRawForSmoke(),
-  addSmoked: (n) => forage.addSmoked(n),
-  smokedFish: () => forage.smokedFish,
-  takeSmoked: (n) => forage.takeSmoked(n),
-  takeRaw: (n) => forage.takeRaw(n),
-  grantFish: (n) => forage.grant(n),
-  fashionRod: () => forage.fashionRod(),
-  fashionNet: () => forage.fashionNet(),
-  hasRod: () => forage.hasRod,
-  hasNet: () => forage.hasNet,
-  daylight: () => climate.state.daylight,
-  skipTime: (seconds) => climate.skip(seconds),
-  secondsUntilDawn: () => climate.secondsUntilDawn(),
-  hasMark: () => loot.hasSpear,
-  storm: () => climate.state.storm,
-  rain: () => climate.state.rain,
-  shore: () => island.shore,
-  sparAt: () => spar.position,
-  current: () => sea.current,
-  sfx: (kind, intensity) => oceanAudio.sfx(kind, intensity),
-  touch: mobile,
-  setDriveMode: (mode) => touch.setDriveMode(mode),
-})
-raftAt = (x, z) => improvise.standAt(x, z, player.y)
-
-function restart() {
-  clearSave()
-  spawn()
-  resetVitals(vitals)
-  salvage.reset(new THREE.Vector3(player.x, player.y, player.z))
-  wreck.reset()
-  loot.reset()
-  forage.reset()
-  littoral.reset()
-  harvest.reset()
-  island.crabs.reset()
-  improvise.reset()
-  swimmer.setSurvivalSuit(false)
-  hud.clearDead()
-  hud.setPrompt(null)
-  touch.setAction(null)
-  touch.setDriveMode(null)
-  opMenu.setOpen(false)
-  nearbyActions.setOpen(false)
-  runStart = climate.getElapsed()
-  lastDay = 1
-  hud.setDay(1)
-  dead = false
-  deathT = 0
-  hasDived = false
-  saidPerch = false
-  saidShore = false
-  saidBurden = false
-  saidAid = false
-  saveTimer = 0
-}
-
-function captureSave(): SavedRun {
-  return {
-    v: 1,
-    savedAt: Date.now(),
-    player: {
-      x: player.x,
-      y: player.y,
-      z: player.z,
-      yaw: player.yaw,
-      pitch: player.pitch,
-      mode: player.mode,
-    },
-    vitals: {
-      breath: vitals.breath,
-      stamina: vitals.stamina,
-      warmth: vitals.warmth,
-      water: vitals.water,
-      food: vitals.food,
-      energy: vitals.energy,
-      health: vitals.health,
-      elapsed: vitals.elapsed,
-      wounded: vitals.wounded,
-      woundClock: vitals.woundClock,
-      suited: vitals.suited,
-    },
-    stash: { ...salvage.stash },
-    rawFish: forage.rawFish,
-    smokedFish: forage.smokedFish,
-    knife: loot.hasKnife,
-    spear: loot.hasSpear,
-    rod: forage.hasRod,
-    net: forage.hasNet,
-    fishingTool: forage.equipped ?? undefined,
-    suit: vitals.suited,
-    lantern: loot.hasLantern,
-    climateElapsed: climate.getElapsed(),
-    runElapsed: runElapsed(),
-    hasDived,
-    builds: improvise.snapshot(),
-    harvest: harvest.snapshot(),
-    washMeter: improvise.getWashMeter(),
-    salvage: salvage.snapshot(),
-    littoral: littoral.snapshot(),
-    wreck: wreck.snapshot(),
-    loot: loot.snapshot(),
-    crabs: island.crabs.snapshot(),
-    climate: climate.snapshot(),
-    sea: sea.snapshot(),
-  }
-}
-
-function persistRun() {
-  if (dead || !vitals.alive) return
-  writeSave(captureSave())
-}
-
-function loadRun(data: SavedRun) {
-  player.x = data.player.x
-  player.y = data.player.y
-  player.z = data.player.z
-  player.yaw = data.player.yaw
-  player.pitch = data.player.pitch
-  player.mode = data.player.mode
-  player.vy = 0
-  player.speed = 0
-  player.fallFrom = null
-  applyVitals(vitals, data.vitals)
-
-  // Weather and ocean first — later visual restores read tide / sea height
-  climate.restore(data.climate, data.climateElapsed)
-  sea.setFair(climate.state.fair)
-  sea.setStorm(climate.state.storm)
-  sea.restore(data.sea)
-  oceanState.tide = climate.state.tide
-  sea.update(0, climate.getElapsed())
-
-  // reset() clears stash, so restore world salvage before inventory
-  salvage.restore(data.salvage, camera.position)
-  salvage.setStash(data.stash)
-
-  island.crabs.restore(data.crabs)
-  littoral.restore(data.littoral)
-  harvest.restore(data.harvest ?? [])
-
-  wreck.restore(data.wreck ?? legacyWreck(data))
-  loot.restore(
-    data.loot ?? {
-      knife: !!data.knife,
-      spear: !!data.spear,
-      lantern: !!data.lantern,
-    },
-  )
-
-  forage.setFish(data.rawFish, data.smokedFish)
-  forage.setGear(!!data.rod, !!data.net, data.fishingTool)
-
-  improvise.restore(data.builds ?? [])
-  improvise.setWashMeter(data.washMeter ?? 0)
-
-  runStart = climate.getElapsed() - (data.runElapsed ?? data.vitals.elapsed)
-  lastDay = dayAlive()
-  hasDived = !!data.hasDived
-  swimmer.setSurvivalSuit(!!(data.suit || data.vitals.suited))
-  collide(player)
-  dead = false
-  deathT = 0
-  hud.clearDead()
-  hud.whisper('Still here.')
-}
-
-// —— the operating menu: pack + field kit ————————————————————————
-function teleport(spot: TeleportSpot) {
-  player.x = spot.x
-  player.z = spot.z
-  if (spot.y !== undefined) {
-    player.y = spot.y
-  } else {
-    const ground = island.heightAt(spot.x, spot.z)
-    player.y =
-      ground > 0.3 ? ground + 1.7 : sampleOcean(spot.x, spot.z, 0).y + 1.5
-  }
-  if (spot.yaw !== undefined) player.yaw = spot.yaw
-  player.pitch = -0.05
-  player.vy = 0
-  player.speed = 0
-  collide(player)
-}
-
-const nearbyActions = createNearbyActions(app, {
-  reachables: () => {
-    if (!vitals.alive) return []
-    const camp = improvise.campItems()
-    const facing = interactions.find(camera)
-    return interactions
-      .inReach(camera)
-      .filter((item) => !camp.has(item))
-      .map((item, i) => ({
-        id: `reach:${item.verb}:${item.label}:${item.position.x.toFixed(1)}:${item.position.z.toFixed(1)}`,
-        group: 'reach' as const,
-        verb: item.verb,
-        label: item.label,
-        cost: 'hands',
-        use: () => item.use(),
-        // Facing-best leads Within reach; otherwise keep distance order.
-        priority: (item.priority ?? 0) + (item === facing ? 100 : 0) + Math.max(0, 40 - i),
-      }))
-  },
-  campRecipes: () => (vitals.alive ? improvise.campRecipes() : []),
-  closePack: () => opMenu.setOpen(false),
-  aboard: () => improvise.standAt(player.x, player.z) > -100,
-  whisper: (text) => hud.whisper(text),
-  touch: mobile,
-})
-openNearbyActions = () => nearbyActions.setOpen(true)
-
-const opMenu = createOpMenu(app, {
-  salvage,
-  loot,
-  vitals,
-  rawFish: () => forage.rawFish,
-  smokedFish: () => forage.smokedFish,
-  eatFish: () => {
-    if (!forage.eatRaw()) return false
-    hud.whisper('Raw fish. It stays down.')
-    return true
-  },
-  eatSmoked: () => {
-    if (!forage.eatSmoked()) return false
-    hud.whisper('Smoked fish. It travels well.')
-    return true
-  },
-  grantFish: (n) => forage.grant(n),
-  hasRod: () => forage.hasRod,
-  hasNet: () => forage.hasNet,
-  equippedTool: () => forage.equipped,
-  equipTool: (tool) => forage.equip(tool),
-  campRecipes: () => improvise.campRecipes(),
-  day: dayAlive,
-  teleport,
-  spots: {
-    island: { x: beach.x, z: beach.z, y: beach.y + 1.7 },
-    wreck: { x: wreck.group.position.x + 5, z: wreck.group.position.z + 5 },
-    spar: { x: spar.position.x + 3, z: spar.position.z + 3 },
-  },
-  resetRun: restart,
-  closeActions: () => nearbyActions.setOpen(false),
-})
-
-// Continue a living camp across reloads — skip if the URL asked for a spawn
-{
-  const spawnOverride =
-    params.has('x') || params.has('z') || params.has('yaw') || params.has('depth')
-  const saved = !spawnOverride ? readSave() : null
-  if (saved) loadRun(saved)
-}
-
-window.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') persistRun()
-})
-window.addEventListener('pagehide', () => persistRun())
 
 const desktop = bindKeyboardMouse(renderer.domElement, player, {
   enablePointerLock: !mobile,
@@ -685,49 +301,22 @@ if (mobile) document.body.classList.add('playing')
 
 // Dev-only handle, for poking at state from the console or a headless run
 if (import.meta.env.DEV) {
-  const w = window as unknown as Record<string, unknown>
-  // Loot world spots, for the headless shot suite and tuning sessions
-  const spots: Record<string, unknown> = { locker: wreck.lockerSpot().toArray() }
-  const knife = wreck.knifeSpot()
-  if (knife) spots.knife = knife.toArray()
-
-  Object.assign(w, {
+  Object.assign(window, {
     ww: {
       player,
       camera,
       renderer,
       post,
       scene,
-      vitals,
-      interactions,
-      salvage,
       island,
       wreck,
       climate,
       sea,
       shore,
-      shark,
-      loot,
-      forage,
       littoral,
-      harvest,
-      improvise,
-      opMenu,
-      nearbyActions,
+      creatures,
+      sky: skyRig,
       underwater: underwaterWorld,
-    },
-    __shark: shark,
-    __spots: spots,
-    // Aim the swimmer's eye at the shark — headless combat tests and tuning
-    __faceShark: () => {
-      if (!shark.active) return false
-      const p = shark.position
-      const dx = p.x - camera.position.x
-      const dy = p.y - camera.position.y
-      const dz = p.z - camera.position.z
-      player.yaw = Math.atan2(-dx, -dz)
-      player.pitch = Math.atan2(dy, Math.hypot(dx, dz))
-      return true
     },
   })
 }
@@ -822,15 +411,22 @@ if (lowPower) {
 markShadowCasters(scene)
 let shadowScanTimer = 0
 
+// Dancing sunlight on the seabed, the wreck and the island shelf
+const caustics = createCaustics(skyRig.sunDir)
+caustics.apply(wreck.group)
+caustics.apply(island.terrain)
+
 const keyLight = new THREE.Color()
-const shallowTint = new THREE.Color('#0a4f5e')
-const deepTint = new THREE.Color('#031f2d')
+// Clear tropical water: bright aqua in the shallows, deepening to ink-blue
+const shallowTint = new THREE.Color('#1598ae')
+const deepTint = new THREE.Color('#05324d')
 const nightWater = new THREE.Color('#020c14')
 const waterTint = new THREE.Color()
 const oceanDayDeep = new THREE.Color('#031d2b')
 const oceanDayShallow = new THREE.Color('#12718c')
-const oceanNightDeep = new THREE.Color('#01060c')
-const oceanNightShallow = new THREE.Color('#062030')
+const oceanNightDeep = new THREE.Color('#020d18')
+const oceanNightShallow = new THREE.Color('#0a2c44')
+const moonColor = new THREE.Color('#9fb8ea')
 const oceanStormShallow = new THREE.Color('#1a3a48')
 const underHemiSky = new THREE.Color('#6fc6d8')
 const underHemiNight = new THREE.Color('#1a3a48')
@@ -851,19 +447,8 @@ function frame() {
   oceanState.tide = weather.tide
   oceanAudio.setSeaWeight(sea.weight)
 
-  input.interact = false
   touch.apply(input)
   desktop.mergeKeys(input)
-  // Rest/Sleep owns the body while the lids are shut
-  if (improvise.sleeping) {
-    input.moveForward = 0
-    input.moveStrafe = 0
-    input.lookDeltaX = 0
-    input.lookDeltaY = 0
-    input.rise = false
-    input.dive = false
-    input.interact = false
-  }
   // Any keyboard use unlocks the audio context (WASD before click)
   if (
     input.moveForward ||
@@ -876,116 +461,20 @@ function frame() {
     void oceanAudio.unlock()
   }
 
-  // Logistics: what you carry slows the stroke; a plank/barrel buys float
-  const burden = burdenOf(salvage.stash)
-  const burdenScale = burdenSpeedScale(burden)
-  const aid = swimAidOf(salvage.stash)
-  if (vitals.alive && player.mode === 'swim') {
-    if (aid > 0 && !saidAid) {
-      saidAid = true
-      hud.whisper(
-        salvage.stash.barrel > 0
-          ? 'The barrel buoys you. Heavy, but it rides.'
-          : salvage.stash.plastic > 0 && salvage.stash.plank <= 0
-            ? 'A bottle under the arm. It wants the surface.'
-            : 'A plank under the arm. The surface comes easier.',
-      )
-    }
-    if (burdenScale < 0.82 && !saidBurden) {
-      saidBurden = true
-      hud.whisper('The stash pulls you down. Drop it, stow it, or build.')
-    }
-  }
-
-  // Glass-off is the dive window — every stroke costs less while it holds
-  const diveEase = sea.glassy ? 1 : Math.max(0, (0.68 - oceanState.amp) / 0.2)
-  const swimTax = weather.swimCost * (sea.glassy ? 0.72 : 1 - diveEase * 0.15)
-
-  if (!vitals.alive) {
-    // Dead men don't swim — the swell still has the body, though
-    input.moveForward = 0
-    input.moveStrafe = 0
-    input.rise = false
-    input.dive = false
-    input.interact = false
-  } else {
-    // A squall taxes every stroke; exhaustion is handled inside the swim model
-    input.moveForward /= swimTax
-    input.moveStrafe /= swimTax
-  }
-
-  // Last frame's tanks drive this frame's body — one frame of lag on a
-  // minutes-long decline is nothing. Burden and swim aid fold in here.
-  const limits = swimLimits(vitals, { burdenScale, swimAid: aid })
-  // Current, softened in the island's lee so the beach isn't a treadmill
+  // The sea's set carries you gently between strokes — softened in the
+  // island's lee so the beach isn't a treadmill
   const lee = 1 - shelterAt(player.x, player.z) * 0.9
   const drift = {
     x: sea.current.x * lee,
     z: sea.current.z * lee,
   }
-  const view = updatePlayer(player, camera, input, dt, t, collide, groundAt, limits, drift)
-  if (view.fallLanded > 0) landHard(vitals, view.fallLanded, (line) => hud.whisper(line))
+  const view = updatePlayer(player, camera, input, dt, t, collide, groundAt, drift)
   const { underwater, surfaceY, depth } = view
-  if (depth > 1) hasDived = true
 
   // Ashore and on dry ground — wading the shallows still counts as in the sea
   const onLand = view.walking && view.groundY > 0.3
   const onPerch = onLand && onPerchAt(player.x, player.z)
-  // A wave-washed spire gives back far less heat than dry sand up the beach,
-  // and the beach itself is better the further you are from the wash. Lean-tos
-  // and fires layer on top wherever you've planted them.
-  const terrainShelter = onPerch ? 0.42 : Math.min(1, 0.55 + view.groundY * 0.12)
-  const shelter = onLand
-    ? improvise.shelterAt(player.x, player.z, terrainShelter)
-    : terrainShelter
-  // A raft deck counts as out of the water — chill perch, but dry feet
-  const onRaft = !onLand && improvise.standAt(player.x, player.z) > -100
-  const dry = onLand || onRaft
-  const raftShelter = onRaft ? improvise.shelterAt(player.x, player.z, 0.5) : shelter
   if (onLand) landfall(onPerch)
-  updateVitals(vitals, dt, {
-    submerged: view.submersion > 0.85,
-    depth,
-    effort: view.effort,
-    onLand: dry,
-    shelter: onRaft ? raftShelter : shelter,
-    cold: weather.cold,
-    swimCost: swimTax,
-    diveEase: sea.glassy ? 1 : diveEase,
-    whisper: hud.whisper,
-  })
-  // Heartbeat and stomach, off the same tanks the HUD reads
-  oceanAudio.setVitals({
-    breath: vitals.breath < 0.35 ? (0.35 - vitals.breath) / 0.35 : 0,
-    hunger: 1 - vitals.food,
-  })
-
-  // The score: which dawn you're still breathing on
-  const day = dayAlive()
-  hud.setDay(day)
-  if (day > lastDay) {
-    lastDay = day
-    if (vitals.alive) hud.whisper(`Day ${day}. Still here.`)
-  }
-
-  if (!vitals.alive && !dead) {
-    dead = true
-    clearSave()
-    opMenu.setOpen(false)
-    nearbyActions.setOpen(false)
-    hud.setDead(vitals.cause, day)
-    if (document.pointerLockElement) document.exitPointerLock()
-  }
-  if (dead) {
-    deathT += dt
-    oceanAudio.dim(Math.min(1, deathT / 3.2))
-  } else {
-    saveTimer += dt
-    if (saveTimer >= 12) {
-      saveTimer = 0
-      persistRun()
-    }
-  }
 
   if (Number.isNaN(prevSurfaceForAudio)) prevSurfaceForAudio = surfaceY
   heave = THREE.MathUtils.damp(heave, surfaceY - prevSurfaceForAudio, 6, dt)
@@ -1009,8 +498,7 @@ function frame() {
   }
 
   let groundKind: AudioGround = 'water'
-  if (onRaft) groundKind = 'wood'
-  else if (view.walking) {
+  if (view.walking) {
     if (onPerch) groundKind = 'rock'
     else if (view.groundY < 0.55) groundKind = 'wet-sand'
     else if (view.groundY < 2.6) groundKind = 'sand'
@@ -1026,7 +514,7 @@ function frame() {
     storm: weather.storm,
     rain: weather.rain,
     shore: shoreNear,
-    onLand: dry,
+    onLand,
     mode: player.mode,
     walking: view.walking,
     moving: view.moving,
@@ -1035,7 +523,6 @@ function frame() {
     ground: groundKind,
     lightning: weather.lightning,
     thunder: weather.thunder,
-    menuOpen: opMenu.open || nearbyActions.open,
   })
   // Pointer-lock / first click also unlocks audio in case the global listeners missed it
   if (document.pointerLockElement) void oceanAudio.unlock()
@@ -1088,10 +575,16 @@ function frame() {
   oceanMat.uniforms.uAmp.value = oceanState.amp
   oceanMat.uniforms.uTide.value = oceanState.tide
   oceanMat.uniforms.uCameraPos.value.copy(camera.position)
-  oceanMat.uniforms.uSunDir.value.copy(skyRig.sunDir)
+  // Once the sun is down the sea catches the moon instead, laying a silver
+  // path of glitter across the water
+  const moonlit = weather.sunElevation < -3
+  oceanMat.uniforms.uSunDir.value.copy(moonlit ? skyRig.moonDir : skyRig.sunDir)
   oceanMat.uniforms.uHorizonColor.value.copy(skyRig.horizonColor)
   oceanMat.uniforms.uUnderwater.value = underwater ? 1 : 0
-  oceanMat.uniforms.uSunColor.value.setRGB(1, 0.95, 0.85).lerp(new THREE.Color('#6a7a9a'), 1 - weather.daylight)
+  oceanMat.uniforms.uSunColor.value
+    .setRGB(1, 0.95, 0.85)
+    .lerp(moonColor, 1 - weather.daylight)
+    .multiplyScalar(moonlit ? 1 - weather.storm * 0.8 : 1)
   // Body colour used to stay noon-teal after dark, and night exposure is
   // *higher* than midday — the shelf glowed like a pool. Walk it down with
   // the sky, and grey it a little when a front is in.
@@ -1116,7 +609,7 @@ function frame() {
     Math.max(diveMurk, underwater ? abyssMurk * (0.35 + lookDown * 0.65) : 0),
   )
   underFog.density =
-    0.026 + murk * 0.032 + abyssMurk * lookDown * 0.022 + (1 - weather.daylight) * 0.012
+    0.012 + murk * 0.024 + abyssMurk * lookDown * 0.018 + (1 - weather.daylight) * 0.01
   waterTint.copy(shallowTint).lerp(deepTint, murk)
   waterTint.lerp(nightWater, (1 - weather.daylight) * 0.55)
   // Fog has to track the tint or distant geometry fades to the wrong colour and
@@ -1135,7 +628,7 @@ function frame() {
   // key is nine times what it used to be at noon, so midday now needs the
   // shortest exposure of the day and a moonlit night the longest.
   post.grade.exposure = underwater
-    ? 0.62 - murk * 0.14 - (1 - weather.daylight) * 0.1
+    ? 0.92 - murk * 0.2 - (1 - weather.daylight) * 0.14
     : 1.35 - weather.daylight * 0.4 + weather.storm * 0.15
 
   // The grade is where the day gets its mood. Above water it runs a warm-
@@ -1199,6 +692,12 @@ function frame() {
   depthReadout.textContent = underwater ? `${depth.toFixed(1)} m` : ''
   depthReadout.style.opacity = underwater ? '1' : '0'
 
+  caustics.update(
+    t,
+    underwater ? weather.daylight * (1 - weather.storm * 0.7) * 13 : 0,
+    oceanState.tide,
+    skyRig.sunDir,
+  )
   underwaterWorld.update({
     dt,
     time: t,
@@ -1215,60 +714,15 @@ function frame() {
   wreck.update(t, camera)
   island.update(camera, underwater, t)
   shore.update(t, camera, underwater)
-  salvage.update(t, camera.position, weather.storm)
-  loot.update(dt, view, weather.daylight)
-  forage.update(camera, view, dt)
   littoral.update(dt, player, { biolum: weather.biolum, rain: weather.rain })
   underwaterWorld.fish.setAttractors(littoral.fishAttractors())
-  harvest.update(t)
-  improvise.update(dt, t, player, view, player.yaw, { dive: input.dive })
-  shark.update(dt, t, camera, hasDived)
-  oceanAudio.setDanger(shark.proximity)
-  spar.update(t)
-
-  const reachable = vitals.alive ? interactions.find(camera) : null
-  // Drop only when nothing else is in reach — the stash is a last resort,
-  // not a verb that steals Take / Climb / Lash.
-  const dropKind =
-    !reachable &&
-    vitals.alive &&
-    player.mode === 'swim' &&
-    view.submersion < 0.92 &&
-    burden > 0.8
-      ? heaviestKind(salvage.stash)
-      : null
-  if (reachable && input.interact) reachable.use()
-  else if (dropKind && input.interact) {
-    const at = new THREE.Vector3(player.x, player.y, player.z)
-    const kind = salvage.jettison(at)
-    if (kind) {
-      hud.whisper(
-        kind === 'crate'
-          ? 'The crate goes. Arms lighten.'
-          : kind === 'barrel'
-            ? 'Barrel away. You swim freer.'
-            : `You let the ${salvage.labels[kind].one.toLowerCase()} go.`,
-      )
-    }
-  }
-  const prompt = reachable
-    ? { verb: reachable.verb, label: reachable.label }
-    : dropKind
-      ? { verb: 'Drop', label: salvage.labels[dropKind].one }
-      : null
-  const ready = nearbyActions.readyCount()
-  // Facing-best stays on F; crowded beaches point at the Actions sheet.
-  // Drop isn't a sheet row — all ready verbs count as "more".
-  const more = prompt ? (reachable ? Math.max(0, ready - 1) : ready) : 0
-  hud.setPrompt(prompt, more)
-  // Mobile CTA stays compact when crowded — "Raise Wall · +8" instead of a tall pill.
-  touch.setAction(prompt ? `${prompt.verb} ${prompt.label}` : null, more)
-  nearbyActions.tick()
-  hud.setStash(salvage.stash, salvage.labels, {
-    rawFish: forage.rawFish,
-    smokedFish: forage.smokedFish,
+  creatures.update(dt, t, camera, {
+    swimming: player.mode === 'swim',
+    daylight: weather.daylight,
+    storm: weather.storm,
   })
-  hud.update(vitals, view.submersion > 0.85, dt)
+  spar.update(t)
+  hud.update(dt)
 
   splash.update(dt, camera.position.y, surfaceY, view.moving, view.submersion)
 

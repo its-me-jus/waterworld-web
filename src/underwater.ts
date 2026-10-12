@@ -139,8 +139,8 @@ function createLightShafts(sunDir: THREE.Vector3) {
 
   // Narrow inner radius so the shafts sweep up across a wide band of the view
   // instead of hugging the horizon
-  const inner = build(15, 46, 3.4, 0.5)
-  const outer = build(46, 50, 2.2, 0.34)
+  const inner = build(15, 46, 3.4, 0.9)
+  const outer = build(46, 50, 2.2, 0.6)
 
   function update(time: number, camera: THREE.Camera, surfaceY: number, fade: number) {
     for (const mesh of [inner, outer]) {
@@ -154,7 +154,7 @@ function createLightShafts(sunDir: THREE.Vector3) {
       const mat = materials[i]
       mat.uniforms.uTime.value = time
       mat.uniforms.uCentre.value.copy(camera.position)
-      mat.uniforms.uStrength.value = (i === 0 ? 0.5 : 0.34) * fade
+      mat.uniforms.uStrength.value = (i === 0 ? 0.9 : 0.6) * fade
     }
   }
 
@@ -505,9 +505,9 @@ function createFishSchools(count: number, schoolCount: number, waterColor: THREE
 
     material.uniforms.uTime.value = time
 
-    // Thrashing sends every fish darting; hang still and they drift back in.
-    // This is what makes hand-fishing possible at all.
-    const flee = 0.15 + effort * 1.6
+    // Hard swimming sends fish darting; drift gently and they stay close, hang
+    // still and they drift right back in.
+    const flee = 0.12 + effort * 0.9
 
     for (let i = 0; i < fishes.length; i++) {
       const f = fishes[i]
@@ -549,59 +549,7 @@ function createFishSchools(count: number, schoolCount: number, waterColor: THREE
     mesh.instanceMatrix.needsUpdate = true
   }
 
-  /**
-   * Nearest fish to a point, within `maxDist`. Uses last frame's solved
-   * positions, so it only sees fish that are genuinely on screen nearby.
-   */
-  function nearest(point: THREE.Vector3, maxDist: number) {
-    let best = -1
-    let bestD2 = maxDist * maxDist
-    for (let i = 0; i < fishes.length; i++) {
-      const d2 = fishes[i].prev.distanceToSquared(point)
-      if (d2 < bestD2) {
-        bestD2 = d2
-        best = i
-      }
-    }
-    return best < 0 ? null : { index: best, dist: Math.sqrt(bestD2) }
-  }
-
-  /** Fling a fish away from the swimmer — a missed grab, or a swallowed one. */
-  function fling(index: number, far: boolean) {
-    const f = fishes[index]
-    const s = far ? 3 : 1.6
-    f.ox = (Math.random() - 0.5) * 9 * s
-    f.oy = (Math.random() - 0.5) * 5 * s
-    f.oz = (Math.random() - 0.5) * 10 * s
-    f.wanderPhase = Math.random() * TAU
-    f.wanderAmp = 1.4 + Math.random() * 1.6
-    f.wanderSpeed = 1.6 + Math.random() * 1.4
-  }
-
-  /** Last solved position of one fish — for the interaction registry. */
-  function positionAt(index: number, out: THREE.Vector3) {
-    return out.copy(fishes[index].prev)
-  }
-
-  /**
-   * Dev/tests — pin one fish hovering at a point. Probabilistic encounters
-   * can't be waited on in a time-dilated headless run; this sets the moment
-   * up exactly the way a long still hang would.
-   */
-  function debugDraw(point: THREE.Vector3) {
-    const hit = nearest(point, 1e9)
-    if (!hit) return false
-    const f = fishes[hit.index]
-    const c = schools[f.school].centre
-    f.ox = point.x - c.x
-    f.oy = point.y - c.y
-    f.oz = point.z - c.z
-    f.wanderAmp = 0.06
-    f.wanderSpeed = 0.25
-    return true
-  }
-
-  return { mesh, material, update, nearest, fling, positionAt, debugDraw, setAttractors }
+  return { mesh, material, update, setAttractors }
 }
 
 // —— jellyfish ————————————————————————————————————————————

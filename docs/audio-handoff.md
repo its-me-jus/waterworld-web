@@ -1,4 +1,4 @@
-﻿# Audio handoff — Waterworld sound design
+# Audio handoff — Waterworld sound design
 
 Runtime audio is **procedural Web Audio** in `src/audio.ts`, with optional
 MP3 beds/SFX under `public/audio/` loaded when present.
@@ -6,8 +6,8 @@ MP3 beds/SFX under `public/audio/` loaded when present.
 ## What's in the repo now
 
 Generated assets (2026-08-03) live under `public/audio/` — see
-`public/audio/MANIFEST.md`. Beds (surface / underwater / storm / shore) and
-SFX (rain, wind, thunder, footsteps, build foley, splash, …) are committed.
+`public/audio/MANIFEST.md`. SFX (rain, wind, thunder, footsteps, splash, shore lap, …) are committed. The
+four Lyria beds are also in the repo but are not currently played in-world.
 
 If a file is missing at runtime, `createOceanAudio()` falls back to synthesis.
 
@@ -25,6 +25,6 @@ npm run audio -- --force
 
 ## Runtime wiring
 
-`src/audio.ts` → `createOceanAudio()` mixes surface/underwater beds, rain,
-wind, shore proximity, footsteps, thunder after lightning, and build/raft foley
-hooks from `improvise` / `main`.
+`src/audio.ts` → `createOceanAudio()` mixes the surface/underwater ocean chain,
+rain, wind, shore proximity, footsteps, and thunder after lightning, driven
+once per frame from `main`.

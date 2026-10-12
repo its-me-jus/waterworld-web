@@ -6,7 +6,7 @@
 import { chromium } from 'playwright-core'
 import { mkdirSync } from 'node:fs'
 
-const CHROME = process.env.CHROME_PATH ?? '/usr/bin/google-chrome-stable'
+const CHROME = process.env.CHROME_PATH ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
 const BASE = process.env.SHOT_BASE ?? 'http://localhost:5173'
 const OUT = process.env.LOOK_OUT ?? 'shots/look'
 

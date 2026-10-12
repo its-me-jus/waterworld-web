@@ -1,7 +1,8 @@
 /**
  * The day and the weather — one clock that every other system reads.
  *
- * A full day is ~8 real minutes so night arrives within a run.
+ * A full day is ~20 real minutes — long enough that dawn, noon and dusk each
+ * have room to be looked at, short enough that you still see the night.
  *
  * Weather is not a metronome. The sea runs in *spells*: long stretches of fair
  * sky, a breezy afternoon, then — less often — something that closes over you.
@@ -9,11 +10,11 @@
  * a slow front, so weather arrives instead of switching. Fair weather is the
  * overwhelming majority of any run, which is what makes a gale mean something.
  *
- * Tide rides the same clock: two tides per day so the foreshore exposes within
- * a run. Rockpooling is a window you wait for, not a painted wet band.
+ * Tide rides the same clock: two tides per day, so the foreshore bares and
+ * floods while you're there to see it.
  *
- * Nothing here draws — it only names the numbers the ocean, sky, audio and
- * vitals already know how to feel.
+ * Nothing here draws — it only names the numbers the ocean, sky and audio
+ * already know how to feel.
  */
 
 import { TIDE_AMP } from './waves'
@@ -45,10 +46,6 @@ export type Climate = {
    * clap when this is non-zero — delayed from the flash by distance.
    */
   thunder: number
-  /** How hard the water is to swim through — 1 in a calm, higher in a storm. */
-  swimCost: number
-  /** Extra warmth drain multiplier (night + being wet in a storm). */
-  cold: number
   /** 0..1 how hard the jellies should glow. */
   biolum: number
   /** What the sky is currently doing, for anything that wants to read ahead. */
@@ -65,7 +62,7 @@ export type Climate = {
 }
 
 /** Real seconds for one full day cycle. */
-export const DAY_LENGTH = 480
+export const DAY_LENGTH = 1200
 
 /** Two tides per day — high→low within a playable window. */
 export const TIDE_PERIOD = DAY_LENGTH / 2
@@ -84,16 +81,18 @@ type Spell = {
   weight: number
 }
 
+// No gale in the rotation: weather here is something to watch from the water,
+// not to survive. The heaviest spell is a squall — grey sky, rain, thunder
+// somewhere out past the swell. (?storm=1 still pins the full gale for tuning.)
 const SPELLS: Spell[] = [
-  { name: 'glass', storm: [0.0, 0.04], hold: [150, 300], weight: 20 },
-  { name: 'fair', storm: [0.02, 0.12], hold: [240, 460], weight: 36 },
-  { name: 'breezy', storm: [0.16, 0.32], hold: [140, 280], weight: 22 },
-  { name: 'unsettled', storm: [0.38, 0.56], hold: [90, 170], weight: 13 },
-  { name: 'squall', storm: [0.7, 0.92], hold: [45, 105], weight: 8 },
-  { name: 'gale', storm: [0.94, 1.0], hold: [70, 130], weight: 1 },
+  { name: 'glass', storm: [0.0, 0.04], hold: [150, 300], weight: 22 },
+  { name: 'fair', storm: [0.02, 0.12], hold: [240, 460], weight: 38 },
+  { name: 'breezy', storm: [0.16, 0.32], hold: [140, 280], weight: 24 },
+  { name: 'unsettled', storm: [0.36, 0.52], hold: [90, 170], weight: 11 },
+  { name: 'squall', storm: [0.6, 0.78], hold: [60, 120], weight: 5 },
 ]
 
-/** Past this a spell counts as weather you'd rather not be swimming in. */
+/** Past this a spell counts as properly overcast weather. */
 const FOUL = 0.35
 
 /** Seconds a front takes to roll in — weather arrives, it doesn't switch. */
@@ -112,11 +111,12 @@ const smooth = (a: number, b: number, t: number) => {
 function sunElevation(phase: number) {
   // phase 0 = midnight, 0.25 = dawn, 0.5 = noon, 0.75 = dusk
   const hour = phase * 24
-  if (hour < 5) return -18
-  if (hour < 7) return -18 + 28 * smooth(5, 7, hour)
+  if (hour < 4.5) return -18
+  if (hour < 7) return -18 + 28 * smooth(4.5, 7, hour)
   if (hour < 12) return 10 + 52 * smooth(7, 12, hour)
   if (hour < 17) return 62 - 52 * smooth(12, 17, hour)
-  if (hour < 19.5) return 10 - 28 * smooth(17, 19.5, hour)
+  // The evening is given room: the sun lingers low and gold before it goes
+  if (hour < 20) return 10 - 28 * smooth(17, 20, hour)
   return -18
 }
 
@@ -148,9 +148,8 @@ export function createClimate(opts?: ClimateOptions) {
   const range = ([lo, hi]: readonly [number, number]) => lo + rand() * (hi - lo)
 
   /**
-   * Two foul spells back to back reads as the game punishing you rather than
-   * the sky doing its own thing, so weather always clears before it turns
-   * again. The ocean gets to be cruel, not relentless.
+   * Two overcast spells back to back would leave the sky feeling stuck, so
+   * weather always clears before it turns again.
    */
   function nextSpell(previous: Spell | null) {
     const settled = previous && previous.storm[1] > FOUL
@@ -182,8 +181,6 @@ export function createClimate(opts?: ClimateOptions) {
     rain: 0,
     lightning: 0,
     thunder: 0,
-    swimCost: 1,
-    cold: 1,
     biolum: 0,
     regime: spell.name,
     fair: 1,
@@ -235,8 +232,9 @@ export function createClimate(opts?: ClimateOptions) {
     // Sun tracks west across the day
     state.sunAzimuth = 95 + phase * 170
 
-    // Soft daylight curve — stays lit through golden hour, drops hard after
-    const day = clamp01((elev + 6) / 48)
+    // Soft daylight curve — fully lit until the sun is low, holds through golden
+    // hour, and only lets go once the sun is well down
+    const day = clamp01((elev + 12) / 30)
     state.daylight = day * day * (3 - 2 * day)
 
     if (forcedStorm !== undefined) {
@@ -249,9 +247,6 @@ export function createClimate(opts?: ClimateOptions) {
     }
 
     state.fair = 1 - clamp01((state.storm - 0.15) / 0.7)
-    state.swimCost = 1 + state.storm * 0.85
-    // Night cold is the big one; a storm on top of wet is the killer
-    state.cold = 1 + (1 - state.daylight) * 1.6 + state.storm * 0.55
     // Jellies only bother glowing once the day has gone
     state.biolum = clamp01((1 - state.daylight) * 1.35 - 0.15)
 
@@ -288,30 +283,6 @@ export function createClimate(opts?: ClimateOptions) {
     return state
   }
 
-  /**
-   * Jump the clock — used when you rest under a lean-to. Weather keeps
-   * ticking in short steps so a night's sleep can roll a front in, the same
-   * as waiting it out awake.
-   */
-  function skip(seconds: number) {
-    const step = 2
-    let left = Math.max(0, seconds)
-    while (left > 0) {
-      const dt = Math.min(step, left)
-      update(dt)
-      left -= dt
-    }
-    return state
-  }
-
-  /** Real seconds from now until mid-morning (dayPhase ≈ 0.33 ≈ 8:00). */
-  function secondsUntilDawn() {
-    const phase = (elapsed / DAY_LENGTH) % 1
-    const morning = 0.33
-    const delta = phase < morning ? morning - phase : 1 - phase + morning
-    return delta * DAY_LENGTH
-  }
-
   function setElapsed(seconds: number) {
     elapsed = Math.max(0, seconds)
     update(0)
@@ -321,90 +292,7 @@ export function createClimate(opts?: ClimateOptions) {
     return elapsed
   }
 
-  function snapshot() {
-    return {
-      elapsed,
-      regime: spell.name,
-      storm: state.storm,
-      target,
-      from,
-      holdLeft,
-      frontLeft,
-      frontLength,
-      nextStrikeIn,
-      thunderLeft,
-      thunderPower,
-      lightning: state.lightning,
-    }
-  }
-
-  function restore(
-    saved:
-      | {
-          elapsed: number
-          regime: Regime
-          storm: number
-          target: number
-          from: number
-          holdLeft: number
-          frontLeft: number
-          frontLength: number
-          nextStrikeIn: number
-          thunderLeft: number
-          thunderPower: number
-          lightning: number
-        }
-      | undefined,
-    elapsedFallback?: number,
-  ) {
-    if (!saved) {
-      if (elapsedFallback !== undefined) setElapsed(elapsedFallback)
-      return
-    }
-    elapsed = Math.max(0, saved.elapsed)
-    const match = SPELLS.find((s) => s.name === saved.regime) ?? SPELLS[1]
-    spell = match
-    state.regime = match.name
-    target = clamp01(saved.target)
-    from = clamp01(saved.from)
-    holdLeft = Math.max(0, saved.holdLeft)
-    frontLeft = Math.max(0, saved.frontLeft)
-    frontLength = Math.max(1e-3, saved.frontLength)
-    nextStrikeIn = Math.max(0, saved.nextStrikeIn)
-    thunderLeft = saved.thunderLeft
-    thunderPower = Math.max(0, saved.thunderPower)
-    state.lightning = Math.max(0, saved.lightning)
-    state.storm = clamp01(saved.storm)
-    // Recompute day/tide/derived without advancing the spell clock
-    if (forcedStorm !== undefined) {
-      update(0)
-      return
-    }
-    const hold = holdLeft
-    const front = frontLeft
-    const strike = nextStrikeIn
-    const thLeft = thunderLeft
-    const thPow = thunderPower
-    const flash = state.lightning
-    const stormPin = state.storm
-    update(0)
-    // update(0) still wanders storm a hair — pin the saved weather back
-    holdLeft = hold
-    frontLeft = front
-    nextStrikeIn = strike
-    thunderLeft = thLeft
-    thunderPower = thPow
-    state.lightning = flash
-    state.storm = stormPin
-    state.regime = spell.name
-    state.fair = 1 - clamp01((state.storm - 0.15) / 0.7)
-    state.swimCost = 1 + state.storm * 0.85
-    state.cold = 1 + (1 - state.daylight) * 1.6 + state.storm * 0.55
-    state.biolum = clamp01((1 - state.daylight) * 1.35 - 0.15)
-    state.rain = clamp01((state.storm - 0.32) / 0.55)
-  }
-
-  return { state, update, skip, setElapsed, getElapsed, secondsUntilDawn, snapshot, restore }
+  return { state, update, setElapsed, getElapsed }
 }
 
 export type ClimateClock = ReturnType<typeof createClimate>

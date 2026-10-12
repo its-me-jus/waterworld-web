@@ -42,15 +42,12 @@ function resetStick(stick: Stick) {
   setKnob(stick)
 }
 
-export function createTouchControls(
-  parent: HTMLElement,
-  opts?: { onMoreActions?: () => void },
-) {
+export function createTouchControls(parent: HTMLElement) {
   const wrap = document.createElement('div')
   wrap.id = 'touch-controls'
   parent.appendChild(wrap)
 
-  // Full-screen drag surface for look — sits under the move stick & dive buttons
+  // Full-screen drag surface for look — sits under the move stick & swim buttons
   const lookPad = document.createElement('div')
   lookPad.className = 'look-pad'
   lookPad.setAttribute('aria-label', 'Look')
@@ -62,67 +59,18 @@ export function createTouchControls(
   const actions = document.createElement('div')
   actions.className = 'touch-actions'
   actions.innerHTML = `
-    <button type="button" class="touch-btn touch-use" data-act="use"></button>
     <button type="button" class="touch-btn" data-act="rise" aria-label="Swim up">▲</button>
     <button type="button" class="touch-btn touch-dive" data-act="dive" aria-label="Dive">▼</button>
   `
   wrap.appendChild(actions)
 
   let rise = false
-  let diveHeld = false
-  /** When aboard, POLE/HELM is tap-toggle instead of hold. */
-  let driveEngaged = false
-  let usePending = false
+  let dive = false
   let lookDeltaX = 0
   let lookDeltaY = 0
   let lookId: number | null = null
   let lookLastX = 0
   let lookLastY = 0
-  let driveMode: 'pole' | 'helm' | null = null
-  let moreCount = 0
-
-  const useBtn = actions.querySelector('[data-act="use"]') as HTMLButtonElement
-  const diveBtn = actions.querySelector('[data-act="dive"]') as HTMLButtonElement
-  let moreArmed = false
-
-  function hitMoreChip(e: PointerEvent) {
-    if (moreCount <= 0 || !opts?.onMoreActions) return false
-    const more = useBtn.querySelector('.touch-use-more')
-    if (!more) return false
-    const r = more.getBoundingClientRect()
-    return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
-  }
-
-  useBtn.addEventListener('pointerdown', (e) => {
-    e.preventDefault()
-    // Crowded beach — +N opens Actions on pointerup so this same tap
-    // doesn't land on the fresh overlay and dismiss it.
-    if (hitMoreChip(e)) {
-      moreArmed = true
-      useBtn.classList.add('active')
-      return
-    }
-    moreArmed = false
-    usePending = true
-    useBtn.classList.add('active')
-  })
-  const releaseUse = (e?: Event) => {
-    useBtn.classList.remove('active')
-    if (!moreArmed) return
-    moreArmed = false
-    if (e && 'clientX' in e && !hitMoreChip(e as PointerEvent)) return
-    // Defer past the current pointerup so the overlay doesn't see it as a dismiss.
-    window.setTimeout(() => opts?.onMoreActions?.(), 0)
-  }
-  useBtn.addEventListener('pointerup', releaseUse)
-  useBtn.addEventListener('pointercancel', () => {
-    moreArmed = false
-    useBtn.classList.remove('active')
-  })
-  useBtn.addEventListener('pointerleave', () => {
-    if (moreArmed) return
-    useBtn.classList.remove('active')
-  })
 
   const bindHold = (btn: HTMLButtonElement, set: (v: boolean) => void) => {
     const on = (e: Event) => {
@@ -144,44 +92,9 @@ export function createTouchControls(
   bindHold(actions.querySelector('[data-act="rise"]') as HTMLButtonElement, (v) => {
     rise = v
   })
-
-  // Dive is hold-to-submerge in the water; aboard it becomes tap-toggle POLE/HELM
-  diveBtn.addEventListener('pointerdown', (e) => {
-    e.preventDefault()
-    if (driveMode) {
-      driveEngaged = !driveEngaged
-      paintDiveBtn()
-      return
-    }
-    diveHeld = true
-    diveBtn.classList.add('active')
+  bindHold(actions.querySelector('[data-act="dive"]') as HTMLButtonElement, (v) => {
+    dive = v
   })
-  const releaseDiveHold = () => {
-    if (driveMode) return
-    diveHeld = false
-    diveBtn.classList.remove('active')
-  }
-  diveBtn.addEventListener('pointerup', releaseDiveHold)
-  diveBtn.addEventListener('pointercancel', releaseDiveHold)
-  diveBtn.addEventListener('pointerleave', releaseDiveHold)
-
-  function paintDiveBtn() {
-    diveBtn.classList.toggle('drive', !!driveMode)
-    diveBtn.classList.toggle('engaged', !!driveMode && driveEngaged)
-    if (driveMode === 'helm') {
-      diveBtn.textContent = driveEngaged ? 'HELM\nON' : 'HELM'
-      diveBtn.setAttribute('aria-label', driveEngaged ? 'Helm on — tap to stop' : 'Tap to helm')
-      diveBtn.classList.toggle('active', driveEngaged)
-    } else if (driveMode === 'pole') {
-      diveBtn.textContent = driveEngaged ? 'POLE\nON' : 'POLE'
-      diveBtn.setAttribute('aria-label', driveEngaged ? 'Pole on — tap to stop' : 'Tap to pole')
-      diveBtn.classList.toggle('active', driveEngaged)
-    } else {
-      diveBtn.textContent = '▼'
-      diveBtn.setAttribute('aria-label', 'Dive')
-      diveBtn.classList.remove('active')
-    }
-  }
 
   const startStick = (stick: Stick, e: PointerEvent) => {
     const rect = stick.root.getBoundingClientRect()
@@ -253,11 +166,7 @@ export function createTouchControls(
     lookDeltaX = 0
     lookDeltaY = 0
     input.rise = rise
-    input.dive = driveMode ? driveEngaged : diveHeld
-    if (usePending) {
-      input.interact = true
-      usePending = false
-    }
+    input.dive = dive
   }
 
   function setVisible(on: boolean) {
@@ -265,42 +174,5 @@ export function createTouchControls(
     document.body.classList.toggle('touch-ui', on)
   }
 
-  /**
-   * The use button only exists while something is in reach.
-   * When crowded, stay compact with a tappable +N chip that opens Actions.
-   */
-  function setAction(label: string | null, more = 0) {
-    moreCount = more
-    const crowded = !!label && more > 0
-    if (!label) {
-      useBtn.textContent = ''
-    } else if (crowded) {
-      useBtn.innerHTML =
-        `<span class="touch-use-verb">${label}</span>` +
-        `<span class="touch-use-more" aria-label="Open ${more} more actions">+${more}</span>`
-    } else {
-      useBtn.textContent = label
-    }
-    useBtn.setAttribute('aria-label', label ? (crowded ? `${label}, plus ${more} more` : label) : 'Use')
-    useBtn.classList.toggle('on', label !== null)
-    useBtn.classList.toggle('crowded', crowded)
-  }
-
-  /** While aboard, ▼ becomes POLE / HELM — tap to toggle drive on/off.
-   *  Clearing to null only drops engagement after a real leave (improvise
-   *  already sticky-holds the mode across wash-off blinks). */
-  function setDriveMode(mode: 'pole' | 'helm' | null) {
-    if (mode === driveMode) return
-    if (!mode) {
-      driveEngaged = false
-      diveHeld = false
-    } else if (!driveMode) {
-      // Coming aboard: start disengaged so a leftover Dive hold can't pole
-      diveHeld = false
-    }
-    driveMode = mode
-    paintDiveBtn()
-  }
-
-  return { apply, setVisible, setAction, setDriveMode, root: wrap }
+  return { apply, setVisible, root: wrap }
 }

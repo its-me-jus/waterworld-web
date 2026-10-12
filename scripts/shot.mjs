@@ -35,8 +35,6 @@ const VIEWS = [
   { name: 'night', url: 'http://localhost:5173/?hour=22&yaw=-0.4&pitch=0.05' },
   { name: 'night-dive', url: 'http://localhost:5173/?hour=22&pitch=-0.15', dive: 2.4 },
   { name: 'shore-foam', url: 'http://localhost:5173/?x=755&z=-520&yaw=-0.4&pitch=-0.2' },
-  // Floating within arm's reach of the wreck's first plank — the action prompt
-  { name: 'prompt', url: 'http://localhost:5173/?x=-32.5&z=-96.4&yaw=0&pitch=-0.35' },
   { name: 'jelly', url: 'http://localhost:5173/?pitch=-0.05', dive: 2.2 },
   { name: 'wreck-surface', url: 'http://localhost:5173/?x=-24&z=-88&yaw=0.4&pitch=0.05' },
   { name: 'reef-top', url: 'http://localhost:5173/?x=-30&z=-98&yaw=1.1&pitch=-0.5', dive: 1.6 },
