@@ -31,6 +31,7 @@ const lowPower = isLowPowerDevice()
 const depthReadout = document.createElement('div')
 depthReadout.id = 'depth'
 app.appendChild(depthReadout)
+let showDepth = false
 
 const underOverlay = document.createElement('div')
 underOverlay.id = 'under-overlay'
@@ -133,6 +134,12 @@ setShelter(island.centre.x, island.centre.z, 430, 800)
   180,
   300,
 )
+
+// Real water depth over the island's own terrain grid — the shallows colour,
+// the soft waterline and the surf lines all read it
+oceanMat.uniforms.uSeabed.value = island.seabed.texture
+;(oceanMat.uniforms.uSeabedRect.value as THREE.Vector4).copy(island.seabed.rect)
+;(oceanMat.uniforms.uSeabedRange.value as THREE.Vector2).copy(island.seabed.range)
 
 const shore = createShoreSurf(scene, {
   centre: island.centre,
@@ -266,7 +273,16 @@ function landfall(onPerch: boolean) {
   }
   if (saidShore) return
   saidShore = true
-  hud.whisper('Soft sand underfoot.')
+  // Say what is actually there: the terrain paints rock where it is steep and
+  // grass from a few metres up, the same split the footsteps make
+  const h = island.heightAt(player.x, player.z)
+  const fall = Math.hypot(
+    island.heightAt(player.x + 2, player.z) - island.heightAt(player.x - 2, player.z),
+    island.heightAt(player.x, player.z + 2) - island.heightAt(player.x, player.z - 2),
+  )
+  if (fall > 4) hud.whisper('Rough rock under your feet.')
+  else if (h > 6) hud.whisper('Grass underfoot, and the sea behind you.')
+  else hud.whisper('Soft sand underfoot.')
 }
 
 const beach = island.shore.length > 0 ? island.shore[0] : island.centre
@@ -694,8 +710,13 @@ function frame() {
 
   document.body.classList.toggle('underwater', underwater)
   underOverlay.style.opacity = String(view.submersion)
-  depthReadout.textContent = underwater ? `${depth.toFixed(1)} m` : ''
-  depthReadout.style.opacity = underwater ? '1' : '0'
+  // Head-height swell dips the eye under for a frame at a time; showing the
+  // readout on every dip flashed an empty box at the top of the screen. It
+  // waits until you are properly down, and keeps its number while it fades.
+  if (depth > 0.5) showDepth = true
+  else if (depth < 0.25) showDepth = false
+  if (showDepth) depthReadout.textContent = `${depth.toFixed(1)} m`
+  depthReadout.style.opacity = showDepth ? '1' : '0'
 
   caustics.update(
     t,

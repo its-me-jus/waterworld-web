@@ -127,6 +127,11 @@ uniform float uHalfExtent;
 uniform vec4 uShelter;
 // Island shelf for shallows: xy = centre, z = ankle-deep radius, w = deep-again
 uniform vec4 uShelf;
+// The island's height grid (island.ts seabed): rect maps world xz to uv,
+// a texel is range.x + value * range.y metres. range.y = 0 means none.
+uniform sampler2D uSeabed;
+uniform vec4 uSeabedRect;
+uniform vec2 uSeabedRange;
 
 varying vec3 vWorldPos;
 varying vec3 vNormal;
@@ -150,6 +155,16 @@ vec3 detailNormal(vec2 p, float fade) {
   float dx = (hx - h) * 3.4 + (gx - g) * 2.0;
   float dz = (hz - h) * 3.4 + (gz - g) * 2.0;
   return normalize(vec3(-dx * fade, 1.0, -dz * fade));
+}
+
+// Water standing over the sand here, in metres. Sampled unconditionally at a
+// fixed lod: a texture read inside a branch that varies per pixel is the kind
+// of thing a phone driver has refused to compile before.
+float waterDepth(vec3 p) {
+  vec2 uv = (p.xz - uSeabedRect.xy) * uSeabedRect.zw;
+  float floorY = uSeabedRange.x + textureLod(uSeabed, clamp(uv, 0.0, 1.0), 0.0).r * uSeabedRange.y;
+  vec2 inside = step(vec2(0.0), uv) * step(uv, vec2(1.0));
+  return mix(100.0, p.y - floorY, inside.x * inside.y * step(0.001, uSeabedRange.y));
 }
 
 // GGX specular — gives tight sun glitter instead of a plastic blob
@@ -254,19 +269,28 @@ void main() {
     float rd = length(vWorldPos.xz - uShelf.xy);
     shelf = 1.0 - smoothstep(uShelf.z, uShelf.w, rd);
   }
-  // Warmer turquoise over the sand — beach shallows, not pool chlorine
-  vec3 sandTint = vec3(0.52, 0.8, 0.74);
+  // Real depth where the island's grid reaches. The radial shelf above only
+  // knows distance from the centre, and the island isn't round — the turquoise
+  // band and the waterline drifted off the actual beach.
+  float depthW = waterDepth(vWorldPos);
+  float hasBed = step(0.001, uSeabedRange.y);
+  // 1 in ankle-deep water, 0 past ~8 m
+  float shallow = mix(shelf, 1.0 - smoothstep(0.3, 8.0, depthW), hasBed);
+  // Warmer turquoise over the sand — beach shallows, not pool chlorine. With
+  // real depth the tint covers more water than the radial shelf did, and the
+  // old pale mix read as milky grey; this one keeps its saturation.
+  vec3 sandTint = mix(vec3(0.52, 0.8, 0.74), vec3(0.16, 0.6, 0.56), hasBed);
   vec3 beachShallow = mix(uShallowColor * 1.65, sandTint, 0.48);
-  body = mix(body, beachShallow, shelf * 0.82);
+  body = mix(body, beachShallow, shallow * 0.82);
 
   // Subsurface glow where the sun shines through a wave back
   float sss = pow(max(dot(-L, V) * 0.5 + 0.5, 0.0), 3.0) * (1.0 - facing);
   body += vec3(0.05, 0.3, 0.24) * sss * 0.8;
   // Extra glow in the shallows — light bouncing off sand underfoot
-  body += beachShallow * shelf * 0.08 * facing;
+  body += beachShallow * shallow * 0.08 * facing;
 
   // Shallows give the sand more of a say — less mirror, more body colour
-  fres *= 1.0 - 0.5 * shelf;
+  fres *= 1.0 - 0.5 * shallow;
 
   vec3 color = mix(body, sky, fres);
 
@@ -277,8 +301,8 @@ void main() {
   // Sun glitter: sharp near, broader far — dialled back over the shelf so it
   // doesn't glitter like open ocean on ankle-deep water
   float rough = mix(0.05, 0.2, clamp(dist * 0.006, 0.0, 1.0));
-  rough = mix(rough, 0.24, shelf);
-  color += uSunColor * ggx(N, V, L, rough) * mix(1.6, 0.55, shelf);
+  rough = mix(rough, 0.24, shallow);
+  color += uSunColor * ggx(N, V, L, rough) * mix(1.6, 0.55, shallow);
 
   // Whitecaps on crests + a little foam streaking in the chop
   float streak = fbm(vWorldPos.xz * 0.9 + vec2(uTime * 0.25, -uTime * 0.2), 3);
@@ -293,12 +317,29 @@ void main() {
   // Soft lace of white at the waterline — complements shore.ts foam flakes
   float laceNoise = fbm(vWorldPos.xz * 1.6 + vec2(uTime * 0.4, -uTime * 0.28), 3);
   float lacePulse = 0.55 + 0.45 * sin(uTime * 1.2 + laceNoise * 6.0);
+  float lap = mix(pow(shelf, 2.4), 1.0 - smoothstep(0.0, 1.2, depthW), hasBed);
   float shoreLace =
-    pow(shelf, 2.4) *
+    lap *
     smoothstep(0.28, 0.82, laceNoise) *
     lacePulse *
     (0.35 + 0.65 * (1.0 - facing));
-  color = mix(color, vec3(0.93, 0.97, 0.99) * foamLight, shoreLace * 0.42);
+  vec3 foamWhite = vec3(0.93, 0.97, 0.99) * foamLight;
+  color = mix(color, foamWhite, shoreLace * 0.42);
+
+  // Surf lines: broken white bands that run in over the last metre and a half
+  // of water. The phase is keyed to depth, so the lines follow the beach's own
+  // contours and travel up it as depth falls away under them.
+  float surf = 0.0;
+  if (hasBed > 0.5) {
+    float zone = (1.0 - smoothstep(0.2, 1.3, depthW)) * smoothstep(-0.05, 0.1, depthW);
+    float wobble = fbm(vWorldPos.xz * 0.11 + vec2(uTime * 0.04, 0.0), 2);
+    float band = pow(0.5 + 0.5 * sin(depthW * 6.0 + wobble * 3.5 + uTime * 1.15), 6.0);
+    float broken = smoothstep(0.32, 0.7, laceNoise);
+    // The swash: a thin wet edge of white where the water runs out on the sand
+    float edge = (1.0 - smoothstep(0.0, 0.16, depthW)) * smoothstep(-0.03, 0.04, depthW);
+    surf = clamp(band * broken * zone * 0.6 + edge * (0.45 + 0.4 * laceNoise), 0.0, 1.0);
+    color = mix(color, foamWhite, surf * 0.85);
+  }
 
   // Blend toward the sky near the mesh rim so a finite square doesn't silhouette
   float planar = length(vWorldPos.xz - uCameraPos.xz);
@@ -307,8 +348,26 @@ void main() {
   color = mix(color, uHorizonColor * 0.85, far * 0.92);
 
   // Soft edge: last metres over the beach go translucent so sand peeks through
-  // with a wet sheen, without turning the whole shelf into grey mud.
-  float alpha = mix(1.0, 0.38, shelf * shelf);
+  // with a wet sheen, without turning the whole shelf into grey mud. With real
+  // depth the water thins to almost nothing at the sand, so the mesh no longer
+  // ends in a hard cut where it meets the beach.
+  float alphaRadial = mix(1.0, 0.38, shelf * shelf);
+  // Sand stays readable through the first metre or so, then the water closes
+  // up fast — a wide see-through band read as milky grey from shore height
+  float alphaDepth = mix(0.14, 0.58, smoothstep(0.0, 0.7, depthW));
+  alphaDepth = mix(alphaDepth, 1.0, smoothstep(0.8, 3.8, depthW));
+  // Water you look across shows the sky, not the bottom, and the terrain
+  // shader drops far underwater ground anyway — so the see-through part
+  // closes up at grazing angles and with distance. The last hand's breadth at
+  // the sand stays clear either way, or the waterline turns back into a cut.
+  float clearView = (1.0 - alphaDepth) *
+    mix(0.15, 1.0, smoothstep(0.05, 0.5, ndv)) *
+    (1.0 - smoothstep(50.0, 150.0, dist));
+  float clearEdge = (1.0 - alphaDepth) * (1.0 - smoothstep(0.0, 0.25, depthW));
+  alphaDepth = 1.0 - max(clearView, clearEdge);
+  float alpha = mix(alphaRadial, alphaDepth, hasBed);
+  // Foam is opaque, whatever the water under it is doing
+  alpha = mix(alpha, 0.92, surf);
   // A little more see-through right at the cut where the lace sits
   alpha *= 1.0 - shoreLace * 0.18;
   // Radial fade kills the square corners against the horizon
@@ -345,6 +404,9 @@ export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: O
       uTide: { value: 0 },
       uShelter: { value: new THREE.Vector4(0, 0, 0, -1) },
       uShelf: { value: new THREE.Vector4(0, 0, 0, -1) },
+      uSeabed: { value: null },
+      uSeabedRect: { value: new THREE.Vector4(0, 0, 1, 1) },
+      uSeabedRange: { value: new THREE.Vector2(0, 0) },
       uWaves: { value: uWaves },
       uWaveExtra: { value: uWaveExtra },
       uEnvMap: { value: null },

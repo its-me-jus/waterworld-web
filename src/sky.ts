@@ -72,7 +72,7 @@ float fbm(vec2 p) {
 
 void main() {
   vec3 d = normalize(vDir);
-  if (d.y < 0.015) discard;
+  if (d.y < -0.01) discard;
 
   // Project the dome onto a plane so clouds stretch toward the horizon
   vec2 uv = d.xz / (d.y + 0.16);
@@ -97,6 +97,34 @@ void main() {
   float edge = smoothstep(0.0, 0.35, cover) * (1.0 - smoothstep(0.75, 1.0, cover));
   float alpha = mix(wispy * 0.4, cover, 0.7) * horizonFade * topFade * 0.85 * uOpacity;
   alpha *= 0.75 + edge * 0.35;
+
+  // Distant cumulus sitting on the sea. The deck above thins to nothing at
+  // the horizon, which left the sea line a bare ruled edge; real weather piles
+  // up out there. Heights are read off a ring in noise space so the bank has
+  // no seam, and its tops billow; the base melts into the horizon haze.
+  if (d.y < 0.13) {
+    vec2 ring = normalize(d.xz + vec2(1e-5));
+    vec2 slow = vec2(uTime * 0.0007, 0.0);
+    // Where along the horizon there is a bank at all, and how tall it stands
+    float stack = smoothstep(0.42, 0.78, fbm(ring * 2.2 + slow));
+    // Stormy skies close the gaps
+    stack = max(stack, (0.62 - uCover) * 1.4);
+    float billow = fbm(ring * 11.0 + vec2(d.y * 38.0, -d.y * 21.0) + slow * 3.0);
+    float top = (0.012 + 0.075 * stack) * (0.55 + 0.9 * billow);
+    float bank = 1.0 - smoothstep(top - 0.02, top, d.y);
+    bank *= smoothstep(0.0, 0.03, top - 0.006);
+    // Lit tops, shaded hazy bases, a warm rim when the sun is low behind them
+    float lift = clamp(d.y / max(top, 0.001), 0.0, 1.0);
+    // Kept close to the deck's lit colour: a grey bank on the sea line reads
+    // as a far coast, and there is no other land out there to find
+    vec3 bankCol = mix(mix(uShadow, uTint, 0.7), uTint * 1.05, lift);
+    bankCol += uTint * pow(sun, 8.0) * 0.6 * (1.0 - lift * 0.5);
+    float bankA = bank * mix(0.22, 0.8, smoothstep(0.0, 0.6, lift)) * uOpacity;
+    // Over the deck, under its alpha — the bank is further away
+    float outA = alpha + bankA * (1.0 - alpha);
+    col = (col * alpha + bankCol * bankA * (1.0 - alpha)) / max(outA, 0.001);
+    alpha = outA;
+  }
 
   gl_FragColor = vec4(col, alpha);
 

@@ -327,6 +327,15 @@ const groundNormalBody = /* glsl */ `
       bump += vec3(h0 - gRelief(gp + vec2(0.55, 0.0)), 0.0, h0 - gRelief(gp + vec2(0.0, 0.55)))
         * 0.7 * gNear;
     }
+    // Ledges on rock faces: the strata below, tilted up where a band steps
+    // out, so a low sun picks out lines across a cliff instead of one flat
+    // plane. Steep faces only — vGroundUp is the mesh normal before any bump.
+    float cliffN = 1.0 - smoothstep(0.35, 0.62, vGroundUp);
+    if (cliffN > 0.01) {
+      float ly = vGroundPos.y * 0.55 + gNoise(gp * 0.035) * 6.0 + gNoise(gp * 0.11) * 1.5;
+      float ledge = gNoise(vec2(ly + 0.25, 0.5)) - gNoise(vec2(ly - 0.25, 0.5));
+      bump.y += ledge * 1.6 * cliffN;
+    }
     vec3 nw = normalize((vec4(normal, 0.0) * viewMatrix).xyz + bump);
     normal = normalize((viewMatrix * vec4(nw, 0.0)).xyz);
   }
@@ -381,6 +390,22 @@ const groundColorBody = /* glsl */ `
       shading += (blade - 0.5) * 0.22 * bladeFade;
     #endif
     diffuseColor.rgb = patched * shading;
+
+    // Rock faces. The vertex paint already turns steep ground to stone, but a
+    // whole cliff came out one tone per facet — a smooth slab. Lava piles up
+    // in layers, so: bands that wander with the face, finer beds inside them,
+    // and darker streaks where rain runs down. Each band shifts hue a little,
+    // warm ochre to cool basalt, because value alone dies in the tone map.
+    float cliff = 1.0 - smoothstep(0.35, 0.62, vGroundUp);
+    if (cliff > 0.01) {
+      float ly = vGroundPos.y * 0.55 + gNoise(gp * 0.035) * 6.0 + gNoise(gp * 0.11) * 1.5;
+      float strata = gNoise(vec2(ly, 0.5));
+      float beds = gNoise(vec2(ly * 3.1, 7.3));
+      float streak = smoothstep(0.55, 0.8, gNoise(vec2((gp.x + gp.y) * 0.45, vGroundPos.y * 0.04)));
+      float tone = 0.8 + strata * 0.32 + (beds - 0.5) * 0.2 - streak * 0.2;
+      vec3 hue = mix(vec3(0.86, 0.9, 0.98), vec3(1.12, 1.02, 0.86), strata);
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * hue * tone, cliff);
+    }
 
     // Live tide wetness — the painted beach was a fixed band; the foreshore
     // now darkens and cools where the water actually sits, and sheens a touch.
@@ -494,7 +519,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       shader.uniforms.uHazeDensity = { value: 0.0021 }
       shader.uniforms.uHazeMax = { value: 0.88 }
 
-      shader.vertexShader = `varying vec3 vGroundPos;\n${shader.vertexShader}`
+      shader.vertexShader = `varying vec3 vGroundPos;\n${ground ? 'varying float vGroundUp;\n' : ''}${shader.vertexShader}`
 
       if (wind > 0) addWind(shader)
 
@@ -503,6 +528,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       shader.vertexShader = shader.vertexShader.replace(
         '#include <project_vertex>',
         `vGroundPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        ${ground ? 'vGroundUp = normalize(mat3(modelMatrix) * objectNormal).y;' : ''}
         #include <project_vertex>`,
       )
 
@@ -520,6 +546,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
         ${cloudShadowPars}
         ${shapedFillPars}
         ${ground ? groundWetPars : ''}
+        ${ground ? 'varying float vGroundUp;' : ''}
         ${shader.fragmentShader}
       `
         .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${cloudShadowBody}`)

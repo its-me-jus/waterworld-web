@@ -38,6 +38,12 @@ export type Island = {
   /** Beach-level world positions, for anything that wants to sit on the sand. */
   shore: THREE.Vector3[]
   update: (camera: THREE.Camera, underwater: boolean, time?: number) => void
+  /**
+   * The terrain height grid as a texture, so the sea can shade by real water
+   * depth. `rect` maps world xz to uv (xy = world min, zw = 1 / world size);
+   * a texel is `range.x + value * range.y` metres.
+   */
+  seabed: { texture: THREE.DataTexture; rect: THREE.Vector4; range: THREE.Vector2 }
   /** Keep aerial perspective matched to the live horizon. */
   setHaze: (color: THREE.Color) => void
   /**
@@ -1263,6 +1269,38 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   }
 
   const heightAt = (x: number, z: number) => surface(x - opts.x, z - opts.z)
+
+  // The same grid for the sea's shader. Eight bits over the band the water can
+  // actually reach is ~10 cm a step, and linear filtering between texel centres
+  // is the mesh's own bilinear surface — so the depth the sea reads matches the
+  // sand it is drawn over. R8 filters on every WebGL2 device; floats don't.
+  const SEABED_MIN = -20
+  const SEABED_SPAN = 26
+  const seabedBytes = new Uint8Array(gridN * gridN)
+  for (let k = 0; k < seabedBytes.length; k++) {
+    const t = (heights[k] - SEABED_MIN) / SEABED_SPAN
+    seabedBytes[k] = Math.round(THREE.MathUtils.clamp(t, 0, 1) * 255)
+  }
+  const seabedTexture = new THREE.DataTexture(seabedBytes, gridN, gridN, THREE.RedFormat, THREE.UnsignedByteType)
+  seabedTexture.magFilter = THREE.LinearFilter
+  seabedTexture.minFilter = THREE.LinearFilter
+  seabedTexture.wrapS = THREE.ClampToEdgeWrapping
+  seabedTexture.wrapT = THREE.ClampToEdgeWrapping
+  // Rows are gridN bytes, not a multiple of four — the default alignment would
+  // shear every row a little further than the last
+  seabedTexture.unpackAlignment = 1
+  seabedTexture.needsUpdate = true
+  const seabedGrid = {
+    texture: seabedTexture,
+    // Texel centres sit on the grid points, half a texel in from the edge
+    rect: new THREE.Vector4(
+      opts.x - SPAN - step * 0.5,
+      opts.z - SPAN - step * 0.5,
+      1 / (gridN * step),
+      1 / (gridN * step),
+    ),
+    range: new THREE.Vector2(SEABED_MIN, SEABED_SPAN),
+  }
 
   const geometry = new THREE.PlaneGeometry(SPAN * 2, SPAN * 2, segments, segments)
   geometry.rotateX(-Math.PI / 2)
@@ -2757,6 +2795,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     heightAt,
     resolve,
     shore,
+    seabed: seabedGrid,
     update,
     setHaze,
     setWeather,
