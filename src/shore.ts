@@ -46,6 +46,10 @@ function softFoamTexture(lace: boolean) {
       const d = Math.hypot(nx * 0.62, ny * 1.15)
       let a = 1 - Math.min(1, d)
       a = a * a * (3 - 2 * a)
+      // The stretch leaves the ellipse short of the quad's ends; fade them out
+      // or the patch ends in a hard straight edge
+      const end = Math.min(1, Math.max(0, (Math.abs(nx) - 0.7) / 0.3))
+      a *= 1 - end * end * (3 - 2 * end)
       if (lace) {
         // Feathered edge so the lace breaks into soft white
         const edge = Math.sin(nx * 9.4 + ny * 5.1) * 0.5 + 0.5
@@ -70,8 +74,11 @@ function softFoamTexture(lace: boolean) {
   return tex
 }
 
+/** How far foam is pulled toward the eye in the depth test, in metres. */
+const FOAM_DEPTH_LIFT = 0.5
+
 function foamMaterial(map: THREE.Texture, opacity: number) {
-  return new THREE.MeshBasicMaterial({
+  const mat = new THREE.MeshBasicMaterial({
     map,
     color: 0xf4f9fc,
     transparent: true,
@@ -82,6 +89,19 @@ function foamMaterial(map: THREE.Texture, opacity: number) {
     side: THREE.DoubleSide,
     blending: THREE.AdditiveBlending,
   })
+  // The sea writes depth from the air, and a flat foam patch on a curved swell
+  // dips under it at the edges — the cut showed as hard straight lines across
+  // the lap. Sliding each vertex toward the eye along its own sight line keeps
+  // it where it was on screen but lets it win the depth test over the water.
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <project_vertex>',
+      `#include <project_vertex>
+      mvPosition.xyz *= max(0.05, 1.0 - ${FOAM_DEPTH_LIFT.toFixed(2)} / max(length(mvPosition.xyz), 0.001));
+      gl_Position = projectionMatrix * mvPosition;`,
+    )
+  }
+  return mat
 }
 
 export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {

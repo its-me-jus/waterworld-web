@@ -7,9 +7,6 @@ import { oceanState } from './waves'
  * Littoral life — the shoreline that answers the tide.
  *
  *  - Limpets, mussels and urchins dotting the foreshore and the drop-off wall.
- *  - Tidal pools: hollows that hold their own small life only while the tide is
- *    out; high water flushes them, rain and a lively swell refill them for the
- *    next low.
  *  - Coral gardens that take the night glow the jellies already know.
  *  - Seals that haul out on the cove rocks at low tide and slip away when it
  *    makes — while they swim, fish schools gather under them.
@@ -17,9 +14,6 @@ import { oceanState } from './waves'
  * All of it is to look at. Nothing here is signposted; tide phase decides what
  * the shore looks like.
  */
-
-/** Seconds for a flushed tide pool to settle life again in calm dry weather. */
-const POOL_BIO_REFILL = 200
 
 export type LittoralDeps = {
   hud: Hud
@@ -32,20 +26,6 @@ export type LittoralDeps = {
   reefResolve?: (probe: { x: number; y: number; z: number }) => void
   wreckOrigin?: { x: number; z: number }
   lowPower?: boolean
-}
-
-type TidePool = {
-  x: number
-  z: number
-  lip: number
-  size: number
-  water: THREE.Mesh
-  rim: THREE.Mesh
-  /** 0..1 — biota readiness after a high-tide flush. */
-  full: number
-  covered: boolean
-  /** Small life that lives in the hollow while the tide is out. */
-  critters: THREE.Object3D[]
 }
 
 type Seal = {
@@ -92,38 +72,18 @@ const mats = () => ({
     roughness: 0.85,
     flatShading: true,
   }),
-  // Plain lit stone goes black in shade, so rocks carry a warm fill of their own
+  // Plain lit stone goes black in shade, so rocks carry a warm fill of their own.
+  // Smooth-shaded: the lumps are welded for it, and flat facets read as a
+  // low-poly model rather than worn rock.
   rock: new THREE.MeshStandardMaterial({
     color: '#6a6358',
     roughness: 0.95,
-    flatShading: true,
     emissive: '#7a7160',
-    emissiveIntensity: 0.8,
-  }),
-  pool: new THREE.MeshStandardMaterial({
-    color: 0x3f757b,
-    roughness: 0.28,
-    metalness: 0.05,
-    emissive: 0x27505a,
-    emissiveIntensity: 0.7,
-    transparent: true,
-    opacity: 0.88,
-  }),
-  anemone: new THREE.MeshStandardMaterial({
-    color: '#c45a6a',
-    roughness: 0.7,
-    flatShading: true,
-    emissive: '#ff4a6a',
-    emissiveIntensity: 0,
+    emissiveIntensity: 0.5,
   }),
   periwinkle: new THREE.MeshStandardMaterial({
     color: '#5a6a78',
     roughness: 0.6,
-    flatShading: true,
-  }),
-  starfish: new THREE.MeshStandardMaterial({
-    color: '#c4783a',
-    roughness: 0.8,
     flatShading: true,
   }),
   coral: new THREE.MeshStandardMaterial({
@@ -149,7 +109,6 @@ const mats = () => ({
   wall: new THREE.MeshStandardMaterial({
     color: '#5a554c',
     roughness: 0.97,
-    flatShading: true,
     emissive: '#6f6859',
     emissiveIntensity: 0.7,
   }),
@@ -204,48 +163,6 @@ function kelpClump(m: ReturnType<typeof mats>) {
     blade.rotation.set(-0.2, i * 1.2, 0)
     blade.position.set(Math.cos(i * 1.4) * 0.15, 0.4, Math.sin(i * 1.4) * 0.15)
     g.add(blade)
-  }
-  return g
-}
-
-function anemoneMesh(m: ReturnType<typeof mats>) {
-  const g = new THREE.Group()
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.08, 7), m.anemone)
-  base.position.y = 0.04
-  g.add(base)
-  for (let i = 0; i < 8; i++) {
-    const tent = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.006, 0.16, 4), m.anemone)
-    const a = (i / 8) * Math.PI * 2
-    tent.position.set(Math.cos(a) * 0.04, 0.14, Math.sin(a) * 0.04)
-    tent.rotation.z = Math.cos(a) * 0.35
-    tent.rotation.x = Math.sin(a) * 0.35
-    g.add(tent)
-  }
-  return g
-}
-
-function periwinkleMesh(m: ReturnType<typeof mats>) {
-  const g = new THREE.Group()
-  for (let i = 0; i < 3; i++) {
-    const shell = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 5), m.periwinkle)
-    shell.scale.set(1, 0.85, 1.15)
-    shell.position.set(Math.cos(i * 2.1) * 0.05, 0.03, Math.sin(i * 2.1) * 0.05)
-    g.add(shell)
-  }
-  return g
-}
-
-function starfishMesh(m: ReturnType<typeof mats>) {
-  const g = new THREE.Group()
-  const hub = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 4), m.starfish)
-  hub.scale.set(1, 0.35, 1)
-  g.add(hub)
-  for (let i = 0; i < 5; i++) {
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.02, 0.16), m.starfish)
-    const a = (i / 5) * Math.PI * 2
-    arm.position.set(Math.cos(a) * 0.08, 0.01, Math.sin(a) * 0.08)
-    arm.rotation.y = -a
-    g.add(arm)
   }
   return g
 }
@@ -390,26 +307,18 @@ const scatter = (i: number, salt: number) => {
 export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
   const m = mats()
   const seals: Seal[] = []
-  const tidePools: TidePool[] = []
   const ox = deps.origin.x
   const oz = deps.origin.z
   const coveX = deps.cove?.x ?? ox
   const coveZ = deps.cove?.z ?? oz
   const want = deps.lowPower
-    ? { limpet: 8, mussel: 6, urchin: 4, kelp: 3, seal: 1, pool: 3, coral: 3 }
-    : { limpet: 18, mussel: 14, urchin: 9, kelp: 6, seal: 3, pool: 6, coral: 7 }
+    ? { limpet: 8, mussel: 6, urchin: 4, kelp: 3, seal: 1, coral: 3 }
+    : { limpet: 18, mussel: 14, urchin: 9, kelp: 6, seal: 3, coral: 7 }
 
-  /** Plant a bit of shore life; critters in a pool come and go with it. */
-  function place(
-    object: THREE.Object3D,
-    x: number,
-    y: number,
-    z: number,
-    pool?: TidePool,
-  ) {
+  /** Plant a bit of shore life. */
+  function place(object: THREE.Object3D, x: number, y: number, z: number) {
     object.position.set(x, y, z)
     scene.add(object)
-    pool?.critters.push(object)
   }
 
   // —— foreshore limpets & mussels (island) ——————————————————————
@@ -451,60 +360,6 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
     if (scatter(i, 2.2) > 0.5) continue
     place(musselMesh(m), wx, h + 0.05, wz)
     mussels++
-  }
-
-  // —— tidal pools (intertidal hollows, own biota at low water) ————
-  {
-    const candidates: { x: number; z: number; h: number }[] = []
-    for (let i = 0; i < 800; i++) {
-      const coveBias = i % 2 === 0
-      const angle = i * 2.399 + 0.4
-      const radius = coveBias ? 158 + ((i * 17) % 90) : 200 + ((i * 23) % 180)
-      const lx = coveBias
-        ? coveX - ox + Math.cos(angle) * (radius * 0.4)
-        : Math.cos(angle) * radius
-      const lz = coveBias
-        ? coveZ - oz + Math.sin(angle) * (radius * 0.4)
-        : Math.sin(angle) * radius
-      const wx = ox + lx
-      const wz = oz + lz
-      const h = deps.heightAt(wx, wz)
-      if (h < 0.2 || h > 0.95) continue
-      candidates.push({ x: wx, z: wz, h })
-    }
-    for (const spot of candidates) {
-      if (tidePools.length >= want.pool) break
-      if (tidePools.some((p) => Math.hypot(p.x - spot.x, p.z - spot.z) < 14)) continue
-      const size = 0.85 + (tidePools.length % 3) * 0.2
-      const rim = new THREE.Mesh(new THREE.TorusGeometry(size, 0.22, 5, 14), m.rock)
-      rim.rotation.x = Math.PI / 2
-      rim.scale.y = 0.45
-      rim.position.set(spot.x, spot.h - 0.08, spot.z)
-      scene.add(rim)
-      const waterMat = m.pool.clone()
-      const water = new THREE.Mesh(new THREE.CircleGeometry(size - 0.12, 16), waterMat)
-      water.rotation.x = -Math.PI / 2
-      water.position.set(spot.x, spot.h + 0.01, spot.z)
-      scene.add(water)
-      const pool: TidePool = {
-        x: spot.x,
-        z: spot.z,
-        lip: spot.h,
-        size,
-        water,
-        rim,
-        full: 1,
-        covered: false,
-        critters: [],
-      }
-      tidePools.push(pool)
-
-      place(anemoneMesh(m), spot.x + 0.25, spot.h + 0.02, spot.z - 0.1, pool)
-      place(periwinkleMesh(m), spot.x - 0.3, spot.h + 0.02, spot.z + 0.15, pool)
-      if (tidePools.length % 2 === 0) {
-        place(starfishMesh(m), spot.x + 0.05, spot.h + 0.02, spot.z + 0.28, pool)
-      }
-    }
   }
 
   // —— drop-off wall (shelf face you swim along) + urchins ——————————
@@ -657,10 +512,10 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
   }
 
   let saidTide = false
-  let lastLow = false
-  let saidPool = false
+  // Unknown until the first frame, so a low tide at arrival isn't announced
+  // over the fade-in as if it had just happened
+  let lastLow: boolean | null = null
   let saidSealFish = false
-  let saidRefill = false
   let saidWall = false
   let saidAbyss = false
   let saidCoralGlow = false
@@ -668,21 +523,20 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
   function update(
     dt: number,
     player: { x: number; z: number; y?: number },
-    weather: { biolum?: number; rain?: number } = {},
+    weather: { biolum?: number } = {},
   ) {
     const tide = oceanState.tide
     const biolum = weather.biolum ?? 0
-    const rain = weather.rain ?? 0
     const low = tide < -0.2
-    if (low !== lastLow) {
+    if (lastLow === null) {
+      lastLow = low
+    } else if (low !== lastLow) {
       lastLow = low
       if (low && !saidTide) {
         saidTide = true
-        deps.hud.whisper('The tide has gone out. The pools lie open.')
+        deps.hud.whisper('The tide has gone out.')
       } else if (!low && saidTide && tide > 0.25) {
         deps.hud.whisper('The tide is turning.')
-        saidPool = false
-        saidRefill = false
       }
     }
 
@@ -691,7 +545,6 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
     const glow = biolum * pulse
     m.coral.emissiveIntensity = glow * 1.45
     m.coralDeep.emissiveIntensity = glow * 1.85
-    m.anemone.emissiveIntensity = glow * 0.95
     if (biolum > 0.45 && !saidCoralGlow && coralRoots.length > 0) {
       let near = false
       for (const c of coralRoots) {
@@ -703,47 +556,6 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
       if (near) {
         saidCoralGlow = true
         deps.hud.whisper('The coral glows softly in the dark.')
-      }
-    }
-
-    // Tide pools: high water flushes; rain + lively swell refill life for the next low
-    const season = oceanState.amp
-    const rainBoost = 1 + Math.min(1, Math.max(0, rain)) * 1.75
-    const seasonBoost = 0.7 + Math.max(0, season - 0.55) * 0.95
-    for (const pool of tidePools) {
-      const covered = tide > pool.lip - 0.02
-      if (covered && !pool.covered) {
-        // Sea just took the lip — flush empties the life clock so the biota is hidden
-        // can return once weather and the turning tide have worked
-        pool.full = Math.min(pool.full, 0.12)
-      }
-      pool.covered = covered
-      pool.water.visible = !covered
-      if (!covered) {
-        pool.water.position.y = Math.min(pool.lip + 0.02, Math.max(pool.lip - 0.12, tide + 0.05))
-        if (pool.full < 1) {
-          pool.full = Math.min(1, pool.full + (dt / POOL_BIO_REFILL) * rainBoost * seasonBoost)
-        }
-        // Water reads thinner while the hollow is still settling
-        const waterMat = pool.water.material as THREE.MeshStandardMaterial
-        waterMat.opacity = 0.55 + pool.full * 0.33
-        waterMat.emissiveIntensity = 0.35 + pool.full * 0.45 + biolum * 0.35
-
-        if (pool.full >= 0.92 && !saidRefill && Math.hypot(player.x - pool.x, player.z - pool.z) < 9) {
-          saidRefill = true
-          deps.hud.whisper(
-            rain > 0.25
-              ? 'Rain fed the pool. Life is back in the hollow.'
-              : 'The pool is alive again. The tide did the work.',
-          )
-        }
-
-        // A freshly flushed hollow stays bare until life has settled again
-        for (const c of pool.critters) c.visible = pool.full >= 0.45
-      }
-      if (low && !saidPool && Math.hypot(player.x - pool.x, player.z - pool.z) < 6) {
-        saidPool = true
-        deps.hud.whisper('A tide pool, holding a little of the sea until it returns.')
       }
     }
 

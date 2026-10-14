@@ -393,12 +393,20 @@ function ground(lx: number, lz: number) {
  * between bright and dark as you walk. Leaning every normal toward the sky
  * gives the whole clump one soft shared response instead.
  */
-function leafBlade(width: number, height: number, bend: number, segments = 3, skyward = 0.62) {
+function leafBlade(
+  width: number,
+  height: number,
+  bend: number,
+  segments = 3,
+  skyward = 0.62,
+  /** Hold the width up the blade and pinch it at the tip, as grass does. */
+  pinch = false,
+) {
   const geo = new THREE.PlaneGeometry(width, height, 1, segments)
   const pos = geo.attributes.position
   for (let i = 0; i < pos.count; i++) {
     const t = (pos.getY(i) + height / 2) / height
-    pos.setX(i, pos.getX(i) * (1 - t * 0.88))
+    pos.setX(i, pos.getX(i) * (pinch ? 1 - t * t * 0.94 : 1 - t * 0.88))
     pos.setZ(i, pos.getZ(i) + t * t * bend)
     pos.setY(i, pos.getY(i) - t * t * Math.abs(bend) * 0.3)
   }
@@ -416,18 +424,159 @@ function leafBlade(width: number, height: number, bend: number, segments = 3, sk
   return geo
 }
 
-/** One palm: a leaning trunk, a crown of drooping blades, a few nuts. */
-function palm(seed: number) {
+/**
+ * A coconut frond: a midrib that rises off the crown and arches over under its
+ * own weight, with a comb of narrow leaflets hanging off both sides in a
+ * shallow V.
+ *
+ * The old frond was one solid ribbon tilted up off the crown, and a crown of
+ * those reads as a shuttlecock or an agave. What says "palm" is the droop past
+ * horizontal and the light coming through the gaps between leaflets.
+ *
+ * Built in the frond's own frame — reaching out along +Z, +Y up — so the
+ * caller only has to turn it to its bearing. Non-indexed, with an `aReach`
+ * attribute (0 at the crown, 1 at the tip) so the flutter follows the frond
+ * out rather than up: on a frond that droops, the tip is the lowest point.
+ */
+function palmFrond(
+  length: number,
+  /** Angle above horizontal the frond leaves the crown at, in radians. */
+  rise: number,
+  /** How far that angle has fallen by the tip. */
+  droop: number,
+  seed: number,
+  steps: number,
+) {
+  const rand = (n: number) => scatter(seed * 7 + n, 5.3)
+  const spine: THREE.Vector3[] = []
+  const along: THREE.Vector3[] = []
+  const seg = length / steps
+  let y = 0
+  let z = 0
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps
+    // The bend gathers early, so the frond is past level by halfway out
+    const angle = rise - droop * Math.pow(t, 1.6)
+    spine.push(new THREE.Vector3(0, y, z))
+    along.push(new THREE.Vector3(0, Math.sin(angle), Math.cos(angle)))
+    y += Math.sin(angle) * seg
+    z += Math.cos(angle) * seg
+  }
+
+  const positions: number[] = []
+  const normals: number[] = []
+  const reach: number[] = []
+  const n = new THREE.Vector3()
+  const e1 = new THREE.Vector3()
+  const e2 = new THREE.Vector3()
+  const up = new THREE.Vector3(0, 1, 0)
+  /** One flat-lit triangle. Normals lean to the sky like the other leaves. */
+  const tri = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, ra: number, rb: number, rc: number) => {
+    e1.subVectors(b, a)
+    e2.subVectors(c, a)
+    n.crossVectors(e1, e2).normalize()
+    if (n.y < 0) n.negate()
+    n.lerp(up, 0.5).normalize()
+    for (const p of [a, b, c]) {
+      positions.push(p.x, p.y, p.z)
+      normals.push(n.x, n.y, n.z)
+    }
+    reach.push(ra, rb, rc)
+  }
+
+  const side = new THREE.Vector3()
+  const down = new THREE.Vector3()
+  const dir = new THREE.Vector3()
+  const b0 = new THREE.Vector3()
+  const b1 = new THREE.Vector3()
+  const m0 = new THREE.Vector3()
+  const m1 = new THREE.Vector3()
+  const tip = new THREE.Vector3()
+  const ribW = 0.045
+
+  for (let i = 0; i < steps; i++) {
+    const t0 = i / steps
+    const t1 = (i + 1) / steps
+    const p0 = spine[i]
+    const p1 = spine[i + 1]
+    const T = along[i]
+
+    // The midrib — a thin strip, so the frond has a spine seen from below
+    b0.set(-ribW, 0, 0).add(p0)
+    b1.set(ribW, 0, 0).add(p0)
+    m0.set(-ribW * 0.6, 0, 0).add(p1)
+    m1.set(ribW * 0.6, 0, 0).add(p1)
+    tri(b0, m0, b1, t0, t1, t0)
+    tri(b1, m0, m1, t0, t1, t1)
+
+    // Bare stalk near the crown; leaflets longest about two-thirds of the
+    // way out, short again at the tip
+    const tm = (i + 0.5) / steps
+    if (tm < 0.13) continue
+    const out = (tm - 0.13) / 0.87
+    const len = length * 0.3 * Math.pow(Math.sin(Math.PI * (0.1 + out * 0.86)), 0.55) * (0.88 + rand(i) * 0.24)
+    // Below the midrib, square to it
+    down.set(0, -T.z, T.y)
+    // Leaflets fold down harder toward the tip, where the frond hangs
+    const fold = 0.32 + out * 0.42
+    for (const s of [-1, 1]) {
+      side.set(s, 0, 0)
+      dir
+        .copy(side)
+        .multiplyScalar(Math.cos(fold))
+        .addScaledVector(down, Math.sin(fold))
+        .addScaledVector(T, 0.42)
+        .normalize()
+      // A narrow blade: wide at the rib, two segments out, bending down
+      b0.lerpVectors(p0, p1, 0.05)
+      b1.lerpVectors(p0, p1, 0.75)
+      m0.copy(b0).addScaledVector(dir, len * 0.5)
+      m1.copy(b1).addScaledVector(dir, len * 0.5).addScaledVector(T, -seg * 0.2)
+      m0.addScaledVector(down, len * 0.06)
+      m1.addScaledVector(down, len * 0.06)
+      tip.lerpVectors(m0, m1, 0.5).addScaledVector(dir, len * 0.5).addScaledVector(down, len * 0.14)
+      const rt = Math.min(1, tm + 0.05)
+      tri(b0, b1, m0, t0, t0, rt)
+      tri(b1, m1, m0, t0, rt, rt)
+      tri(m0, m1, tip, rt, rt, Math.min(1, rt + 0.05))
+    }
+  }
+
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+  geo.setAttribute('aReach', new THREE.Float32BufferAttribute(reach, 1))
+  return geo
+}
+
+/**
+ * One palm: a ringed trunk that leans out from a flared foot and turns back
+ * toward the sky under the crown, then three tiers of fronds — a few young
+ * ones standing up in the middle, the main crown arching out and over, and a
+ * couple of dead brown ones hanging against the trunk.
+ */
+function palm(seed: number, fronds = 15) {
   const rand = (n: number) => fbm(seed * 13.7 + n * 4.3, seed * 7.1 - n * 2.9)
   const height = 6.5 + rand(1) * 5
   const lean = (rand(2) - 0.5) * 3.4
   const facing = rand(3) * Math.PI * 2
 
-  const trunk = new THREE.CylinderGeometry(0.16, 0.34, height, 6, 4)
+  // A row of vertices every thirty-odd centimetres, alternately proud and
+  // sunk, so the trunk catches light in rings like old leaf scars
+  const rows = Math.max(10, Math.round(height / 0.34))
+  const trunk = new THREE.CylinderGeometry(0.17, 0.27, height, 8, rows)
   const pos = trunk.attributes.position
   for (let i = 0; i < pos.count; i++) {
-    const t = (pos.getY(i) + height / 2) / height
-    pos.setX(i, pos.getX(i) + t * t * lean)
+    // Clamped: float error puts the cap a hair past 1, and pow() of a
+    // negative base below is NaN
+    const t = THREE.MathUtils.clamp((pos.getY(i) + height / 2) / height, 0, 1)
+    const row = Math.round(t * rows)
+    const ring = row % 2 === 0 ? 1.07 : 0.97
+    const foot = 1 + 0.6 * (1 - THREE.MathUtils.smoothstep(t, 0, 0.09))
+    const r = ring * foot
+    // Leans hardest low down, straightens toward the crown
+    const bow = 1 - Math.pow(1 - t, 1.7)
+    pos.setXYZ(i, pos.getX(i) * r + bow * lean, pos.getY(i), pos.getZ(i) * r)
   }
   trunk.translate(0, height / 2, 0)
   trunk.rotateY(facing)
@@ -435,25 +584,24 @@ function palm(seed: number) {
 
   const crown = new THREE.Vector3(Math.cos(facing) * lean, height, -Math.sin(facing) * lean)
   const leaves: THREE.BufferGeometry[] = []
-  const blades = 11
-  for (let i = 0; i < blades; i++) {
-    // Fronds arc out and then fall away, so the crown reads as a shuttlecock
-    // rather than a starburst. The blade is built lying along +Y and the tilt
-    // below swings it out to its bearing.
-    const long = 2.9 + rand(i) * 1.3
-    const blade = leafBlade(0.68 + rand(i + 3) * 0.22, long, -0.9 - rand(i + 5) * 0.7, 4, 0.45)
-    const tilt = new THREE.Quaternion().setFromAxisAngle(
-      new THREE.Vector3(1, 0, 0),
-      0.75 + rand(i + 9) * 0.75,
-    )
-    const spin = new THREE.Quaternion().setFromAxisAngle(
-      new THREE.Vector3(0, 1, 0),
-      facing + (i / blades) * Math.PI * 2,
-    )
-    blade.applyMatrix4(
-      new THREE.Matrix4().compose(crown, spin.multiply(tilt), new THREE.Vector3(1, 1, 1)),
-    )
-    leaves.push(blade)
+  const dead: THREE.BufferGeometry[] = []
+  const young = 3
+  const deadCount = 1 + (rand(4) > 0.5 ? 1 : 0)
+  for (let i = 0; i < fronds + young + deadCount; i++) {
+    const r = (n: number) => scatter(seed * 31 + i * 7 + n, 2.7)
+    // Golden-angle bearings, so no two tiers stack their fronds in line
+    const bearing = facing + i * 2.39996 + (r(1) - 0.5) * 0.3
+    let frond: THREE.BufferGeometry
+    if (i < young) {
+      frond = palmFrond(2.0 + r(2) * 0.8, 1.05 + r(3) * 0.3, 0.5 + r(4) * 0.4, seed + i, 9)
+    } else if (i < young + fronds) {
+      frond = palmFrond(3.3 + r(2) * 1.4, 0.5 + r(3) * 0.4, 1.9 + r(4) * 0.7, seed + i, 14)
+    } else {
+      frond = palmFrond(2.6 + r(2) * 0.8, -0.85 - r(3) * 0.35, 0.35, seed + i, 9)
+    }
+    frond.rotateY(bearing)
+    frond.translate(crown.x, crown.y - (i < young ? 0 : 0.12 + r(5) * 0.12), crown.z)
+    ;(i < young + fronds ? leaves : dead).push(frond)
   }
 
   const nuts: THREE.BufferGeometry[] = []
@@ -467,7 +615,68 @@ function palm(seed: number) {
     nuts.push(nut)
   }
 
-  return { trunk, leaves, nuts, height: crown.y }
+  return { trunk, leaves, dead, nuts, height: crown.y }
+}
+
+/**
+ * One mass of leaves in a broadleaf crown.
+ *
+ * These were bare twenty-sided icosahedra, and with flat faces every tree read
+ * as a green die. Subdivided and welded so it shades smooth, lumped so the
+ * outline breaks up, and — the part that matters most — with its normals bent
+ * outward from the centre of the whole crown rather than its own, so a crown
+ * of several masses lights as one soft volume: bright on the sun side, shade
+ * on the far side, instead of every lump carrying its own highlight.
+ *
+ * Carries `aLeafShade` (hollows between lumps darker), which `bakeFor` folds
+ * into the vertex colour.
+ */
+function leafMass(
+  r: number,
+  detail: number,
+  seed: number,
+  centre: THREE.Vector3,
+  crown: THREE.Vector3,
+  squash: number,
+) {
+  const base = new THREE.IcosahedronGeometry(r, detail)
+  base.deleteAttribute('uv')
+  base.deleteAttribute('normal')
+  const geo = mergeVertices(base)
+  const pos = geo.attributes.position
+  const shade = new Float32Array(pos.count)
+  const v = new THREE.Vector3()
+  const a = scatter(seed, 1.1) * 6.28
+  const b = scatter(seed, 2.2) * 6.28
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i).divideScalar(r)
+    // A few crossed ripples — cheap, smooth, and enough to make lumps
+    const lump =
+      Math.sin(v.x * 3.1 + a) * Math.sin(v.z * 2.9 + b) * 0.5 +
+      Math.sin(v.y * 3.7 + v.x * 1.3 + b) * 0.3 +
+      Math.sin((v.x + v.z) * 5.3 + a) * 0.2
+    const k = 1 + lump * 0.17
+    v.multiplyScalar(r * k)
+    v.y *= v.y < 0 ? squash * 0.75 : squash
+    v.add(centre)
+    pos.setXYZ(i, v.x, v.y, v.z)
+    shade[i] = THREE.MathUtils.clamp(0.86 + lump * 0.3, 0.6, 1.1)
+  }
+  geo.computeVertexNormals()
+
+  const nrm = geo.attributes.normal
+  const n = new THREE.Vector3()
+  const out = new THREE.Vector3()
+  for (let i = 0; i < nrm.count; i++) {
+    n.fromBufferAttribute(nrm, i)
+    out.fromBufferAttribute(pos, i).sub(crown)
+    out.y *= 1.4
+    out.normalize()
+    n.lerp(out, 0.65).normalize()
+    nrm.setXYZ(i, n.x, n.y, n.z)
+  }
+  geo.setAttribute('aLeafShade', new THREE.BufferAttribute(shade, 1))
+  return geo
 }
 
 /**
@@ -483,23 +692,25 @@ function broadleaf(seed: number) {
   trunk.rotateY(rand(2) * Math.PI * 2)
   trunk.rotateZ((rand(3) - 0.5) * 0.22)
 
-  const canopy: THREE.BufferGeometry[] = []
-  const blobs = 3 + Math.floor(rand(4) * 2)
-  for (let i = 0; i < blobs; i++) {
-    const r = 1.5 + rand(i + 5) * 1.7
-    const blob = new THREE.IcosahedronGeometry(r, 0)
-    const pos = blob.attributes.position
-    for (let v = 0; v < pos.count; v++) {
-      const s = 0.82 + rand(i * 31 + v) * 0.36
-      pos.setXYZ(v, pos.getX(v) * s, pos.getY(v) * s * 0.82, pos.getZ(v) * s)
-    }
-    blob.computeVertexNormals()
-    blob.translate(
-      (rand(i + 9) - 0.5) * 3.0,
-      height + (rand(i + 11) - 0.5) * 1.6,
-      (rand(i + 13) - 0.5) * 3.0,
+  // A broad core with smaller masses round its shoulders — wider than tall,
+  // the umbrella a tree grows into when it is reaching for light
+  const spread = 1.9 + rand(4) * 1.4
+  const crown = new THREE.Vector3(0, height + 0.5, 0)
+  const canopy: THREE.BufferGeometry[] = [
+    leafMass(spread * 0.95, 1, seed * 5 + 1, crown, crown, 0.66),
+  ]
+  const lumps = 5 + Math.floor(scatter(seed, 4.4) * 3)
+  const turn = scatter(seed, 5.5) * Math.PI * 2
+  for (let i = 0; i < lumps; i++) {
+    const s = (n: number) => scatter(seed * 13 + i * 5 + n, 6.6)
+    const angle = turn + (i / lumps) * Math.PI * 2 + (s(1) - 0.5) * 0.7
+    const out = spread * (0.62 + s(2) * 0.3)
+    const centre = new THREE.Vector3(
+      Math.cos(angle) * out,
+      crown.y + (s(3) - 0.35) * spread * 0.55,
+      Math.sin(angle) * out,
     )
-    canopy.push(blob)
+    canopy.push(leafMass(spread * (0.42 + s(4) * 0.22), 1, seed * 5 + i + 2, centre, crown, 0.8))
   }
 
   return { trunk, canopy, height }
@@ -550,10 +761,13 @@ function deadTree(seed: number) {
 function grassTuft(seed: number) {
   const rand = (n: number) => fbm(seed * 5.9 + n * 2.7, seed * 3.3 - n * 1.9)
   const blades: THREE.BufferGeometry[] = []
-  const count = 4 + Math.floor(rand(1) * 3)
+  // Narrow blades that keep their width and pinch at the tip. The old ones
+  // were a hand's width and tapered from the root, so close up each tuft read
+  // as a bunch of green paper spikes.
+  const count = 5 + Math.floor(rand(1) * 3)
   for (let i = 0; i < count; i++) {
     const h = 0.6 + rand(i + 2) * 1.2
-    const blade = leafBlade(0.14 + rand(i + 4) * 0.1, h, 0.26 + rand(i + 5) * 0.5, 2)
+    const blade = leafBlade(0.075 + rand(i + 4) * 0.06, h, 0.26 + rand(i + 5) * 0.5, 2, 0.62, true)
     blade.rotateY(rand(i + 8) * Math.PI * 2)
     blade.rotateZ((rand(i + 6) - 0.5) * 0.4)
     blade.translate((rand(i + 10) - 0.5) * 0.5, 0, (rand(i + 12) - 0.5) * 0.5)
@@ -674,18 +888,17 @@ function scrubBush(seed: number) {
   const rand = (n: number) => fbm(seed * 6.8 + n * 5.1, seed * 3.2 - n * 2.7)
   const parts: THREE.BufferGeometry[] = []
   const clumps = 3 + Math.floor(rand(1) * 3)
+  const middle = new THREE.Vector3(0, 0.35, 0)
   for (let i = 0; i < clumps; i++) {
     const r = 0.26 + rand(i + 2) * 0.34
-    const blob = new THREE.IcosahedronGeometry(r, 0)
-    const pos = blob.attributes.position
-    for (let v = 0; v < pos.count; v++) {
-      const s = 0.75 + rand(i * 23 + v) * 0.5
-      pos.setXYZ(v, pos.getX(v) * s, pos.getY(v) * s * 0.72, pos.getZ(v) * s)
-    }
-    blob.computeVertexNormals()
-    blob.translate((rand(i + 6) - 0.5) * 1.1, r * 0.7 + rand(i + 3) * 0.35, (rand(i + 7) - 0.5) * 1.1)
-    // Polyhedra come out non-indexed, so the blades have to match to merge
-    parts.push(blob)
+    const centre = new THREE.Vector3(
+      (rand(i + 6) - 0.5) * 1.1,
+      r * 0.7 + rand(i + 3) * 0.35,
+      (rand(i + 7) - 0.5) * 1.1,
+    )
+    // Small enough that the coarsest mesh does, as long as it shades smooth.
+    // Unwelded for the merge — the blades below come out that way too.
+    parts.push(leafMass(r, 0, seed * 7 + i, centre, middle, 0.72).toNonIndexed())
   }
   const fringe = 8 + Math.floor(rand(2) * 5)
   for (let i = 0; i < fringe; i++) {
@@ -694,7 +907,11 @@ function scrubBush(seed: number) {
     leaf.rotateZ(0.25 + rand(i + 17) * 0.6)
     leaf.rotateY(rand(i + 19) * Math.PI * 2)
     leaf.translate((rand(i + 21) - 0.5) * 1.1, 0.1, (rand(i + 23) - 0.5) * 1.1)
-    parts.push(leaf.toNonIndexed())
+    // Same attributes as the masses, or the merge refuses the batch
+    leaf.deleteAttribute('uv')
+    const flat = leaf.toNonIndexed()
+    flat.setAttribute('aLeafShade', new THREE.BufferAttribute(new Float32Array(flat.attributes.position.count).fill(1), 1))
+    parts.push(flat)
   }
   return mergeGeometries(parts, false) as THREE.BufferGeometry
 }
@@ -778,23 +995,19 @@ function sapling(seed: number) {
   trunk.translate(0, height / 2, 0)
   trunk.rotateY(rand(2) * Math.PI * 2)
 
-  const canopy: THREE.BufferGeometry[] = []
-  const blobs = 1 + Math.floor(rand(3) * 2)
-  for (let i = 0; i < blobs; i++) {
-    const r = 0.55 + rand(i + 4) * 0.7
-    const blob = new THREE.IcosahedronGeometry(r, 0)
-    const pos = blob.attributes.position
-    for (let v = 0; v < pos.count; v++) {
-      const s = 0.85 + rand(i * 17 + v) * 0.3
-      pos.setXYZ(v, pos.getX(v) * s, pos.getY(v) * s * 0.9, pos.getZ(v) * s)
-    }
-    blob.computeVertexNormals()
-    blob.translate(
-      (rand(i + 5) - 0.5) * 0.5,
-      height + (rand(i + 6) - 0.5) * 0.4,
-      (rand(i + 7) - 0.5) * 0.5,
+  const spread = 0.6 + rand(3) * 0.7
+  const crown = new THREE.Vector3(0, height + 0.15, 0)
+  const canopy: THREE.BufferGeometry[] = [leafMass(spread, 1, seed * 3 + 1, crown, crown, 0.78)]
+  const lumps = 2 + Math.floor(scatter(seed, 3.3) * 2)
+  for (let i = 0; i < lumps; i++) {
+    const s = (n: number) => scatter(seed * 11 + i * 3 + n, 7.7)
+    const angle = (i / lumps) * Math.PI * 2 + s(1) * 1.2
+    const centre = new THREE.Vector3(
+      Math.cos(angle) * spread * 0.6,
+      crown.y + (s(2) - 0.4) * spread * 0.5,
+      Math.sin(angle) * spread * 0.6,
     )
-    canopy.push(blob)
+    canopy.push(leafMass(spread * (0.5 + s(3) * 0.2), 1, seed * 3 + i + 2, centre, crown, 0.85))
   }
   return { trunk, canopy, height }
 }
@@ -880,26 +1093,111 @@ function butterflyMesh(seed: number) {
   return group
 }
 
+/**
+ * Flat triangles with a colour per corner, for the gull's wing and tail.
+ * `mirror` builds the left-hand twin: x flipped and the winding reversed with
+ * it, or a double-sided material lights the mirrored face from behind and the
+ * left wing comes out near-black.
+ */
+function paintedTris(points: number[][], colors: number[][], tris: number[][], mirror = false) {
+  const pos: number[] = []
+  const col: number[] = []
+  for (const t of tris) {
+    for (const k of mirror ? [t[0], t[2], t[1]] : t) {
+      const [x, y, z] = points[k]
+      pos.push(mirror ? -x : x, y, z)
+      col.push(...colors[k])
+    }
+  }
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
+  geo.computeVertexNormals()
+  return geo
+}
+
+/** A wing, root at the origin, reaching out along +x (or −x for the left). */
+function gullWing(left = false) {
+  const grey = [0.74, 0.76, 0.78]
+  const pale = [0.86, 0.87, 0.88]
+  const black = [0.08, 0.08, 0.09]
+  return paintedTris(
+    [
+      [0, 0, 0.06], // 0 shoulder, leading edge
+      [0, 0, -0.08], // 1 shoulder, trailing edge
+      [0.24, 0.05, 0.07], // 2 wrist, leading edge
+      [0.24, 0.05, -0.08], // 3 wrist, trailing edge
+      [0.43, 0.0, -0.01], // 4 hand, leading edge
+      [0.41, 0.0, -0.11], // 5 hand, trailing edge
+      [0.47, -0.01, -0.03], // 6 where the black starts, leading edge
+      [0.45, -0.01, -0.12], // 7 where the black starts, trailing edge
+      [0.62, -0.06, -0.13], // 8 tip
+    ],
+    [grey, pale, grey, pale, grey, grey, black, black, black],
+    [
+      [0, 2, 1],
+      [1, 2, 3],
+      [2, 4, 3],
+      [3, 4, 5],
+      [4, 6, 5],
+      [5, 6, 7],
+      [6, 8, 7],
+    ],
+    left,
+  )
+}
+
+/** A short fan of tail behind the body. */
+function gullTail() {
+  const pale = [0.9, 0.9, 0.9]
+  return paintedTris(
+    [
+      [-0.04, 0.02, -0.15],
+      [0.04, 0.02, -0.15],
+      [-0.07, 0.01, -0.3],
+      [0.07, 0.01, -0.3],
+    ],
+    [pale, pale, pale, pale],
+    [
+      [0, 2, 1],
+      [1, 2, 3],
+    ],
+  )
+}
+
 /** A beach gull — body + wings, smaller and lower than the thermal birds. */
 function gullMesh(seed: number) {
   const rand = (n: number) => fbm(seed * 5.2 + n * 2.7, seed * 7.9 - n * 1.3)
   const group = new THREE.Group()
   const bodyMat = new THREE.MeshLambertMaterial({ color: 0xd8d2c4 })
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 4), bodyMat)
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), bodyMat)
   body.scale.set(1, 0.7, 1.6)
   group.add(body)
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.07, 5, 4), bodyMat)
   head.position.set(0, 0.04, 0.16)
   group.add(head)
-  const wingGeo = new THREE.PlaneGeometry(0.55, 0.16)
-  const wingMat = new THREE.MeshLambertMaterial({ color: 0xc9c2b4, side: THREE.DoubleSide })
-  const left = new THREE.Mesh(wingGeo, wingMat)
-  const right = new THREE.Mesh(wingGeo, wingMat)
-  left.position.set(-0.28, 0.02, 0)
-  right.position.set(0.28, 0.02, 0)
+  const beak = new THREE.Mesh(
+    new THREE.ConeGeometry(0.018, 0.07, 4).rotateX(Math.PI / 2),
+    new THREE.MeshLambertMaterial({ color: 0xd2a43a }),
+  )
+  beak.position.set(0, 0.03, 0.25)
+  group.add(beak)
+
+  // A gull's wing is two panels with a bend at the wrist — the inner arm
+  // lifts, the hand sweeps back and drops, and the tip is black. A flat
+  // rectangle either side of a sphere read as a satellite.
+  const wingMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })
+  const left = new THREE.Mesh(gullWing(true), wingMat)
+  const right = new THREE.Mesh(gullWing(), wingMat)
+  // Hinged at the shoulder, so the flap swings the whole wing from the body
+  left.position.set(-0.07, 0.03, 0.02)
+  right.position.set(0.07, 0.03, 0.02)
   left.rotation.z = 0.15
   right.rotation.z = -0.15
   group.add(left, right)
+
+  const tail = new THREE.Mesh(gullTail(), wingMat)
+  group.add(tail)
   group.userData.left = left
   group.userData.right = right
   group.scale.setScalar(0.85 + rand(1) * 0.35)
@@ -1055,9 +1353,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const skylight = { emissive: new THREE.Color('#1b2a2b'), emissiveIntensity: 0.26 }
   // Stone and driftwood have no translucency to carry light into the shade the
   // way leaves do, so under the canopy they crush to black. A warm, stronger
-  // fill keeps them reading as rock and wood rather than holes.
-  const stoneFill = { emissive: new THREE.Color('#7a7160'), emissiveIntensity: 0.85 }
-  const woodFill = { emissive: new THREE.Color('#6b5a44'), emissiveIntensity: 0.7 }
+  // fill keeps them reading as rock and wood rather than holes — shaped by
+  // which way each face points, because a fill that lights the underside as
+  // brightly as the top turned every boulder into pale unlit dough.
+  const stoneFill = { emissive: new THREE.Color('#7a7160'), emissiveIntensity: 0.55, shapedFill: true }
+  const woodFill = { emissive: new THREE.Color('#6b5a44'), emissiveIntensity: 0.55, shapedFill: true }
 
   const terrain = new THREE.Mesh(
     geometry,
@@ -1144,7 +1444,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // enough to look varied underfoot puts the brightest of them a long way
     // above the hillside they stand on — which from that distance is not
     // variation, it is a hill with snow on it.
-    grass: { spread: 0.78, sway: 1, flutter: 0.4, rootShade: 0.38 },
+    // Dark at the root so a tuft sits in the ground it grows from rather than
+    // standing on it.
+    grass: { spread: 0.55, sway: 1, flutter: 0.4, rootShade: 0.6 },
     fern: { spread: 1, sway: 1, flutter: 0.45, rootShade: 0.34 },
     scrub: { spread: 0.95, sway: 1, flutter: 0.3, rootShade: 0.3, underShade: 0.22 },
     reed: { spread: 0.85, sway: 1, flutter: 0.5, rootShade: 0.28 },
@@ -1171,7 +1473,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   ) => {
     geo.computeBoundingBox()
     const own = geo.boundingBox ? geo.boundingBox.max.y : 1
-    return bakePlant(geo, {
+    bakePlant(geo, {
       tint: plantTint(seed, species.spread, tint),
       height: height ?? Math.max(own, 0.1),
       sway: species.sway,
@@ -1181,6 +1483,18 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       underShade: species.underShade,
       phase: fbm(seed * 1.7, seed * 0.31),
     })
+    // Leaf masses carry their own hollows; fold them in and drop the
+    // attribute so the batch still merges
+    const leafShade = geo.getAttribute('aLeafShade') as THREE.BufferAttribute | undefined
+    if (leafShade) {
+      const color = geo.getAttribute('color') as THREE.BufferAttribute
+      for (let i = 0; i < color.count; i++) {
+        const s = leafShade.getX(i)
+        color.setXYZ(i, color.getX(i) * s, color.getY(i) * s, color.getZ(i) * s)
+      }
+      geo.deleteAttribute('aLeafShade')
+    }
+    return geo
   }
 
   /** Bake a plant and drop it on the hillside. Null geometry is skipped —
@@ -1235,6 +1549,16 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     for (const blade of tree.leaves) {
       leaves.push(bakeFor(blade, seed, SPECIES.palmFrond, tree.height).applyMatrix4(place))
     }
+    // Dead fronds share the leaf batch; the vertex colour turns the material's
+    // green to a dry straw-brown
+    for (const blade of tree.dead) {
+      const baked = bakeFor(blade, seed, SPECIES.palmFrond, tree.height)
+      const color = baked.getAttribute('color') as THREE.BufferAttribute
+      for (let i = 0; i < color.count; i++) {
+        color.setXYZ(i, color.getX(i) * 1.0, color.getY(i) * 0.3, color.getZ(i) * 0.95)
+      }
+      leaves.push(baked.applyMatrix4(place))
+    }
     for (const nut of tree.nuts) {
       nuts.push(bakeFor(nut, seed, SPECIES.nut, tree.height).applyMatrix4(place))
     }
@@ -1277,7 +1601,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       if (shore.some((s) => Math.hypot(s.x - opts.x - lx, s.z - opts.z - lz) < 5.5)) continue
 
       const at = new THREE.Vector3(lx, h - 0.3, lz)
-      const tree = palm(i + 2000)
+      const tree = palm(i + 2000, low ? 11 : 15)
       const place = new THREE.Matrix4().setPosition(at)
       plantPalm(tree, i + 2000, place)
       shore.push(new THREE.Vector3(opts.x + lx, h, opts.z + lz))
@@ -1311,7 +1635,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (shore.some((s) => Math.hypot(s.x - opts.x - lx, s.z - opts.z - lz) < 5)) continue
 
     const at = new THREE.Vector3(lx, h - 0.3, lz)
-    const tree = palm(i + 1)
+    const tree = palm(i + 1, low ? 11 : 15)
     const place = new THREE.Matrix4().setPosition(at)
     plantPalm(tree, i + 1, place)
     shore.push(new THREE.Vector3(opts.x + lx, h, opts.z + lz))
@@ -1547,6 +1871,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       : Math.sin(angle) * radius + (scatter(i, 8.8) - 0.5) * 7
     const h = surface(lx, lz)
     if (h < 1.6 || h > 110) continue
+    // Open sand stays mostly open: a few tufts low on the beach, thickening
+    // to full cover by the time the ground turns from sand to soil
+    if (h < 5 && scatter(i, 9.9) > 0.12 + ((h - 1.6) / 3.4) * 0.88) continue
     const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
     if (slope > 9) continue
     plant(grassParts, grassTuft(i + 500), i + 500, SPECIES.grass, lx, h, lz, 0.02)
@@ -1644,7 +1971,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     shadowedBleed?: boolean
     doubleSided?: boolean
     /** Overrides the default skylight lift for materials that need more. */
-    fill?: { emissive: THREE.Color; emissiveIntensity: number }
+    fill?: { emissive: THREE.Color; emissiveIntensity: number; shapedFill?: boolean }
     /** Metres past which this layer stops being drawn at all. */
     range?: number
   }[] = [
@@ -1655,10 +1982,12 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     { parts: trunks, color: 0x8a6f4c, roughness: 0.74, wind: PALM_WIND },
     {
       parts: leaves,
-      color: 0x74a83f,
+      // A shade deeper than the old ribbons: feathered fronds turn far more
+      // leaf to the sun, and at the old green a grove glowed lime from sea
+      color: 0x6a9a3a,
       roughness: 0.82,
       wind: PALM_WIND,
-      translucency: 0.95,
+      translucency: 0.85,
       throughColor: '#dcec7c',
       shadowedBleed: true,
       doubleSided: true,
@@ -1788,7 +2117,12 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       transparent: true,
       opacity: 0.92,
     })
-    const rimMaterial = foliage.material({ color: 0x6e6656, roughness: 0.95, ...stoneFill })
+    const rimMaterial = foliage.material({
+      color: 0x6e6656,
+      roughness: 0.95,
+      vertexColors: true,
+      ...stoneFill,
+    })
 
     // Still water is level water: on any real slope a disc of it saws straight
     // through the hillside. So every candidate is scored for flatness and only
@@ -1817,12 +2151,26 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       if (pools.some((p) => Math.hypot(p.x - (opts.x + lx), p.z - (opts.z + lz)) < 90)) continue
 
       const size = 1.5 + (pools.length % 3) * 0.35
-      // The rim is set low enough that the water sits proud of it, or the
-      // basin's inner wall hides the pool from anyone standing over it
-      const rim = new THREE.Mesh(new THREE.TorusGeometry(size, 0.42, 6, 16), rimMaterial)
-      rim.rotation.x = Math.PI / 2
-      rim.scale.y = 0.55
-      rim.position.set(lx, h - 0.2, lz)
+      // A lip of separate stones rather than a torus, which read as a tyre
+      // left on the hill. Set low enough that the water sits proud of it, or
+      // the basin's inner wall hides the pool from anyone standing over it.
+      const ring: THREE.BufferGeometry[] = []
+      const count = 11 + pools.length * 2
+      for (let k = 0; k < count; k++) {
+        const seed = 3100 + pools.length * 40 + k
+        const a = (k / count) * Math.PI * 2 + (scatter(seed, 1.3) - 0.5) * 0.35
+        const r = size + (scatter(seed, 2.4) - 0.3) * 0.25
+        const stone = stoneGeometry(seed, 0.32 + scatter(seed, 3.5) * 0.22, 1)
+        const baked = bakeFor(stone.geo, seed, SPECIES.rock)
+        shadeStone(baked, seed)
+        const sx = Math.cos(a) * r
+        const sz = Math.sin(a) * r
+        baked.translate(sx, surface(lx + sx, lz + sz) - h - stone.sink - 0.05, sz)
+        ring.push(baked)
+      }
+      const rim = new THREE.Mesh(mergeGeometries(ring, false) as THREE.BufferGeometry, rimMaterial)
+      rim.name = 'RainPoolRim'
+      rim.position.set(lx, h, lz)
       group.add(rim)
 
       // Water stops inside the ring, so the stone lip frames it and hides
@@ -2188,13 +2536,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const birdMat = new THREE.MeshBasicMaterial({ color: 0x1c2226, side: THREE.DoubleSide })
     const birdCount = low ? 5 : 9
     for (let i = 0; i < birdCount; i++) {
-      const wing = new THREE.PlaneGeometry(0.9, 0.28)
-      wing.translate(0.45, 0, 0)
-      const left = wing.clone()
-      const right = wing.clone()
-      left.rotateZ(0.35)
-      right.rotateY(Math.PI)
-      right.rotateZ(0.35)
+      // The gull's bent wing, scaled up — from below the crook at the wrist is
+      // the whole read of a seabird riding a thermal
+      const right = gullWing().scale(1.7, 1.7, 1.7)
+      const left = gullWing(true).scale(1.7, 1.7, 1.7)
       const geo = mergeGeometries([left, right], false) as THREE.BufferGeometry
       const bird = new THREE.Mesh(geo, birdMat)
       bird.userData = {
@@ -2381,7 +2726,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       const { radius, height, speed, phase } = bird.userData
       const a = time * speed + phase
       bird.position.set(Math.cos(a) * radius, height + Math.sin(time * 0.5 + phase) * 3, Math.sin(a) * radius)
-      bird.rotation.y = -a - Math.PI / 2
+      // Nose along the circle — the bird flies the way it's going
+      bird.rotation.y = -a
       // Wing flap — a slow bob on the z-axis reads as a glide-flap mix at range
       bird.rotation.z = Math.sin(time * 6 + phase * 3) * 0.28
     }

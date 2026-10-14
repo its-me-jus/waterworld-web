@@ -15,8 +15,7 @@ menus — just somewhere to move around.
 - **The day.** A full day is about 20 minutes. Dawn, noon and dusk each have
   room to be looked at; the evening lingers gold and rose before the stars come
   out. Jellies and coral glow after dark.
-- **The tide.** Two per day. The foreshore bares and floods, tide pools open and
-  close, and seals haul out on the cove rocks at low water — fish gather under
+- **The tide.** Two per day. The foreshore bares and floods, and seals haul out on the cove rocks at low water — fish gather under
   them while they swim.
 - **The wreck.** The *Wanderer* lies on a reef off the spawn heading, with a
   climbable rock spire beside her. Swim over her, dive her hull, drift through

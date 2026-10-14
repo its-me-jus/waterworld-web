@@ -581,6 +581,11 @@ function frame() {
   oceanMat.uniforms.uSunDir.value.copy(moonlit ? skyRig.moonDir : skyRig.sunDir)
   oceanMat.uniforms.uHorizonColor.value.copy(skyRig.horizonColor)
   oceanMat.uniforms.uUnderwater.value = underwater ? 1 : 0
+  // From the air the sea writes depth, so a near crest hides the trough behind
+  // it — one transparent mesh can't sort its own triangles, and without this a
+  // steep swell drew the far side of a wave over the near one in jagged teeth.
+  // Underwater it stays off, so everything above shows through Snell's window.
+  oceanMat.depthWrite = !underwater
   oceanMat.uniforms.uSunColor.value
     .setRGB(1, 0.95, 0.85)
     .lerp(moonColor, 1 - weather.daylight)
@@ -714,7 +719,7 @@ function frame() {
   wreck.update(t, camera)
   island.update(camera, underwater, t)
   shore.update(t, camera, underwater)
-  littoral.update(dt, player, { biolum: weather.biolum, rain: weather.rain })
+  littoral.update(dt, player, { biolum: weather.biolum })
   underwaterWorld.fish.setAttractors(littoral.fishAttractors())
   creatures.update(dt, t, camera, {
     swimming: player.mode === 'swim',

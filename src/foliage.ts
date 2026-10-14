@@ -59,6 +59,12 @@ export type FoliageParams = THREE.MeshStandardMaterialParameters & {
    * plane without it.
    */
   ground?: boolean
+  /**
+   * Weight the emissive fill by which way the surface faces: full on top,
+   * a third underneath. For stone, whose fill otherwise lights every face the
+   * same and flattens a boulder into a pale blob.
+   */
+  shapedFill?: boolean
 }
 
 export type PlantBake = {
@@ -95,6 +101,10 @@ export function bakePlant(geo: THREE.BufferGeometry, bake: PlantBake) {
   const flutter = bake.flutter ?? 0
   const rootShade = bake.rootShade ?? 0
   const underShade = bake.underShade ?? 0
+  // A piece that arcs over and hangs — a palm frond — has its tip below its
+  // base, so height on the piece says nothing about how far out a vertex is.
+  // Such pieces carry their own 0–1 distance from base to tip instead.
+  const reach = geo.getAttribute('aReach') as THREE.BufferAttribute | undefined
 
   const colors = new Float32Array(count * 3)
   const wind = new Float32Array(count)
@@ -106,8 +116,8 @@ export function bakePlant(geo: THREE.BufferGeometry, bake: PlantBake) {
     // piece. A palm needs both: the crown travels with the trunk's lean, and
     // each frond flutters about its own base on top of that.
     const up = THREE.MathUtils.clamp(y / height, 0, 1)
-    const local = (y - low) / span
-    wind[i] = up * up * bake.sway + (bake.hang ? 1 - local : local) * flutter
+    const local = reach ? reach.getX(i) : bake.hang ? 1 - (y - low) / span : (y - low) / span
+    wind[i] = up * up * bake.sway + local * flutter
     phase[i] = bake.phase
 
     let shade = 1
@@ -121,6 +131,8 @@ export function bakePlant(geo: THREE.BufferGeometry, bake: PlantBake) {
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
   geo.setAttribute('aWind', new THREE.BufferAttribute(wind, 1))
   geo.setAttribute('aPhase', new THREE.BufferAttribute(phase, 1))
+  // Spent — and a batch only merges if every piece carries the same attributes
+  if (reach) geo.deleteAttribute('aReach')
   return geo
 }
 
@@ -386,6 +398,26 @@ const groundColorBody = /* glsl */ `
   }
 `
 
+/**
+ * Fill that has a direction. A flat emissive term keeps stone out of black
+ * shade, but it lights the underside of a boulder as brightly as its crown,
+ * and that is what turned rocks into unlit dough. Weighting it by the
+ * world-space normal gives the fill a sky above and dark ground below.
+ *
+ * Switched by a uniform rather than a define: every variant is another
+ * program to compile at load, and on a phone each one is felt.
+ */
+const shapedFillPars = /* glsl */ `
+uniform float uShapedFill;
+`
+
+const shapedFillBody = /* glsl */ `
+  if (uShapedFill > 0.5) {
+    vec3 fillN = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
+    totalEmissiveRadiance *= 0.3 + 0.9 * (fillN.y * 0.5 + 0.5);
+  }
+`
+
 const groundWetPars = /* glsl */ `
 uniform float uTide;
 float gWetness = 0.0;
@@ -417,6 +449,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       throughColor,
       ground = false,
       shadowedBleed = false,
+      shapedFill = false,
       ...rest
     } = params
     const mat = new THREE.MeshStandardMaterial({ ...rest, fog: false })
@@ -425,6 +458,13 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     // frame and the least visible on a five-inch screen. They come out on a
     // phone, where the terrain is most of the fill in any shot facing inland.
     if (ground && !opts.lowPower) mat.defines = { ...mat.defines, GROUND_MICRO: '' }
+    // Every material off this rig shares one onBeforeCompile source, which is
+    // what three keys compiled programs on — so a rock and a log could be
+    // handed the same program whichever compiled first. Name what actually
+    // changes the shader.
+    const programKey = `foliage:${wind > 0}:${translucency > 0}:${ground}`
+    mat.customProgramCacheKey = () => programKey
+    const uShapedFill = { value: shapedFill ? 1 : 0 }
     const uWindScale = { value: wind }
     const uTranslucency = { value: translucency }
     const uThrough = { value: new THREE.Color(throughColor ?? '#cfe27a') }
@@ -468,6 +508,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
 
       shader.uniforms.uCloudDrift = uCloudDrift
       shader.uniforms.uCloudShadow = uCloudShadow
+      shader.uniforms.uShapedFill = uShapedFill
 
       shader.fragmentShader = `
         uniform vec3 uHaze;
@@ -477,12 +518,12 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
         ${translucency > 0 ? leafFragmentPars : ''}
         ${noiseFragmentPars}
         ${cloudShadowPars}
+        ${shapedFillPars}
         ${ground ? groundWetPars : ''}
         ${shader.fragmentShader}
-      `.replace(
-        '#include <lights_fragment_end>',
-        `#include <lights_fragment_end>\n${cloudShadowBody}`,
-      )
+      `
+        .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${cloudShadowBody}`)
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${shapedFillBody}`)
 
       if (ground) {
         shader.uniforms.uTide = uTide
