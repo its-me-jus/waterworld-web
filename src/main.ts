@@ -69,6 +69,8 @@ renderer.shadowMap.type = THREE.PCFShadowMap
 app.appendChild(renderer.domElement)
 
 const post = createPostChain(renderer, { lowPower })
+const sunForward = new THREE.Vector3()
+const sunNdc = new THREE.Vector3()
 post.setSize(window.innerWidth, window.innerHeight, renderer.getPixelRatio())
 
 const skyRig = createSky(scene, 30, 38, {
@@ -718,11 +720,15 @@ function frame() {
   if (showDepth) depthReadout.textContent = `${depth.toFixed(1)} m`
   depthReadout.style.opacity = showDepth ? '1' : '0'
 
+  // Under the surface the net of light is the whole show; from the beach it
+  // is a shimmer on the sand in the shallows, so a good deal gentler
+  const sunOnWater = weather.daylight * (1 - weather.storm * 0.7)
   caustics.update(
     t,
-    underwater ? weather.daylight * (1 - weather.storm * 0.7) * 13 : 0,
+    sunOnWater * (underwater ? 13 : 6),
     oceanState.tide,
     skyRig.sunDir,
+    !underwater,
   )
   underwaterWorld.update({
     dt,
@@ -775,6 +781,21 @@ function frame() {
     shadowScanTimer = 1.5
   }
   skyRig.focusShadow(camera.position.x, Math.max(view.groundY, 0), camera.position.z)
+
+  // Sun shafts: only worth drawing with the sun in the air and in front of
+  // you, and they die away as it slides off the edge of the frame, since the
+  // bright pass they smear has nothing to start from once the disc is gone
+  {
+    camera.updateMatrixWorld()
+    camera.getWorldDirection(sunForward)
+    const ahead = THREE.MathUtils.smoothstep(sunForward.dot(skyRig.sunDir), 0.05, 0.4)
+    sunNdc.copy(camera.position).addScaledVector(skyRig.sunDir, 1000).project(camera)
+    post.sun.uv.set(sunNdc.x * 0.5 + 0.5, sunNdc.y * 0.5 + 0.5)
+    const onScreen =
+      1 - THREE.MathUtils.smoothstep(Math.max(Math.abs(sunNdc.x), Math.abs(sunNdc.y)), 1.0, 1.7)
+    const sunUp = THREE.MathUtils.smoothstep(weather.sunElevation, -1.5, 5)
+    post.sun.strength = underwater ? 0 : ahead * onScreen * sunUp * (1 - weather.storm * 0.85)
+  }
 
   post.render(scene, camera)
   requestAnimationFrame(frame)

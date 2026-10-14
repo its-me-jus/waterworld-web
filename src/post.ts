@@ -17,6 +17,14 @@ import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js'
  * in rather than read off the renderer, since nothing in the scene applies it
  * any more.
  *
+ * Sun shafts come off their own quarter-res bright pass, set well below the
+ * bloom's: the bloom wants only the sun and the glints, but shafts need the
+ * glowing sky around the sun too, or there is nothing for a frond to cut
+ * across. In the composite that buffer is smeared radially toward the sun's
+ * screen position, and wherever foliage or a ridge breaks the sky the smear
+ * comes out as streaks — light through gaps, which is all a god-ray is. No
+ * occlusion pass, no extra scene render.
+ *
  * Bloom is a threshold plus two blurred levels rather than a full pyramid: one
  * tight halo for sun glitter, one wide one for the sky and for firelight at
  * night. Both run at a fraction of the frame, so it stays on for phones too —
@@ -44,6 +52,11 @@ export type PostChain = {
   render: (scene: THREE.Scene, camera: THREE.Camera) => void
   setSize: (width: number, height: number, pixelRatio: number) => void
   grade: Grade
+  /**
+   * Where the sun is on screen (0–1 uv, may lie outside the frame) and how much
+   * shaft to draw, 0–1. The scene owns both — it knows the camera and the sky.
+   */
+  sun: { uv: THREE.Vector2; strength: number }
   dispose: () => void
 }
 
@@ -100,6 +113,9 @@ const compositeFragment = /* glsl */ `
 uniform sampler2D tDiffuse;
 uniform sampler2D tBloomNear;
 uniform sampler2D tBloomFar;
+uniform sampler2D tRays;
+uniform vec2 uSunUv;
+uniform float uRays;
 uniform float uBloom;
 uniform float uExposure;
 uniform vec3 uLift;
@@ -162,6 +178,30 @@ void main() {
     col += glow * uBloom;
   #endif
 
+  #ifdef USE_RAYS
+    if (uRays > 0.001) {
+      vec2 toSun = uSunUv - vUv;
+      float aspect = uResolution.x / max(uResolution.y, 1.0);
+      float reach = length(toSun * vec2(aspect, 1.0));
+      // Stop a little short of the sun so the streaks fan out of it rather
+      // than all converging on one point
+      vec2 stepv = toSun * (0.9 / float(RAY_STEPS));
+      // Per-pixel jitter hides the banding that a handful of taps leaves
+      float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+      vec2 p = vUv + stepv * jitter;
+      vec3 shaft = vec3(0.0);
+      float decay = 1.0;
+      for (int i = 0; i < RAY_STEPS; i++) {
+        shaft += min(texture2D(tRays, p).rgb, vec3(10.0)) * decay;
+        p += stepv;
+        decay *= 0.94;
+      }
+      // Strongest in the sun's own neighbourhood, gone by the far side of the frame
+      float falloff = 1.0 - smoothstep(0.05, 1.0, reach);
+      col += shaft / float(RAY_STEPS) * uRays * falloff * vec3(1.0, 0.92, 0.78);
+    }
+  #endif
+
   col = acesFilmic(col);
 
   // Split-tone: lift the shadows toward one hue, the highlights toward another.
@@ -191,6 +231,9 @@ void main() {
 }
 `
 
+/** How hard a full-strength shaft pass adds to the frame, in scene-linear stops. */
+const RAY_GAIN = 0.85
+
 export function createPostChain(
   renderer: THREE.WebGLRenderer,
   opts: { lowPower?: boolean } = {},
@@ -209,6 +252,8 @@ export function createPostChain(
     saturation: 1.1,
     vignette: 0.3,
   }
+
+  const sun = { uv: new THREE.Vector2(0.5, 0.5), strength: 0 }
 
   const sceneTarget = new THREE.WebGLRenderTarget(1, 1, {
     type: THREE.HalfFloatType,
@@ -237,6 +282,11 @@ export function createPostChain(
   // spread for a sun on water without a full pyramid's worth of passes.
   const nearA = bloomTarget(4)
   const nearB = bloomTarget(4)
+  // The shafts' source: the sky and sun, thresholded low, then softened. Taps
+  // land a screen-width apart or more, so a source with sharp glints in it
+  // comes out as a row of separate copies; blurred first, it comes out as light.
+  const rayB = bloomTarget(4)
+  const rayC = bloomTarget(4)
   const farA = bloomTarget(16)
   const farB = bloomTarget(16)
 
@@ -259,6 +309,21 @@ export function createPostChain(
     depthWrite: false,
   })
 
+  const raysMat = new THREE.ShaderMaterial({
+    uniforms: {
+      tDiffuse: { value: null },
+      // Under the sky's own 2–5, so the glow round the sun counts, but over
+      // lit foliage and sand so those never start a shaft of their own
+      uThreshold: { value: 3.2 },
+      uKnee: { value: 1.2 },
+      uExposure: { value: 1 },
+    },
+    vertexShader: fullscreenVertex,
+    fragmentShader: brightFragment,
+    depthTest: false,
+    depthWrite: false,
+  })
+
   const blurMat = new THREE.ShaderMaterial({
     uniforms: {
       tDiffuse: { value: null },
@@ -271,11 +336,20 @@ export function createPostChain(
   })
 
   const compositeMat = new THREE.ShaderMaterial({
-    defines: useWideBloom ? { USE_BLOOM: '', USE_WIDE_BLOOM: '' } : { USE_BLOOM: '' },
+    defines: {
+      USE_BLOOM: '',
+      ...(useWideBloom ? { USE_WIDE_BLOOM: '' } : {}),
+      USE_RAYS: '',
+      // Phones take half the taps; the streaks come out a touch coarser
+      RAY_STEPS: opts.lowPower ? '8' : '16',
+    },
     uniforms: {
       tDiffuse: { value: sceneTarget.texture },
       tBloomNear: { value: nearA.texture },
       tBloomFar: { value: farA.texture },
+      tRays: { value: rayB.texture },
+      uSunUv: { value: sun.uv },
+      uRays: { value: 0 },
       uBloom: { value: grade.bloom },
       uExposure: { value: grade.exposure },
       uLift: { value: grade.lift },
@@ -301,7 +375,7 @@ export function createPostChain(
     bufferHeight = Math.max(1, Math.floor(height * pixelRatio))
     sceneTarget.setSize(bufferWidth, bufferHeight)
     compositeMat.uniforms.uResolution.value.set(bufferWidth, bufferHeight)
-    for (const rt of [nearA, nearB, farA, farB]) {
+    for (const rt of [nearA, nearB, rayB, rayC, farA, farB]) {
       const d = divisors.get(rt) ?? 4
       rt.setSize(Math.max(1, Math.floor(bufferWidth / d)), Math.max(1, Math.floor(bufferHeight / d)))
     }
@@ -352,6 +426,23 @@ export function createPostChain(
     }
 
     compositeMat.uniforms.uBloom.value = grade.bloom
+    // Only pay for the source pass when there is a sun to smear toward
+    if (sun.strength > 0.001) {
+      raysMat.uniforms.tDiffuse.value = sceneTarget.texture
+      raysMat.uniforms.uExposure.value = grade.exposure
+      quad.material = raysMat
+      renderer.setRenderTarget(rayB)
+      quad.render(renderer)
+      blurInto(rayB.texture, nearA, rayC, 1.0)
+      // Phones stop after one pass and take the coarser result
+      if (opts.lowPower) {
+        compositeMat.uniforms.tRays.value = rayC.texture
+      } else {
+        blurInto(rayC.texture, nearA, rayB, 1.0)
+        compositeMat.uniforms.tRays.value = rayB.texture
+      }
+    }
+    compositeMat.uniforms.uRays.value = sun.strength * RAY_GAIN
     compositeMat.uniforms.uExposure.value = grade.exposure
     compositeMat.uniforms.uContrast.value = grade.contrast
     compositeMat.uniforms.uSaturation.value = grade.saturation
@@ -364,9 +455,9 @@ export function createPostChain(
 
   function dispose() {
     sceneTarget.dispose()
-    for (const rt of [nearA, nearB, farA, farB]) rt.dispose()
+    for (const rt of [nearA, nearB, rayB, rayC, farA, farB]) rt.dispose()
     quad.dispose()
   }
 
-  return { render, setSize, grade, dispose }
+  return { render, setSize, grade, sun, dispose }
 }

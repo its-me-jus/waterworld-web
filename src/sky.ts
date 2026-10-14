@@ -41,6 +41,7 @@ uniform vec3 uTint;
 uniform vec3 uShadow;
 uniform float uCover;
 uniform float uOpacity;
+uniform vec3 uHaze;
 
 varying vec3 vDir;
 
@@ -125,6 +126,16 @@ void main() {
     col = (col * alpha + bankCol * bankA * (1.0 - alpha)) / max(outA, 0.001);
     alpha = outA;
   }
+
+  // Marine haze. The sky dome has its own idea of what colour the horizon is,
+  // the sea beyond the last swell has another, and where they disagree the
+  // sea line is a ruled edge. A thin band of the shared horizon colour over
+  // the lowest few degrees of sky is what real air does there, and brings
+  // the two to the same value at the seam.
+  float haze = (1.0 - smoothstep(0.0, 0.06, d.y)) * 0.62;
+  float hazeA = alpha + haze * (1.0 - alpha);
+  col = (col * alpha + uHaze * haze * (1.0 - alpha)) / max(hazeA, 0.001);
+  alpha = hazeA;
 
   gl_FragColor = vec4(col, alpha);
 
@@ -418,6 +429,7 @@ export function createSky(
       uShadow: { value: DAY_CLOUD_SHADOW.clone() },
       uCover: { value: 0.58 },
       uOpacity: { value: 1 },
+      uHaze: { value: DAY_HORIZON.clone() },
     },
     vertexShader: cloudVertex,
     fragmentShader: cloudFragment,
@@ -673,6 +685,7 @@ export function createSky(
       if (flash > 0.05) {
         horizonColor.lerp(new THREE.Color('#d8e4f4'), Math.min(0.85, flash * 0.9))
       }
+      cloudMat.uniforms.uHaze.value.copy(horizonColor)
 
       // Aim the key light at the moon once the sun is down so silhouettes read
       if (climate.sunElevation < 2) {

@@ -686,6 +686,65 @@ function leafMass(
 }
 
 /**
+ * Leaves poking out of the edge of a crown.
+ *
+ * A crown of smooth lumps has a smooth outline, and against the sky that is
+ * the first thing that says "model". A scatter of blades standing out of each
+ * lump — outward, drooping a little — turns the outline serrated, the way a
+ * real tree's is. They only ever sit on the side of a lump that faces away
+ * from the middle of the crown, where there is an edge to break up; the ones
+ * inside would be hidden anyway.
+ */
+function leafFringe(
+  seed: number,
+  masses: { centre: THREE.Vector3; r: number; squash: number }[],
+  crown: THREE.Vector3,
+) {
+  const up = new THREE.Vector3(0, 1, 0)
+  const sprigs: THREE.BufferGeometry[] = []
+  const d = new THREE.Vector3()
+  const out = new THREE.Vector3()
+  const dir = new THREE.Vector3()
+  for (let m = 0; m < masses.length; m++) {
+    const { centre, r, squash } = masses[m]
+    const wanted = m === 0 ? 6 : 5
+    for (let k = 0; k < wanted; k++) {
+      const s = (n: number) => scatter(seed * 29 + m * 7 + k * 3 + n, 8.8)
+      const a = s(1) * Math.PI * 2
+      const e = (s(2) - 0.62) * 1.9
+      d.set(Math.cos(a) * Math.cos(e), Math.sin(e), Math.sin(a) * Math.cos(e))
+      // Skip the inward-facing ones — they would be inside the crown
+      out.copy(centre).addScaledVector(d, r).sub(crown)
+      if (m > 0 && out.normalize().dot(d) < 0.05) continue
+      const root = new THREE.Vector3(
+        centre.x + d.x * r * 0.86,
+        centre.y + d.y * r * squash * 0.86,
+        centre.z + d.z * r * 0.86,
+      )
+      const size = s(3)
+      const blade = leafBlade(0.24 + size * 0.14, 0.32 + size * 0.28, 0.12 + s(4) * 0.14, 2, 0.5)
+      blade.deleteAttribute('uv')
+      blade.rotateY(s(5) * Math.PI * 2)
+      // Out along the lump's own normal, sagging a little under its weight
+      dir.copy(d).add(new THREE.Vector3(0, -0.28, 0)).normalize()
+      blade.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(up, dir))
+      blade.translate(root.x, root.y, root.z)
+      // Lit as the lump's own surface at that spot, not as a leaf turned to the
+      // sky — otherwise each one is a pale shard against a dark crown
+      const nrm = blade.attributes.normal
+      for (let v = 0; v < nrm.count; v++) nrm.setXYZ(v, d.x, d.y, d.z)
+      // Same attributes as the masses, or the merge refuses the batch
+      blade.setAttribute(
+        'aLeafShade',
+        new THREE.BufferAttribute(new Float32Array(blade.attributes.position.count).fill(1), 1),
+      )
+      sprigs.push(blade)
+    }
+  }
+  return sprigs
+}
+
+/**
  * A broadleaf mid-story tree: short trunk, a few lumpy canopy blobs. This is
  * the layer that turns "beach with palms" into "overgrown interior" — it
  * fills the silhouette between the palm crowns and the ground.
@@ -705,6 +764,9 @@ function broadleaf(seed: number) {
   const canopy: THREE.BufferGeometry[] = [
     leafMass(spread * 0.95, 1, seed * 5 + 1, crown, crown, 0.66),
   ]
+  const masses: { centre: THREE.Vector3; r: number; squash: number }[] = [
+    { centre: crown, r: spread * 0.95, squash: 0.66 },
+  ]
   const lumps = 5 + Math.floor(scatter(seed, 4.4) * 3)
   const turn = scatter(seed, 5.5) * Math.PI * 2
   for (let i = 0; i < lumps; i++) {
@@ -716,10 +778,12 @@ function broadleaf(seed: number) {
       crown.y + (s(3) - 0.35) * spread * 0.55,
       Math.sin(angle) * out,
     )
-    canopy.push(leafMass(spread * (0.42 + s(4) * 0.22), 1, seed * 5 + i + 2, centre, crown, 0.8))
+    const r = spread * (0.42 + s(4) * 0.22)
+    canopy.push(leafMass(r, 1, seed * 5 + i + 2, centre, crown, 0.8))
+    masses.push({ centre, r, squash: 0.8 })
   }
 
-  return { trunk, canopy, height }
+  return { trunk, canopy, fringe: leafFringe(seed, masses, crown), height }
 }
 
 /** A hanging vine — a drooping strip of quads down a rock face or trunk. */
@@ -920,6 +984,59 @@ function scrubBush(seed: number) {
     parts.push(flat)
   }
   return mergeGeometries(parts, false) as THREE.BufferGeometry
+}
+
+/**
+ * A scatter of coastal blossoms to sit on top of a shrub: little squashed
+ * gems, each turned to face the way the bush's dome does at that spot, spread
+ * over the crown so they read as flowers on it rather than confetti above it.
+ *
+ * They started as flat five-petal stars, and from anywhere a person stands
+ * those were edge-on slivers — a hibiscus seen from below is a coloured blob,
+ * not a plane, so these have thickness. Non-indexed with the same attributes
+ * as the scrub so the colour bake and merge treat it alike.
+ */
+function blossomCluster(seed: number) {
+  const rand = (n: number) => fbm(seed * 9.1 + n * 3.7, seed * 4.3 - n * 2.1)
+  const up = new THREE.Vector3(0, 1, 0)
+  const count = 14 + Math.floor(rand(1) * 9)
+  const blooms: THREE.BufferGeometry[] = []
+  for (let i = 0; i < count; i++) {
+    // A hibiscus is a hand across. Larger than that and a cluster read as a
+    // heap of pink stones from a step away
+    const radius = 0.08 + rand(i * 3 + 4) * 0.06
+    const bloom = new THREE.IcosahedronGeometry(radius, 0)
+    bloom.deleteAttribute('uv')
+    // Flattened along its own up, so it is a disc with some body to it
+    const pos = bloom.attributes.position
+    for (let v = 0; v < pos.count; v++) pos.setY(v, pos.getY(v) * 0.55)
+    // Normals of the ellipsoid the facets approximate: flat-shaded, eight
+    // pink facets read as a gem; smooth, they read as a soft petal mass
+    const soft = new Float32Array(pos.count * 3)
+    const sn = new THREE.Vector3()
+    for (let v = 0; v < pos.count; v++) {
+      sn.set(pos.getX(v), pos.getY(v) / 0.3, pos.getZ(v)).normalize()
+      soft.set([sn.x, sn.y, sn.z], v * 3)
+    }
+    bloom.setAttribute('normal', new THREE.BufferAttribute(soft, 3))
+
+    const bearing = rand(i * 3 + 2) * Math.PI * 2
+    const spread = 0.1 + rand(i * 3 + 3) * 0.62
+    // Over the dome of the bush: high in the middle, sunk toward the rim
+    const lift = 0.32 + 0.68 * Math.sqrt(Math.max(0, 1 - (spread / 0.8) ** 2))
+    // Up on the crown, out toward the viewer at the rim, with a little scatter
+    const lean = Math.min(spread / 0.8, 1) * 1.15
+    const facing = new THREE.Vector3(
+      Math.cos(bearing) * lean + (rand(i * 3 + 5) - 0.5) * 0.5,
+      1,
+      Math.sin(bearing) * lean + (rand(i * 3 + 6) - 0.5) * 0.5,
+    ).normalize()
+    bloom.rotateY(rand(i * 3 + 7) * Math.PI * 2)
+    bloom.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(up, facing))
+    bloom.translate(Math.cos(bearing) * spread, lift, Math.sin(bearing) * spread)
+    blooms.push(bloom)
+  }
+  return mergeGeometries(blooms, false) as THREE.BufferGeometry
 }
 
 /** A fern — wider, drooping fronds that fill the understory between trees. */
@@ -1311,12 +1428,18 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   }
   geometry.computeVertexNormals()
 
-  // Sand, scrub and basalt painted per vertex — one material, one draw call
+  // Scrub and basalt painted per vertex — one material, one draw call.
+  //
+  // The beach itself is not painted here. Its colour is a ramp in height
+  // (shelf, wet sand, dry sand) that changes over a metre or two, and baked at
+  // the vertices of a 5.8 m grid it came out as a sawtooth of diagonal bands
+  // where the triangles' shared edges cut across it. The ground shader now
+  // evaluates the ramp per pixel; what is baked is everything *else*, already
+  // weighted, plus `aSandW`, the share of the pixel the beach still owns. Since
+  // lerp(lerp(sand, growth, a), rock, b) is linear in the sand term, summing
+  // vertex colour + aSandW * sand(y) gives exactly the old blend — only with
+  // the sand evaluated where the pixel is rather than where the corner was.
   const normal = geometry.attributes.normal
-  const seabed = new THREE.Color('#4f6458')
-  const tide = new THREE.Color('#7a6648')
-  const wetSand = new THREE.Color('#b89468')
-  const drySand = new THREE.Color('#f2e2b4')
   const moss = new THREE.Color('#5a8a3e')
   const fern = new THREE.Color('#3f6b2b')
   const scrub = new THREE.Color('#77a04c')
@@ -1324,10 +1447,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const litter = new THREE.Color('#7a6238')
   const rock = new THREE.Color('#8d8471')
   const basalt = new THREE.Color('#5b5145')
-  const shade = new THREE.Color()
   const growth = new THREE.Color()
   const stone = new THREE.Color()
   const colors = new Float32Array(position.count * 3)
+  const sandWeight = new Float32Array(position.count)
 
   for (let i = 0; i < position.count; i++) {
     const x = position.getX(i)
@@ -1337,16 +1460,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const grit = fbm(x * 0.09 - 1.4, z * 0.09 + 3.7)
     const gully = fbm(x * 0.006 - 8.2, z * 0.006 + 4.4)
 
-    // Underwater shelf → wet sand → dry beach. Live tide darkens this further
-    // in the ground shader; this bake is the resting palette.
-    shade.copy(seabed).lerp(wetSand, THREE.MathUtils.smoothstep(y, -9, -0.6))
-    const wetBand =
-      THREE.MathUtils.smoothstep(y, -1.1, 0.2) * (1 - THREE.MathUtils.smoothstep(y, 0.5, 2.6))
-    shade.lerp(tide, wetBand * (0.55 + grit * 0.35))
-    shade.lerp(drySand, THREE.MathUtils.smoothstep(y, 1.0, 5.2))
     // Fine grit on the sand — breaks the painted-plane look up close
     const onSand = THREE.MathUtils.smoothstep(y, -2, 1) * (1 - THREE.MathUtils.smoothstep(y, 6, 14))
-    shade.multiplyScalar(1 + (grit - 0.5) * 0.22 * onSand)
+    const sandGrit = 1 + (grit - 0.5) * 0.22 * onSand
 
     // Green band: moss in the dips, fern under canopy, scrub on the shoulders.
     // Gully noise keeps it patchy so it reads overgrown, not a green wash.
@@ -1355,7 +1471,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     growth.lerp(bush, mottle * 0.6)
     // Leaf litter under the interior — browns where the canopy is thickest
     growth.lerp(litter, THREE.MathUtils.smoothstep(gully, 0.55, 0.8) * 0.45)
-    shade.lerp(growth, THREE.MathUtils.smoothstep(y, 4, 15))
+    const growing = THREE.MathUtils.smoothstep(y, 4, 15)
     // Steep faces shed soil — bare rock on the cliffs and up around the crater.
     // Mesh normals alone under-read carved faces (a cliff spans ~2 cells), so
     // slope comes from the height grid the mesh was built from.
@@ -1368,20 +1484,22 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const steep = THREE.MathUtils.smoothstep(slope, 0.55, 1.35)
     const sheer = THREE.MathUtils.smoothstep(slope, 1.1, 2.2)
     const fromNormal = 1 - THREE.MathUtils.smoothstep(normal.getY(i), 0.22, 0.55)
-    shade.lerp(
-      stone,
-      Math.max(
-        THREE.MathUtils.smoothstep(y, 108, 172),
-        steep * 0.82 + sheer * 0.55 + fromNormal * 0.35,
-      ),
+    // Can pass 1 on the sheerest faces, which pushes the blend past the rock
+    // colour — kept, because the weights below stay exact either way
+    const bare = Math.max(
+      THREE.MathUtils.smoothstep(y, 108, 172),
+      steep * 0.82 + sheer * 0.55 + fromNormal * 0.35,
     )
-    shade.multiplyScalar(0.9 + mottle * 0.2)
+    const shading = 0.9 + mottle * 0.2
+    const greenShare = growing * (1 - bare)
 
-    colors[i * 3] = shade.r
-    colors[i * 3 + 1] = shade.g
-    colors[i * 3 + 2] = shade.b
+    colors[i * 3] = (growth.r * greenShare + stone.r * bare) * shading
+    colors[i * 3 + 1] = (growth.g * greenShare + stone.g * bare) * shading
+    colors[i * 3 + 2] = (growth.b * greenShare + stone.b * bare) * shading
+    sandWeight[i] = (1 - growing) * (1 - bare) * sandGrit * shading
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  geometry.setAttribute('aSandW', new THREE.BufferAttribute(sandWeight, 1))
 
   // The air hemisphere's ground colour is near-black, because for the ocean it
   // should be. The sky cube map now does most of the skylight work, so this is
@@ -1433,6 +1551,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const boulderParts: THREE.BufferGeometry[] = []
   const wrackParts: THREE.BufferGeometry[] = []
   const reedParts: THREE.BufferGeometry[] = []
+  const bloomParts: THREE.BufferGeometry[] = []
+  const fringeParts: THREE.BufferGeometry[] = []
   // Saplings share the broadleaf batches — same bark / canopy materials
   /** Hillside boulders + chunky beach stones — ellipsoid push like the wreck reef. */
   const rockBlockers: { centre: THREE.Vector3; axes: THREE.Vector3 }[] = []
@@ -1451,6 +1571,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const boulderWanted = low ? 48 : 110
   const wrackWanted = low ? 45 : 100
   const reedWanted = low ? 60 : 130
+  const bloomWanted = low ? 30 : 80
   const saplingWanted = low ? 110 : 260
   // Extra cliff-scree stones — rubble at the foot of carved faces
   const screeWanted = low ? 40 : 90
@@ -1470,6 +1591,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   type Species = Omit<PlantBake, 'tint' | 'phase' | 'height'> & {
     /** How far the per-plant colour jitter spreads. */
     spread: number
+    /** Share of these plants (0–1) that step off the main green into emerald or bronze. */
+    accent?: number
   }
 
   const SPECIES: Record<string, Species> = {
@@ -1477,7 +1600,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     palmFrond: { spread: 0.8, sway: 1, flutter: 0.8 },
     nut: { spread: 0.35, sway: 1 },
     broadTrunk: { spread: 0.5, sway: 1, rootShade: 0.28 },
-    canopy: { spread: 1, sway: 1, flutter: 0.55, underShade: 0.45 },
+    canopy: { spread: 1, sway: 1, flutter: 0.55, underShade: 0.45, accent: 0.24 },
     // Tight on value. A tuft is one pixel from out at sea, and a spread wide
     // enough to look varied underfoot puts the brightest of them a long way
     // above the hillside they stand on — which from that distance is not
@@ -1485,8 +1608,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // Dark at the root so a tuft sits in the ground it grows from rather than
     // standing on it.
     grass: { spread: 0.55, sway: 1, flutter: 0.4, rootShade: 0.6 },
-    fern: { spread: 1, sway: 1, flutter: 0.45, rootShade: 0.34 },
-    scrub: { spread: 0.95, sway: 1, flutter: 0.3, rootShade: 0.3, underShade: 0.22 },
+    fern: { spread: 1, sway: 1, flutter: 0.45, rootShade: 0.34, accent: 0.12 },
+    scrub: { spread: 0.95, sway: 1, flutter: 0.3, rootShade: 0.3, underShade: 0.22, accent: 0.22 },
+    bloom: { spread: 0.25, sway: 1, flutter: 0.5 },
     reed: { spread: 0.85, sway: 1, flutter: 0.5, rootShade: 0.28 },
     vine: { spread: 0.75, sway: 0, flutter: 1, hang: true },
     wrack: { spread: 0.7, sway: 0 },
@@ -1512,7 +1636,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     geo.computeBoundingBox()
     const own = geo.boundingBox ? geo.boundingBox.max.y : 1
     bakePlant(geo, {
-      tint: plantTint(seed, species.spread, tint),
+      tint: plantTint(seed, species.spread, tint, species.accent ?? 0),
       height: height ?? Math.max(own, 0.1),
       sway: species.sway,
       flutter: species.flutter,
@@ -1603,7 +1727,12 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   }
 
   const plantBroadleaf = (
-    tree: { trunk: THREE.BufferGeometry; canopy: THREE.BufferGeometry[]; height: number },
+    tree: {
+      trunk: THREE.BufferGeometry
+      canopy: THREE.BufferGeometry[]
+      fringe?: THREE.BufferGeometry[]
+      height: number
+    },
     seed: number,
     place: THREE.Matrix4,
   ) => {
@@ -1611,6 +1740,30 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     for (const blob of tree.canopy) {
       broadCanopy.push(bakeFor(blob, seed, SPECIES.canopy, tree.height).applyMatrix4(place))
     }
+    // Same species and seed as the crown, so the leaves at its edge are the
+    // crown's own colour
+    for (const sprig of tree.fringe ?? []) {
+      fringeParts.push(bakeFor(sprig, seed, SPECIES.canopy, tree.height).applyMatrix4(place))
+    }
+  }
+
+  // Hibiscus red, coastal gold, blush pink, coral — the only warm notes on an
+  // island that is otherwise every shade of green
+  const BLOOM_COLORS = ['#e23d33', '#f4b73a', '#ee6f8c', '#ff8a3d'].map((c) => new THREE.Color(c))
+
+  /** One shrub's worth of blossom, in one colour, baked like any other plant. */
+  const plantBloom = (seed: number, lx: number, h: number, lz: number) => {
+    const geo = bakeFor(blossomCluster(seed), seed, SPECIES.bloom, 1.2)
+    const hue = BLOOM_COLORS[Math.floor(scatter(seed, 3.9) * BLOOM_COLORS.length) % BLOOM_COLORS.length]
+    const color = geo.getAttribute('color') as THREE.BufferAttribute
+    for (let i = 0; i < color.count; i++) {
+      // The bake wrote this cluster's small value jitter into the vertex
+      // colour; keep it as a multiplier on the blossom hue
+      // Pushed past 1: a petal is a bright thing, and in shade under the
+      // leaves a true-valued red goes to brown
+      color.setXYZ(i, hue.r * color.getX(i) * 1.7, hue.g * color.getY(i) * 1.7, hue.b * color.getZ(i) * 1.7)
+    }
+    bloomParts.push(placeAt(geo, lx, h, lz, 0.05))
   }
 
   /** True when a local point sits on the spawn-facing landing cove. */
@@ -1864,6 +2017,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const slope = Math.abs(surface(lx + 6, lz) - h) + Math.abs(surface(lx, lz + 6) - h)
     if (slope > 7.5) continue
     plant(scrubParts, scrubBush(i + 120), i + 120, SPECIES.scrub, lx, h, lz, 0.05)
+    // Flowers on some of the shrubs: thick on the landing cove, where the
+    // eye lands first, and a scattering further round
+    if (bloomParts.length < bloomWanted && h < 40 && scatter(i, 15.5) < (coveBias ? 0.5 : 0.08)) {
+      plantBloom(i + 120, lx, h, lz)
+    }
   }
 
   // Ferns — understory between the trees, denser in the green band
@@ -2008,6 +2166,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     throughColor?: string
     shadowedBleed?: boolean
     doubleSided?: boolean
+    /** Leaf-cluster relief on the normal; see FoliageParams. */
+    leafBump?: number
     /** Overrides the default skylight lift for materials that need more. */
     fill?: { emissive: THREE.Color; emissiveIntensity: number; shapedFill?: boolean }
     /** Metres past which this layer stops being drawn at all. */
@@ -2035,11 +2195,26 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     {
       parts: broadCanopy,
       color: 0x5c9438,
-      roughness: 0.88,
+      // A leaf has a waxy skin: enough gloss to take a highlight from the
+      // sun and a sheen from the sky probe, where chalk-rough took neither
+      roughness: 0.62,
       wind: BROAD_WIND,
       translucency: 0.85,
       throughColor: '#bfdd6a',
       shadowedBleed: true,
+      leafBump: 0.9,
+    },
+    {
+      parts: fringeParts,
+      // Single blades a hand wide: past this they are sub-pixel and only
+      // shimmer, and the crown's own outline carries the shape
+      range: 150,
+      color: 0x5c9438,
+      roughness: 0.7,
+      wind: BROAD_WIND,
+      translucency: 0.85,
+      throughColor: '#bfdd6a',
+      doubleSided: true,
     },
     {
       parts: grassParts,
@@ -2073,6 +2248,17 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       wind: 0.11,
       translucency: 0.5,
       throughColor: '#c2d96c',
+      doubleSided: true,
+    },
+    {
+      parts: bloomParts,
+      range: 280,
+      // White: the hue is in the vertices, one colour per shrub
+      color: 0xffffff,
+      roughness: 0.78,
+      wind: 0.1,
+      translucency: 0.45,
+      throughColor: '#ffd9b0',
       doubleSided: true,
     },
     {
@@ -2127,6 +2313,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       translucency: layer.translucency,
       throughColor: layer.throughColor,
       shadowedBleed: layer.shadowedBleed,
+      leafBump: layer.leafBump,
       ...(layer.fill ?? skylight),
     })
     const mesh = foliage.mesh(

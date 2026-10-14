@@ -15,6 +15,7 @@ const uniforms = {
   uCaustTime: { value: 0 },
   uCaustStrength: { value: 0 },
   uCaustSurface: { value: 0 },
+  uCaustAir: { value: 0 },
   uCaustSun: { value: new THREE.Vector3(0, 1, 0) },
 }
 
@@ -31,6 +32,7 @@ const FRAG_DECL = /* glsl */ `
 uniform float uCaustTime;
 uniform float uCaustStrength;
 uniform float uCaustSurface;
+uniform float uCaustAir;
 uniform vec3 uCaustSun;
 varying vec3 vCausticWorld;
 
@@ -65,6 +67,10 @@ const FRAG_BODY = /* glsl */ `
     float c = causticPattern(uv, uCaustTime * 0.55);
     // Fades in just under the surface and thins out with depth
     float fade = exp(-depthBelow * 0.085) * smoothstep(0.0, 0.9, depthBelow);
+    // Seen from the beach, only ankle-to-waist water shows any of this: the
+    // surface has already tinted and hidden anything deeper, and a net of
+    // light on the reef twenty metres down would read as a glitch
+    fade *= mix(1.0, 1.0 - smoothstep(1.2, 4.2, depthBelow), uCaustAir);
     outgoingLight += diffuseColor.rgb * c * facing * fade * uCaustStrength;
   }
 }
@@ -101,12 +107,20 @@ export function createCaustics(sunDir: THREE.Vector3) {
     })
   }
 
-  /** `strength` is 0 out of the water or at night; the sun does the rest. */
-  function update(time: number, strength: number, surfaceY: number, sunDir: THREE.Vector3) {
+  /** `strength` is 0 at night; the sun does the rest. */
+  function update(
+    time: number,
+    strength: number,
+    surfaceY: number,
+    sunDir: THREE.Vector3,
+    /** Viewed from above the water — limits the pattern to the shallows. */
+    air = false,
+  ) {
     uniforms.uCaustTime.value = time
     uniforms.uCaustStrength.value = strength
     uniforms.uCaustSurface.value = surfaceY
     uniforms.uCaustSun.value.copy(sunDir)
+    uniforms.uCaustAir.value = air ? 1 : 0
   }
 
   return { apply, update }

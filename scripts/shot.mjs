@@ -29,6 +29,19 @@ const VIEWS = [
   { name: 'beach-lookdown', url: 'http://localhost:5173/?x=775&z=-532&yaw=-1.02&pitch=-1.25' },
   // Looking inland from the cove up into the green
   { name: 'island-inland', url: 'http://localhost:5173/?x=800&z=-550&yaw=-0.6&pitch=0.12' },
+  // Round-3 close looks: blossoms on the cove shrubs, and the same hillside
+  // from out in the shallows, where colour variety across the crowns shows
+  { name: 'bloom-cove', url: 'http://localhost:5173/?x=805&z=-552&yaw=-2.3&pitch=0.0' },
+  { name: 'bloom-cove-b', url: 'http://localhost:5173/?x=757&z=-583&yaw=-0.64&pitch=0.0' },
+  { name: 'foam-zoom', url: 'http://localhost:5173/?x=755&z=-520&yaw=-0.4&pitch=-0.2', zoom: { x: 200, y: 320, width: 480, height: 240 } },
+  { name: 'shallows-look', url: 'http://localhost:5173/?x=770&z=-530&yaw=0.61&pitch=-0.55' },
+  { name: 'shallows-look-b', url: 'http://localhost:5173/?x=765&z=-526&yaw=1.6&pitch=-0.5' },
+  { name: 'canopy-up', url: 'http://localhost:5173/?x=790&z=-545&yaw=-0.9&pitch=0.35' },
+  // Low sun dead ahead. Its azimuth is 95 + 170 * hour/24 degrees, so at 16.9 h
+  // yaw 0.6 faces it: through the cove palms, and over open water
+  { name: 'sun-trees', url: 'http://localhost:5173/?x=770&z=-530&yaw=0.6&pitch=0.02&hour=16.9' },
+  { name: 'sun-low', url: 'http://localhost:5173/?hour=17.5&yaw=0.68&pitch=0.1' },
+  { name: 'crowns-far', url: 'http://localhost:5173/?x=690&z=-478&yaw=-1.0&pitch=0.12' },
   // Climate — storm locked, night locked, shore foam up close
   { name: 'storm', url: 'http://localhost:5173/?storm=1&hour=14&yaw=-0.3&pitch=0.05' },
   { name: 'dusk', url: 'http://localhost:5173/?hour=17.6&yaw=-0.96&pitch=0.02' },

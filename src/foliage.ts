@@ -65,6 +65,12 @@ export type FoliageParams = THREE.MeshStandardMaterialParameters & {
    * same and flattens a boulder into a pale blob.
    */
   shapedFill?: boolean
+  /**
+   * Roughen the surface normal with leaf-cluster relief, 0 for none. For a
+   * canopy, which is a handful of smooth lumps: close up it reads as an
+   * inflated balloon until something at the scale of a hand breaks it up.
+   */
+  leafBump?: number
 }
 
 export type PlantBake = {
@@ -140,7 +146,7 @@ export function bakePlant(geo: THREE.BufferGeometry, bake: PlantBake) {
  * A per-plant colour multiplier — deterministic, because a plant's colour has
  * to survive a reload or the island flickers between sessions.
  */
-export function plantTint(seed: number, spread = 1, out = new THREE.Color()) {
+export function plantTint(seed: number, spread = 1, out = new THREE.Color(), accent = 0) {
   const r = (n: number) => {
     const v = Math.sin(seed * 12.9898 + n * 78.233) * 43758.5453
     return v - Math.floor(v)
@@ -149,10 +155,31 @@ export function plantTint(seed: number, spread = 1, out = new THREE.Color()) {
   // is runs yellow-to-blue rather than around the wheel
   const value = 1 + (r(1) - 0.5) * 0.5 * spread
   const warm = (r(2) - 0.5) * 0.22 * spread
+  let red = value * (1 + warm)
+  let green = value
+  let blue = value * (1 - warm * 1.3)
+  // A share of plants step well outside that band — deep emerald where growth
+  // is lush, sun-bronzed olive where it is hard-pressed. Every plant in one
+  // narrow yellow-green made the island a monochrome wash; a few in ten off
+  // the main hue is what a real hillside has. `accent` is that share.
+  if (accent > 0) {
+    const pick = r(3)
+    // These are multipliers on a leaf colour whose blue channel is nearly
+    // nothing in linear light, so teal needs a big factor on blue before it
+    // shows at all
+    if (pick < accent * 0.55) {
+      red *= 0.55
+      blue *= 4
+    } else if (pick < accent) {
+      red *= 2
+      green *= 0.82
+      blue *= 0.9
+    }
+  }
   return out.setRGB(
-    THREE.MathUtils.clamp(value * (1 + warm), 0.35, 1.7),
-    THREE.MathUtils.clamp(value, 0.35, 1.7),
-    THREE.MathUtils.clamp(value * (1 - warm * 1.3), 0.3, 1.7),
+    THREE.MathUtils.clamp(red, 0.3, 2.4),
+    THREE.MathUtils.clamp(green, 0.35, 1.7),
+    THREE.MathUtils.clamp(blue, 0.3, 4.6),
   )
 }
 
@@ -296,6 +323,34 @@ const cloudShadowBody = /* glsl */ `
 `
 
 /**
+ * Leaf-cluster relief for a canopy. A broadleaf crown is five or six smooth
+ * lumps, and the light slides over each one like a polished egg. Tilting the
+ * normal by two octaves of world-space noise — clusters a hand or two across —
+ * gives the sun something to catch and lose, so a crown reads as a mass of
+ * leaves rather than one. Fades out with range, where it would only shimmer.
+ */
+const leafBumpPars = /* glsl */ `
+uniform float uLeafBump;
+`
+
+const leafBumpBody = /* glsl */ `
+  {
+    float bumpFade = 1.0 - smoothstep(18.0, 75.0, length(vGroundPos - cameraPosition));
+    if (bumpFade > 0.01) {
+      // Height skews the lookup so the pattern doesn't stripe straight up a crown
+      vec2 lp = vGroundPos.xz * 4.2 + vGroundPos.y * vec2(1.7, 2.3);
+      float b0 = gNoise(lp) * 0.65 + gNoise(lp * 2.3 + 7.1) * 0.35;
+      vec2 lx = lp + vec2(0.35, 0.0);
+      vec2 lz = lp + vec2(0.0, 0.35);
+      float bx = gNoise(lx) * 0.65 + gNoise(lx * 2.3 + 7.1) * 0.35;
+      float bz = gNoise(lz) * 0.65 + gNoise(lz * 2.3 + 7.1) * 0.35;
+      vec3 bw = normalize((vec4(normal, 0.0) * viewMatrix).xyz + vec3(b0 - bx, 0.0, b0 - bz) * uLeafBump * bumpFade);
+      normal = normalize((viewMatrix * vec4(bw, 0.0)).xyz);
+    }
+  }
+`
+
+/**
  * The terrain mesh samples its height every few metres, so between grid lines
  * it is perfectly flat and shades as a single tone across a whole hillside.
  * This gives it back the two things a real slope has: a normal that wobbles,
@@ -341,9 +396,41 @@ const groundNormalBody = /* glsl */ `
   }
 `
 
+/** A colour as a GLSL literal. Linear, because that is what the vertex colours the ramp mixes with hold. */
+const glslColor = (hex: string) => {
+  const c = new THREE.Color(hex)
+  return `vec3(${c.r.toFixed(4)}, ${c.g.toFixed(4)}, ${c.b.toFixed(4)})`
+}
+
+/**
+ * The beach: shelf, wet sand, dry sand, as a ramp in height.
+ *
+ * It used to be painted into the terrain's vertices, and on a 5.8 m grid a
+ * ramp only a metre or two tall came out as a sawtooth of diagonal bands where
+ * triangle edges cut across it. Evaluated here it follows the pixel's own
+ * height instead — and the height is nudged by a slow noise, so the lines
+ * between wet and dry wander the way a real tide line does rather than
+ * tracing a contour.
+ *
+ * `vSandW` is how much of the pixel the beach owns after the green and the rock
+ * have taken their shares; it is baked per vertex in island.ts.
+ */
+const beachRampBody = /* glsl */ `
+    if (vSandW != 0.0) {
+      float ys = vGroundPos.y + (gNoise(gp * 0.27 + vec2(11.0, -4.0)) - 0.5) * 0.45;
+      float sandGrit = gNoise(gp * 0.09 + vec2(-1.4, 3.7)) * 0.6 + gNoise(gp * 0.52) * 0.4;
+      vec3 sand = mix(${glslColor('#4f6458')}, ${glslColor('#b89468')}, smoothstep(-9.0, -0.6, ys));
+      float wetBand = smoothstep(-1.1, 0.2, ys) * (1.0 - smoothstep(0.5, 2.6, ys));
+      sand = mix(sand, ${glslColor('#7a6648')}, wetBand * (0.55 + sandGrit * 0.35));
+      sand = mix(sand, ${glslColor('#f2e2b4')}, smoothstep(1.0, 5.2, ys));
+      diffuseColor.rgb += sand * vSandW;
+    }
+`
+
 const groundColorBody = /* glsl */ `
   {
     vec2 gp = vGroundPos.xz;
+    ${beachRampBody}
     // None of these bands fade with distance: the whole point is that a
     // hillside seen from four hundred metres still has patches on it. Only the
     // relief bump above fades, because only the bump aliases.
@@ -475,6 +562,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       ground = false,
       shadowedBleed = false,
       shapedFill = false,
+      leafBump = 0,
       ...rest
     } = params
     const mat = new THREE.MeshStandardMaterial({ ...rest, fog: false })
@@ -487,11 +575,12 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     // what three keys compiled programs on — so a rock and a log could be
     // handed the same program whichever compiled first. Name what actually
     // changes the shader.
-    const programKey = `foliage:${wind > 0}:${translucency > 0}:${ground}`
+    const programKey = `foliage:${wind > 0}:${translucency > 0}:${ground}:${leafBump > 0}`
     mat.customProgramCacheKey = () => programKey
     const uShapedFill = { value: shapedFill ? 1 : 0 }
     const uWindScale = { value: wind }
     const uTranslucency = { value: translucency }
+    const uLeafBump = { value: leafBump }
     const uThrough = { value: new THREE.Color(throughColor ?? '#cfe27a') }
 
     const addWind = (shader: THREE.WebGLProgramParametersWithUniforms) => {
@@ -519,7 +608,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       shader.uniforms.uHazeDensity = { value: 0.0021 }
       shader.uniforms.uHazeMax = { value: 0.88 }
 
-      shader.vertexShader = `varying vec3 vGroundPos;\n${ground ? 'varying float vGroundUp;\n' : ''}${shader.vertexShader}`
+      shader.vertexShader = `varying vec3 vGroundPos;\n${ground ? 'varying float vGroundUp;\nattribute float aSandW;\nvarying float vSandW;\n' : ''}${shader.vertexShader}`
 
       if (wind > 0) addWind(shader)
 
@@ -528,7 +617,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       shader.vertexShader = shader.vertexShader.replace(
         '#include <project_vertex>',
         `vGroundPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-        ${ground ? 'vGroundUp = normalize(mat3(modelMatrix) * objectNormal).y;' : ''}
+        ${ground ? 'vGroundUp = normalize(mat3(modelMatrix) * objectNormal).y;\n        vSandW = aSandW;' : ''}
         #include <project_vertex>`,
       )
 
@@ -542,11 +631,12 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
         uniform float uHazeMax;
         varying vec3 vGroundPos;
         ${translucency > 0 ? leafFragmentPars : ''}
+        ${translucency > 0 && leafBump > 0 ? leafBumpPars : ''}
         ${noiseFragmentPars}
         ${cloudShadowPars}
         ${shapedFillPars}
         ${ground ? groundWetPars : ''}
-        ${ground ? 'varying float vGroundUp;' : ''}
+        ${ground ? 'varying float vGroundUp;\n        varying float vSandW;' : ''}
         ${shader.fragmentShader}
       `
         .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${cloudShadowBody}`)
@@ -570,11 +660,12 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
         shader.uniforms.uSunDir = uSunDir
         shader.uniforms.uSunColor = uSunColor
         shader.uniforms.uTranslucency = uTranslucency
+        shader.uniforms.uLeafBump = uLeafBump
         shader.uniforms.uThroughColor = uThrough
         shader.fragmentShader = shader.fragmentShader
           .replace(
             '#include <normal_fragment_begin>',
-            `#include <normal_fragment_begin>\n${leafNormalBody}`,
+            `#include <normal_fragment_begin>\n${leafNormalBody}${leafBump > 0 ? leafBumpBody : ''}`,
           )
           .replace(
             '#include <lights_fragment_end>',

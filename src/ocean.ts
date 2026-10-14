@@ -344,7 +344,9 @@ void main() {
   // Blend toward the sky near the mesh rim so a finite square doesn't silhouette
   float planar = length(vWorldPos.xz - uCameraPos.xz);
   float rim = 1.0 - smoothstep(uHalfExtent * 0.52, uHalfExtent * 0.97, planar);
-  float far = 1.0 - rim;
+  // The colour starts thickening toward the horizon well before the alpha
+  // starts to fade, so the last stretch of sea hazes over a long run
+  float far = smoothstep(uHalfExtent * 0.4, uHalfExtent * 0.96, planar);
   color = mix(color, uHorizonColor * 0.85, far * 0.92);
 
   // Soft edge: last metres over the beach go translucent so sand peeks through
