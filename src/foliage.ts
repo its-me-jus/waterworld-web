@@ -538,6 +538,26 @@ const groundColorBody = /* glsl */ `
       diffuseColor.rgb = mix(diffuseColor.rgb, rockC, cliff);
     }
 
+    // Rocky-shore zones. A band a metre tall cannot live in vertex paint on a
+    // 5.8 m grid, so it comes from the pixel's own height: green alga at the
+    // waterline, a pale barnacle band at the high-tide mark, a dab of orange
+    // lichen above it, and the black rock over that. Only on bare rock (the
+    // beach owns the pixels with sand in them) and only where the sea reaches.
+    float rockLow = 1.0 - smoothstep(0.1, 0.8, vSandW);
+    if (rockLow > 0.02 && vGroundPos.y > -1.0 && vGroundPos.y < 3.8) {
+      float zy = vGroundPos.y + (gNoise(gp * 0.23 + vec2(3.0, 8.0)) - 0.5) * 0.9;
+      float zp = gNoise(gp * 1.9 + vec2(-6.0, 1.0));
+      float cover = smoothstep(0.3, 0.62, zp);
+      float zFade = rockLow * (1.0 - smoothstep(3.2, 3.8, vGroundPos.y));
+      float algae = smoothstep(-0.35, 0.05, zy) * (1.0 - smoothstep(0.55, 1.05, zy));
+      float barn = smoothstep(0.85, 1.25, zy) * (1.0 - smoothstep(2.3, 2.9, zy));
+      float lichen = smoothstep(2.5, 2.9, zy) * (1.0 - smoothstep(3.2, 3.6, zy)) *
+        smoothstep(0.55, 0.72, gNoise(gp * 1.3 - vec2(2.0, 9.0)));
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.05, 0.12, 0.02), algae * (0.45 + 0.4 * cover) * zFade);
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.24, 0.235, 0.2) * (0.85 + 0.3 * zp), barn * (0.25 + 0.4 * cover) * zFade);
+      diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.34, 0.17, 0.03), lichen * 0.4 * zFade);
+    }
+
     // Live tide wetness — the painted beach was a fixed band; the foreshore
     // now darkens and cools where the water actually sits, and sheens a touch.
     float relative = vGroundPos.y - uTide;

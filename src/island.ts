@@ -1081,6 +1081,190 @@ function tideWrack(seed: number) {
   return mergeGeometries(parts, false) as THREE.BufferGeometry
 }
 
+/**
+ * Dry wrack: the weed a storm left at the top of the beach, bleached and
+ * matted. A flat disc for the body of the mat and a pile of curled ribbons
+ * lying over it for the tangle, all low enough to walk over.
+ */
+function dryWrack(seed: number, size: number, low: boolean) {
+  const rand = (n: number) => fbm(seed * 5.9 + n * 3.1, seed * 6.7 - n * 1.9)
+  const parts: THREE.BufferGeometry[] = []
+  const base = new THREE.CircleGeometry(0.18 + rand(1) * 0.12, 7)
+  base.rotateX(-Math.PI / 2)
+  base.translate((rand(2) - 0.5) * 0.3, 0.015, (rand(3) - 0.5) * 0.3)
+  parts.push(base.toNonIndexed())
+  const ribbons = low ? 9 + Math.floor(rand(4) * 4) : 16 + Math.floor(rand(4) * 8)
+  for (let i = 0; i < ribbons; i++) {
+    const s = (n: number) => scatter(seed + i * 7, 61.3 + n)
+    const len = 0.25 + s(0) * 0.45
+    const wide = 0.04 + s(1) * 0.05
+    const rib = new THREE.PlaneGeometry(wide, len, 1, low ? 2 : 4)
+    const pos = rib.attributes.position
+    const bend = (s(2) - 0.5) * 0.5
+    const arch = 0.015 + s(3) * 0.035
+    for (let v = 0; v < pos.count; v++) {
+      const t = pos.getY(v) / len
+      // a curl in plan and a hump in section, so it reads as weed and not a stick
+      pos.setX(v, pos.getX(v) + Math.sin(t * Math.PI * 1.6) * bend)
+      pos.setZ(v, Math.cos(t * Math.PI) * arch)
+    }
+    rib.rotateX(-Math.PI / 2 + (s(8) - 0.5) * 0.35)
+    rib.computeVertexNormals()
+    rib.rotateY(s(4) * Math.PI * 2)
+    rib.translate((s(5) - 0.5) * 0.9, 0.02 + s(6) * 0.06, (s(7) - 0.5) * 0.9)
+    parts.push(rib.toNonIndexed())
+  }
+  const mat = mergeGeometries(parts, false) as THREE.BufferGeometry
+  mat.scale(size, 1, size)
+  return mat
+}
+
+/**
+ * Dry wrack's colour. The layer's own colour is the wet olive of the weed at
+ * the waterline, so red goes up and blue down in the vertices, paler where a
+ * strand lies over the mat and paler again on some mats than others.
+ */
+function dryTint(geo: THREE.BufferGeometry, seed: number) {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  const color = geo.getAttribute('color') as THREE.BufferAttribute
+  const straw = scatter(seed, 68.1)
+  const r = 3.0 + straw * 0.8
+  const g = 1.3 + straw * 0.5
+  const b = 0.8 + straw * 0.2
+  for (let i = 0; i < color.count; i++) {
+    const lift =
+      0.8 + Math.min(pos.getY(i) / 0.14, 1) * 0.35 + (fbm(pos.getX(i) * 13 + seed, pos.getZ(i) * 13) - 0.5) * 0.8
+    color.setXYZ(i, color.getX(i) * r * lift, color.getY(i) * g * lift, color.getZ(i) * b * lift)
+  }
+}
+
+/**
+ * A beach shell, a few centimetres across, lying on its side or back.
+ * 0 is a scallop (a ribbed fan), 1 a cone shell (a stack of whorls), 2 a
+ * whelk (a rounded body with a short spire). Every piece comes out indexed
+ * with a uv; the caller makes it non-indexed to match the wrack batch.
+ */
+function shellGeometry(seed: number, kind: number, R: number) {
+  let geo: THREE.BufferGeometry
+  if (kind === 0) {
+    const N = 9
+    const span = 2.3
+    const pos: number[] = [0, 0.05 * R, 0]
+    for (let ring = 0; ring < 2; ring++) {
+      for (let k = 0; k <= N; k++) {
+        const ang = -span / 2 + (k / N) * span
+        const rib = k % 2 === 0 ? 1 : 0.9
+        const rad = (ring === 0 ? 0.5 : 1) * R * rib
+        const y = (ring === 0 ? 0.26 : 0.13) * R * (k % 2 === 0 ? 1.15 : 0.9)
+        pos.push(Math.sin(ang) * rad, y, Math.cos(ang) * rad)
+      }
+    }
+    const idx: number[] = []
+    const inner = (k: number) => 1 + k
+    const outer = (k: number) => 1 + (N + 1) + k
+    for (let k = 0; k < N; k++) {
+      idx.push(0, inner(k), inner(k + 1))
+      idx.push(inner(k), outer(k), outer(k + 1))
+      idx.push(inner(k), outer(k + 1), inner(k + 1))
+    }
+    geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+    geo.setIndex(idx)
+    geo.computeVertexNormals()
+    // A flipped fan would be culled to nothing; wind it up if the maths came out down
+    const n = geo.getAttribute('normal') as THREE.BufferAttribute
+    let up = 0
+    for (let i = 0; i < n.count; i++) up += n.getY(i)
+    if (up < 0) {
+      for (let i = 0; i < idx.length; i += 3) {
+        const t = idx[i + 1]
+        idx[i + 1] = idx[i + 2]
+        idx[i + 2] = t
+      }
+      geo.setIndex(idx)
+      geo.computeVertexNormals()
+    }
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(geo.getAttribute('position').count * 2), 2))
+    geo.rotateX((scatter(seed, 69.1) - 0.5) * 0.5)
+  } else if (kind === 1) {
+    const whorls: [number, number, number, boolean][] = [
+      [0.36, 0.3, 0.7, false],
+      [0.3, 0.22, 0.5, true],
+      [0.22, 0.05, 0.4, true],
+    ]
+    const parts: THREE.BufferGeometry[] = []
+    let y = 0
+    for (const [bottom, top, h, open] of whorls) {
+      const w = new THREE.CylinderGeometry(top * R, bottom * R, h * R, 6, 1, open)
+      w.translate(0, y + (h * R) / 2, 0)
+      parts.push(w)
+      y += h * R
+    }
+    geo = mergeGeometries(parts, false) as THREE.BufferGeometry
+    geo.translate(0, -y / 2, 0)
+    geo.rotateZ(Math.PI / 2 + (scatter(seed, 69.2) - 0.5) * 0.4)
+    geo.translate(0, 0.34 * R, 0)
+  } else {
+    const body = mergeVertices(new THREE.IcosahedronGeometry(0.45 * R, 0))
+    body.scale(1.1, 0.8, 0.9)
+    body.translate(0, 0.36 * R, 0)
+    const spire = new THREE.ConeGeometry(0.22 * R, 0.7 * R, 5, 1, true)
+    spire.rotateZ(-Math.PI / 2)
+    spire.translate(0.62 * R, 0.3 * R, 0)
+    geo = mergeGeometries([body, spire], false) as THREE.BufferGeometry
+  }
+  geo.rotateY(scatter(seed, 69.3) * Math.PI * 2)
+  return geo
+}
+
+/**
+ * Shell colour: cream, bone and the odd blush. Shells ride in the wrack layer
+ * (range-culled, no shadows), whose colour is a dark olive, so every channel
+ * is lifted far past it, and blue the most.
+ */
+function shellTint(geo: THREE.BufferGeometry, seed: number) {
+  const color = geo.getAttribute('color') as THREE.BufferAttribute
+  const pick = scatter(seed, 70.1)
+  const [r, g, b] = pick < 0.55 ? [8.4, 5.4, 10.5] : pick < 0.8 ? [9.2, 6.4, 14] : [9, 4.1, 8.2]
+  for (let i = 0; i < color.count; i++) color.setXYZ(i, color.getX(i) * r, color.getY(i) * g, color.getZ(i) * b)
+}
+
+/**
+ * Rocky-shore zones on a stone, by the height of each vertex: green alga at
+ * the waterline, a pale barnacle band at the high-tide mark, a dab of orange
+ * lichen above that. The same bands the ground shader paints on the headland
+ * itself, so a boulder at the foot of a point matches the rock behind it.
+ * `y0` is the height of the stone's local origin, `base` the layer's albedo
+ * (the targets below are albedos, so they are divided by it).
+ */
+function zoneTint(geo: THREE.BufferGeometry, seed: number, y0: number, base: number) {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  const color = geo.getAttribute('color') as THREE.BufferAttribute
+  const ss = THREE.MathUtils.smoothstep
+  for (let i = 0; i < pos.count; i++) {
+    const px = pos.getX(i)
+    const pz = pos.getZ(i)
+    const wy = y0 + pos.getY(i) + (fbm(px * 1.7 + seed, pz * 1.7 - seed) - 0.5) * 0.5
+    const patch = ss(fbm(px * 2.6 - seed * 0.3, pz * 2.6 + wy * 1.4), 0.4, 0.62)
+    const algae = ss(wy, -0.35, 0.05) * (1 - ss(wy, 0.55, 1.05)) * (0.3 + patch * 0.3)
+    const barn = ss(wy, 0.85, 1.25) * (1 - ss(wy, 2.3, 2.9)) * (0.25 + patch * 0.4)
+    const lichen = ss(wy, 2.5, 2.9) * (1 - ss(wy, 3.2, 3.6)) * ss(fbm(px * 1.9 + 5, pz * 1.9 - 9), 0.55, 0.72) * 0.4
+    let r = color.getX(i)
+    let g = color.getY(i)
+    let b = color.getZ(i)
+    // multiplier = lerp(1, target / base, weight): keeps the crease shading
+    const mix = (w: number, tr: number, tg: number, tb: number) => {
+      r *= 1 + (tr / base - 1) * w
+      g *= 1 + (tg / base - 1) * w
+      b *= 1 + (tb / base - 1) * w
+    }
+    mix(algae, 0.09, 0.115, 0.045)
+    mix(barn, 0.24, 0.235, 0.2)
+    mix(lichen, 0.34, 0.17, 0.03)
+    color.setXYZ(i, r, g, b)
+  }
+}
+
 /** Reeds / sea grass in the wet band — thin upright blades. */
 function reedClump(seed: number) {
   const rand = (n: number) => fbm(seed * 6.1 + n * 2.4, seed * 4.5 - n * 3.1)
@@ -1747,6 +1931,19 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     return geo.applyMatrix4(m)
   }
 
+  const groundUp = new THREE.Vector3(0, 1, 0)
+  const groundTilt = new THREE.Vector3()
+  const groundQuat = new THREE.Quaternion()
+  /** Lay a small flat thing on the slope instead of on the horizontal, so its
+   *  downhill edge does not hang in the air. Rotates about its own origin. */
+  const layOnGround = (geo: THREE.BufferGeometry, lx: number, lz: number) => {
+    const e = 0.6
+    groundTilt
+      .set(surface(lx - e, lz) - surface(lx + e, lz), 2 * e, surface(lx, lz - e) - surface(lx, lz + e))
+      .normalize()
+    return geo.applyQuaternion(groundQuat.setFromUnitVectors(groundUp, groundTilt))
+  }
+
   /**
    * How each kind of plant varies and how hard the wind takes it. `sway` is a
    * share of its material's wind budget, so a trunk and the crown it carries
@@ -1853,9 +2050,12 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     collide = false,
     /** Bleached coral rubble instead of basalt. */
     pale = false,
+    /** Rocky-shore bands (alga, barnacles, lichen) by the stone's own height. */
+    zone = false,
   ) => {
     const baked = bakeFor(stone.geo, seed, SPECIES.rock)
     shadeStone(baked, seed, pale)
+    if (zone) zoneTint(baked, seed, h - stone.sink, list === boulderParts ? 0.07 : 0.105)
     list.push(placeAt(baked, lx, h, lz, stone.sink))
     if (!collide) return
     stone.geo.computeBoundingBox()
@@ -2156,8 +2356,17 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   // it, with rubble thrown round each. The coast's black paint was already
   // saying "rock" with nothing to stand on, so from the water the points read
   // as more beach. Bays (valley mouths) keep their sand.
-  const apronWanted = low ? 26 : 70
+  //
+  // Not every point is the same point. Each stretch of coast has a habit,
+  // drawn from slow noise on the bearing: slabby (flat platforms at the tide
+  // line, big blocks), blocky (the middling stones this started as), or
+  // rubbly (a spill of small stuff). Sizes follow a curve, many middling, few
+  // large, rather than all coming out alike.
+  const apronWanted = low ? 30 : 82
+  const platformCap = low ? 5 : 12
   let aprons = 0
+  let platforms = 0
+  let rubbleFields = 0
   for (let i = 0; i < 6000 && aprons < apronWanted; i++) {
     const angle = i * 2.399963
     const radius = 215 + ((i * 7) % 120)
@@ -2168,19 +2377,68 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (h < -0.9 || h > 5.5) continue
     const slope = Math.abs(surface(lx + 4, lz) - h) + Math.abs(surface(lx, lz + 4) - h)
     if (slope > 14) continue
-    const big = stoneGeometry(i + 5200, 1.4 + fbm((i + 5200) * 6.1, (i + 5200) * 2.7) * 2.4, low ? 1 : 2)
-    plantStone(boulderParts, big, i + 5200, lx, h, lz, true)
-    for (let k = 0; k < 3; k++) {
-      const a = scatter(i * 3 + k, 23.3) * Math.PI * 2
-      const d = 2.6 + scatter(i * 3 + k, 24.4) * 3.4
-      const rx = lx + Math.cos(a) * d
-      const rz = lz + Math.sin(a) * d
-      const rh = surface(rx, rz)
-      if (rh < -1.2 || rh > 6) continue
-      const rubble = stoneGeometry(i * 5 + k + 5300, 0.45 + scatter(i * 3 + k, 25.5) * 0.9, 1)
-      plantStone(rocks, rubble, i * 5 + k + 5300, rx, rh, rz, false)
+    const bearing = Math.atan2(lz, lx)
+    // Whole waves round the island so the habit changes slowly and never
+    // jumps at the seam; `fbm` bunches near its mean and left most coast "rubbly"
+    const habit = 0.5 + 0.5 * (0.6 * Math.sin(2 * bearing + 0.9) + 0.4 * Math.sin(3 * bearing + 4.1))
+    const slabby = THREE.MathUtils.smoothstep(habit, 0.6, 0.85)
+    const rubbly = 1 - THREE.MathUtils.smoothstep(habit, 0.2, 0.45)
+    const pick = scatter(i, 61.1)
+    const size = Math.min(4.6, (0.9 + Math.pow(scatter(i, 62.2), 2.1) * 3.2) * (0.85 + habit * 0.5))
+    const rubble = (seed: number, cx: number, cz: number, r: number) => {
+      const rh = surface(cx, cz)
+      if (rh < -1.2 || rh > 6) return
+      plantStone(rocks, stoneGeometry(seed, r, low && r < 0.7 ? 0 : 1), seed, cx, rh, cz, false, false, true)
+    }
+    if (h < 2.6 && platforms < platformCap && pick < 0.12 + slabby * 0.45) {
+      // A platform: a broad flat-topped slab a stride above the wash, with a
+      // lower step beside it. Collides like the boulders, so you walk round it.
+      const flat = 0.2 + scatter(i, 64.4) * 0.1
+      const slab = stoneGeometry(i + 5400, 2.0 + scatter(i, 63.3) * 2.0, 1)
+      slab.geo.scale(1.35, flat, 1.1 + scatter(i, 65.5) * 0.3)
+      slab.sink *= flat
+      plantStone(boulderParts, slab, i + 5400, lx, h, lz, true, false, true)
+      const a = scatter(i, 66.6) * Math.PI * 2
+      const sx = lx + Math.cos(a) * (size + 1.5)
+      const sz = lz + Math.sin(a) * (size + 1.5)
+      const sh = surface(sx, sz)
+      if (sh > -0.8 && sh < 4) {
+        const step = stoneGeometry(i + 5500, 1.2 + scatter(i, 67.7) * 1.0, 1)
+        step.geo.scale(1.25, 0.24, 1)
+        step.sink *= 0.24
+        plantStone(boulderParts, step, i + 5500, sx, sh, sz, true, false, true)
+      }
+      for (let k = 0; k < 2; k++) {
+        const ra = scatter(i * 3 + k, 23.3) * Math.PI * 2
+        rubble(i * 5 + k + 5300, lx + Math.cos(ra) * 3.8, lz + Math.sin(ra) * 3.8, 0.4 + scatter(i * 3 + k, 25.5) * 0.5)
+      }
+      platforms++
+    } else if (pick > 1 - (0.05 + rubbly * 0.4)) {
+      // A spill: seven to eleven stones thrown over a few metres, thickest
+      // in the middle, the odd large one among them, no big block at all
+      const count = 7 + Math.floor(scatter(i, 68.8) * 5)
+      for (let k = 0; k < count; k++) {
+        const a = scatter(i * 11 + k, 69.9) * Math.PI * 2
+        const d = Math.pow(scatter(i * 11 + k, 70.7), 0.8) * 4.8
+        const bigOne = scatter(i * 11 + k, 71.5) > 0.88
+        const r = bigOne ? 1.0 + scatter(i * 11 + k, 72.3) * 0.7 : 0.3 + Math.pow(scatter(i * 11 + k, 73.1), 1.8) * 0.8
+        rubble(i * 13 + k + 5600, lx + Math.cos(a) * d, lz + Math.sin(a) * d, r)
+      }
+      rubbleFields++
+    } else {
+      const big = stoneGeometry(i + 5200, size, low ? 1 : 2)
+      plantStone(boulderParts, big, i + 5200, lx, h, lz, true, false, true)
+      const pieces = 1 + Math.floor(scatter(i, 74.9) * 4)
+      for (let k = 0; k < pieces; k++) {
+        const a = scatter(i * 3 + k, 23.3) * Math.PI * 2
+        const d = size * 0.8 + 1.2 + scatter(i * 3 + k, 24.4) * 3.4
+        rubble(i * 5 + k + 5300, lx + Math.cos(a) * d, lz + Math.sin(a) * d, 0.45 + scatter(i * 3 + k, 25.5) * 0.9)
+      }
     }
     aprons++
+  }
+  if (import.meta.env.DEV) {
+    ;(window as unknown as Record<string, unknown>).__islandAprons = { aprons, platforms, rubbleFields }
   }
 
   // A few sea stacks standing in the lagoon off the ridge ends: basalt
@@ -2203,7 +2461,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const tall = 3.4 + scatter(i, 27.7) * 3.2
     stack.geo.scale(0.72, tall, 0.72)
     stack.sink *= tall
-    plantStone(boulderParts, stack, i + 6100, lx, h, lz, true)
+    plantStone(boulderParts, stack, i + 6100, lx, h, lz, true, false, true)
   }
 
   // The strand: where the beach gives way to grass there is a line of
@@ -2323,6 +2581,91 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const h = surface(lx, lz)
     if (h < 0.15 || h > 2.4) continue
     plant(wrackParts, tideWrack(i + 1700), i + 1700, SPECIES.wrack, lx, h, lz, 0.02)
+  }
+
+  // Shore life along the high-tide line, all the way round. The wet wrack
+  // above and the cobbles below were heaped at the landing cove; every other
+  // bay was clean sand. Here the line itself is found first, bearing by
+  // bearing: out from the middle of the island to where the ground drops
+  // under the swash. Dry weed and shells are then dropped on the dry side of
+  // it, thickest where the swash stops and thinning up the beach.
+  {
+    const SWASH_TOP = 1.9
+    const BEARINGS = 720
+    const tideR = new Float32Array(BEARINGS)
+    for (let b = 0; b < BEARINGS; b++) {
+      const a = (b / BEARINGS) * Math.PI * 2
+      const ca = Math.cos(a)
+      const sa = Math.sin(a)
+      let r = 120
+      if (surface(ca * r, sa * r) < SWASH_TOP) continue
+      while (r < 420 && surface(ca * r, sa * r) >= SWASH_TOP) r += 1
+      // A real shore runs on down into the water; a hollow inland does not
+      if (r < 420 && surface(ca * (r + 8), sa * (r + 8)) < 1.2) tideR[b] = r
+    }
+    /** A soft-beach spot on the dry side of the line, or null on rock or steep ground. */
+    const beachSpot = (i: number, salt: number, inland: number) => {
+      const b = Math.floor(scatter(i, salt) * BEARINGS)
+      const r0 = tideR[b]
+      if (r0 === 0) return null
+      const a = ((b + scatter(i, salt + 0.7)) / BEARINGS) * Math.PI * 2
+      const r = r0 - Math.pow(scatter(i, salt + 1.3), 1.7) * inland
+      const lx = Math.cos(a) * r
+      const lz = Math.sin(a) * r
+      if (valleyAt(lx, lz) < 0.3) return null
+      const h = surface(lx, lz)
+      if (Math.abs(surface(lx + 4, lz) - h) + Math.abs(surface(lx, lz + 4) - h) > 6) return null
+      return { lx, lz, h, b }
+    }
+
+    // Dry wrack: brown mats in drifts, h 2–6 m
+    const dryWanted = low ? 56 : 150
+    let dryMats = 0
+    for (let i = 0; i < 9000 && dryMats < dryWanted; i++) {
+      const spot = beachSpot(i, 71.1, 9)
+      if (!spot) continue
+      const { lx, lz, h, b } = spot
+      if (h < 1.9 || h > 6.2) continue
+      const drift = THREE.MathUtils.smoothstep(fbm(b * 0.05 + 3.1, 5.5), 0.38, 0.6)
+      const nearSwash = 1 - THREE.MathUtils.smoothstep(h, 2.6, 6.2)
+      if (scatter(i, 72.2) > (0.12 + drift * 0.6) * (0.25 + nearSwash * 0.75)) continue
+      const seed = i + 11700
+      const mat = bakeFor(dryWrack(seed, 0.8 + scatter(i, 73.3) * 0.9, low), seed, SPECIES.wrack)
+      dryTint(mat, seed)
+      wrackParts.push(placeAt(layOnGround(mat, lx, lz), lx, h, lz, 0.015))
+      dryMats++
+    }
+
+    // Shells, in the wrack layer: it does not sway, it is culled past 300 m, and
+    // it casts no shadow, which suits something a hand across
+    const siteWanted = low ? 16 : 70
+    let sites = 0
+    let shells = 0
+    for (let i = 0; i < 9000 && sites < siteWanted; i++) {
+      const spot = beachSpot(i, 81.1, 7)
+      if (!spot) continue
+      const { lx, lz, h } = spot
+      if (h < 1.5 || h > 5.5) continue
+      const near = 1 - THREE.MathUtils.smoothstep(h, 2.2, 5.5)
+      if (scatter(i, 82.2) > 0.15 + near * 0.85) continue
+      const n = (low ? 2 : 4) + Math.floor(scatter(i, 83.3) * (low ? 3 : 5))
+      for (let k = 0; k < n; k++) {
+        const px = lx + (scatter(i * 9 + k, 84.1) - 0.5) * 3.2
+        const pz = lz + (scatter(i * 9 + k, 84.9) - 0.5) * 3.2
+        const ph = surface(px, pz)
+        if (ph < 1.2) continue
+        const seed = i * 9 + k + 12700
+        const kind = Math.floor(scatter(seed, 85.5) * 3)
+        const shell = bakeFor(shellGeometry(seed, kind, 0.08 + scatter(seed, 86.3) * 0.05).toNonIndexed(), seed, SPECIES.wrack)
+        shellTint(shell, seed)
+        wrackParts.push(placeAt(layOnGround(shell, px, pz), px, ph, pz, 0.01))
+        shells++
+      }
+      sites++
+    }
+    if (import.meta.env.DEV) {
+      ;(window as unknown as Record<string, unknown>).__islandShore = { dryMats, sites, shells }
+    }
   }
 
   // Reeds in the wet band — vertical rhythm along the wash
@@ -2918,8 +3261,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       throughColor: '#c6de70',
       doubleSided: true,
     },
+    // Wrack and shells: low enough that their shadows are lost in the sand's
     { parts: wrackParts,
-      range: 300, color: 0x4f5c3a, roughness: 0.95 },
+      range: 300, color: 0x4f5c3a, roughness: 0.95, noCast: true },
     // Basalt: dark, cool and a touch glossy where the sea has wetted it. Pale
     // coral cobbles are lifted back up in shadeStone, so these stay dark
     { parts: rocks, color: 0x5f5a54, roughness: 0.9, fill: stoneFill },
