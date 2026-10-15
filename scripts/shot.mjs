@@ -60,6 +60,10 @@ const VIEWS = [
   { name: 'spire-air', url: 'http://localhost:5173/?x=1180&z=-480&yaw=0.65&pitch=-0.12&fly=90' },
   { name: 'spire-zoom', url: 'http://localhost:5173/?x=1180&z=-480&yaw=0.65&pitch=-0.12&fly=90', zoom: { x: 380, y: 60, width: 420, height: 300 } },
   { name: 'cliff-zoom', url: 'http://localhost:5173/?x=1180&z=-480&yaw=0.65&pitch=-0.12&fly=90', zoom: { x: 0, y: 440, width: 420, height: 280 } },
+  // Canopy round: a drone low over the roof, where emergents and valley palms stand clear
+  { name: 'canopy-air', url: 'http://localhost:5173/?x=1130&z=-560&yaw=0.95&pitch=-0.22&fly=45' },
+  { name: 'canopy-air-b', url: 'http://localhost:5173/?x=900&z=-840&yaw=-0.4&pitch=-0.2&fly=40' },
+  { name: 'valley-palms', url: 'http://localhost:5173/?x=950&z=-600&yaw=1.03&pitch=-0.05&fly=22' },
   // Close to the wall (drone 70 m up, 90 m off, looking up): the rock's own
   // colour with little haze in front of it
   { name: 'spire-close', url: 'http://localhost:5173/?x=1075&z=-650&yaw=0.88&pitch=0.42&fly=70' },
@@ -171,7 +175,7 @@ for (const { name, url, dive = 0, fwd = 0, rise = 0, zoom, viewport } of VIEWS) 
   const wait = Math.max(dive, fwd, rise)
   if (wait > 0) await page.waitForTimeout(wait * 1000)
   if (dive > 0) await page.keyboard.up('Shift')
-  await page.screenshot({ path: `${OUT}/${name}.png`, clip: zoom })
+  await page.screenshot({ path: `${OUT}/${name}.png`, clip: zoom, timeout: 150000 })
   if (fwd > 0) await page.keyboard.up('KeyW')
   if (rise > 0) await page.keyboard.up('Space')
   console.log(`[${name}] captured`)

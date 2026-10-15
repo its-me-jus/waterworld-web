@@ -2550,11 +2550,19 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
           0.95,
         )
         // Spread scaled to the grid, so a low-power roof is fewer, wider crowns
+        // The roof rises and falls in stands about fifty metres across — tall
+        // forest, then lower, finer scrub — and steps down to stunted growth
+        // toward the summit. One crown size everywhere gave a flat, regular
+        // skyline like a bed of broccoli; this is what lets a ridge read as
+        // having a canopy at different heights.
+        const stand = THREE.MathUtils.smoothstep(fbm(lx * 0.016 + 11.3, lz * 0.016 - 6.4), 0.38, 0.62)
+        const stunted = THREE.MathUtils.smoothstep(h, 100, 175)
         const size =
-          (spacing / 6.2) * (3.3 + scatter(seed, 4.3) * 2.4) * (0.7 + 0.3 * cover) * (1 + 0.4 * pitch)
+          (spacing / 6.2) * (3.3 + scatter(seed, 4.3) * 2.4) * (0.7 + 0.3 * cover) * (1 + 0.4 * pitch) *
+          (0.8 + 0.4 * stand) * (1 - 0.28 * stunted)
         // Margin trees stand lower, so the edge of the forest closes down onto
         // the undergrowth instead of showing a colonnade of trunks to the sea
-        const trunkH = (2 + scatter(seed, 5.9) * 5.5) * (0.35 + 0.65 * cover) * (1 - 0.65 * pitch)
+        const trunkH = (2 + scatter(seed, 5.9) * 5.5) * (0.35 + 0.65 * cover) * (1 - 0.65 * pitch) * (0.7 + 0.6 * stand)
         const place = new THREE.Matrix4().setPosition(lx, h - 0.2, lz)
         // A shade deeper than the specimen trees on the beach, and uneven
         // crown to crown — sunlit tops beside darker ones is the texture a
@@ -2590,6 +2598,98 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       }
     }
     if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__islandJungle = planted
+  }
+
+  // —— emergents and valley palms ————————————————————————————
+  // The roof is the same dome a few thousand times. Real rainforest has a few
+  // trees that stand well clear of it — wide flat-topped ones and tall rounded
+  // ones — and on a Polynesian slope the gullies are lined with coconut palms
+  // that stand up through the green. Both break the skyline that, from the
+  // sea, is otherwise a single smooth bumpy line.
+  {
+    const crownTemplates = Array.from({ length: low ? 3 : 5 }, (_, k) =>
+      jungleCrown(k + 7300, low ? 1 : 2, low ? 1 : 2),
+    )
+    const crownFar = crownTemplates.map((_, k) => jungleCrown(k + 7300, low ? 0 : 1, 0))
+    const emergentWanted = low ? 22 : 64
+    const spots: { x: number; z: number }[] = []
+    for (let i = 0; i < 12000 && spots.length < emergentWanted; i++) {
+      const angle = i * 2.39996
+      const radius = 40 + Math.sqrt((i % 3000) / 3000) * 240
+      const lx = Math.cos(angle) * radius + (scatter(i, 61.1) - 0.5) * 10
+      const lz = Math.sin(angle) * radius + (scatter(i, 62.2) - 0.5) * 10
+      if (forestCover(lx, lz) < 0.6) continue
+      const h = surface(lx, lz)
+      if (h < 12 || h > 140) continue
+      const slope = Math.hypot(surface(lx + 3, lz) - surface(lx - 3, lz), surface(lx, lz + 3) - surface(lx, lz - 3)) / 6
+      if (slope > 0.85) continue
+      if (spots.some((p) => Math.hypot(p.x - lx, p.z - lz) < 34)) continue
+      if (pathPoints.some(([px, pz]) => Math.hypot(px - lx, pz - lz) < 9)) continue
+      spots.push({ x: lx, z: lz })
+      const seed = i + 7400
+      // Mostly tall rounded crowns; a minority wider and lower. Kept heavy and
+      // lumpy: flattened further they read as umbrella pines or mushrooms
+      const umbrella = scatter(seed, 63.3) < 0.25
+      const size = umbrella ? 8.5 + scatter(seed, 64.4) * 3 : 6 + scatter(seed, 64.4) * 3
+      const stretch = umbrella ? 0.85 + scatter(seed, 65.5) * 0.15 : 1.0 + scatter(seed, 65.5) * 0.3
+      const trunkH = (umbrella ? 9 : 10) + scatter(seed, 66.6) * 6
+      // Not quite round in plan, so a row of them doesn't repeat
+      const wide = 0.85 + scatter(seed, 69.9) * 0.3
+      const place = new THREE.Matrix4().setPosition(lx, h - 0.3, lz)
+      // Sunlit tops: these stand clear of the roof, so they are not in its shade
+      const deep = 0.8 + scatter(seed, 67.7) * 0.25
+      const turn = scatter(seed, 68.8) * Math.PI * 2
+      const k = seed % crownTemplates.length
+      for (const [template, list] of [
+        [crownTemplates[k], jungleCanopy],
+        [crownFar[k], jungleFar],
+      ] as const) {
+        const geo = template.clone()
+        geo.scale(size * wide, size * stretch, size / wide)
+        geo.rotateY(turn)
+        geo.translate(0, trunkH + size * stretch * 0.45, 0)
+        bakeFor(geo, seed, SPECIES.canopy, trunkH + size * stretch * 1.1)
+        const color = geo.getAttribute('color') as THREE.BufferAttribute
+        for (let v = 0; v < color.count; v++) {
+          color.setXYZ(v, color.getX(v) * deep, color.getY(v) * deep, color.getZ(v) * deep)
+        }
+        list.push(geo.applyMatrix4(place))
+      }
+      const bole = trunkH + size * stretch * 0.3
+      const trunk = new THREE.CylinderGeometry(0.4 + size * 0.035, 0.8 + size * 0.07, bole, 8, 1, true)
+      trunk.translate(0, bole / 2, 0)
+      jungleTrunks.push(bakeFor(trunk, seed, SPECIES.broadTrunk).applyMatrix4(place))
+    }
+
+    // Palms up the valleys, half as tall again as the beach ones
+    const valleyPalmWanted = low ? 16 : 46
+    let valleyPalms = 0
+    for (let i = 0; i < 9000 && valleyPalms < valleyPalmWanted; i++) {
+      const angle = i * 2.39996 + 1.3
+      const radius = 70 + Math.sqrt((i % 2500) / 2500) * 190
+      const lx = Math.cos(angle) * radius + (scatter(i, 71.1) - 0.5) * 8
+      const lz = Math.sin(angle) * radius + (scatter(i, 72.2) - 0.5) * 8
+      if (valleyAt(lx, lz) < 0.5) continue
+      const h = surface(lx, lz)
+      if (h < 6 || h > 90) continue
+      const slope = Math.hypot(surface(lx + 3, lz) - surface(lx - 3, lz), surface(lx, lz + 3) - surface(lx, lz - 3)) / 6
+      if (slope > 0.7) continue
+      if (spots.some((p) => Math.hypot(p.x - lx, p.z - lz) < 12)) continue
+      if (pathPoints.some(([px, pz]) => Math.hypot(px - lx, pz - lz) < 6)) continue
+      spots.push({ x: lx, z: lz })
+      const tree = palm(i + 9100, low ? 9 : 13)
+      const scale = 1.45 + scatter(i, 73.3) * 0.5
+      const place = new THREE.Matrix4().compose(
+        new THREE.Vector3(lx, h - 0.3, lz),
+        new THREE.Quaternion(),
+        new THREE.Vector3(scale, scale, scale),
+      )
+      plantPalm(tree, i + 9100, place)
+      valleyPalms++
+    }
+    if (import.meta.env.DEV) {
+      ;(window as unknown as Record<string, unknown>).__islandEmergents = { crowns: spots.length - valleyPalms, palms: valleyPalms, spots: spots.map((p) => [Math.round(p.x), Math.round(p.z)]) }
+    }
   }
 
   // Dev hook for scripts/island-map.mjs — paints the shape fields top-down
