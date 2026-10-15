@@ -686,65 +686,6 @@ function leafMass(
 }
 
 /**
- * Leaves poking out of the edge of a crown.
- *
- * A crown of smooth lumps has a smooth outline, and against the sky that is
- * the first thing that says "model". A scatter of blades standing out of each
- * lump — outward, drooping a little — turns the outline serrated, the way a
- * real tree's is. They only ever sit on the side of a lump that faces away
- * from the middle of the crown, where there is an edge to break up; the ones
- * inside would be hidden anyway.
- */
-function leafFringe(
-  seed: number,
-  masses: { centre: THREE.Vector3; r: number; squash: number }[],
-  crown: THREE.Vector3,
-) {
-  const up = new THREE.Vector3(0, 1, 0)
-  const sprigs: THREE.BufferGeometry[] = []
-  const d = new THREE.Vector3()
-  const out = new THREE.Vector3()
-  const dir = new THREE.Vector3()
-  for (let m = 0; m < masses.length; m++) {
-    const { centre, r, squash } = masses[m]
-    const wanted = m === 0 ? 6 : 5
-    for (let k = 0; k < wanted; k++) {
-      const s = (n: number) => scatter(seed * 29 + m * 7 + k * 3 + n, 8.8)
-      const a = s(1) * Math.PI * 2
-      const e = (s(2) - 0.62) * 1.9
-      d.set(Math.cos(a) * Math.cos(e), Math.sin(e), Math.sin(a) * Math.cos(e))
-      // Skip the inward-facing ones — they would be inside the crown
-      out.copy(centre).addScaledVector(d, r).sub(crown)
-      if (m > 0 && out.normalize().dot(d) < 0.05) continue
-      const root = new THREE.Vector3(
-        centre.x + d.x * r * 0.86,
-        centre.y + d.y * r * squash * 0.86,
-        centre.z + d.z * r * 0.86,
-      )
-      const size = s(3)
-      const blade = leafBlade(0.24 + size * 0.14, 0.32 + size * 0.28, 0.12 + s(4) * 0.14, 2, 0.5)
-      blade.deleteAttribute('uv')
-      blade.rotateY(s(5) * Math.PI * 2)
-      // Out along the lump's own normal, sagging a little under its weight
-      dir.copy(d).add(new THREE.Vector3(0, -0.28, 0)).normalize()
-      blade.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(up, dir))
-      blade.translate(root.x, root.y, root.z)
-      // Lit as the lump's own surface at that spot, not as a leaf turned to the
-      // sky — otherwise each one is a pale shard against a dark crown
-      const nrm = blade.attributes.normal
-      for (let v = 0; v < nrm.count; v++) nrm.setXYZ(v, d.x, d.y, d.z)
-      // Same attributes as the masses, or the merge refuses the batch
-      blade.setAttribute(
-        'aLeafShade',
-        new THREE.BufferAttribute(new Float32Array(blade.attributes.position.count).fill(1), 1),
-      )
-      sprigs.push(blade)
-    }
-  }
-  return sprigs
-}
-
-/**
  * A broadleaf mid-story tree: short trunk, a few lumpy canopy blobs. This is
  * the layer that turns "beach with palms" into "overgrown interior" — it
  * fills the silhouette between the palm crowns and the ground.
@@ -764,9 +705,6 @@ function broadleaf(seed: number) {
   const canopy: THREE.BufferGeometry[] = [
     leafMass(spread * 0.95, 1, seed * 5 + 1, crown, crown, 0.66),
   ]
-  const masses: { centre: THREE.Vector3; r: number; squash: number }[] = [
-    { centre: crown, r: spread * 0.95, squash: 0.66 },
-  ]
   const lumps = 5 + Math.floor(scatter(seed, 4.4) * 3)
   const turn = scatter(seed, 5.5) * Math.PI * 2
   for (let i = 0; i < lumps; i++) {
@@ -780,10 +718,36 @@ function broadleaf(seed: number) {
     )
     const r = spread * (0.42 + s(4) * 0.22)
     canopy.push(leafMass(r, 1, seed * 5 + i + 2, centre, crown, 0.8))
-    masses.push({ centre, r, squash: 0.8 })
   }
 
-  return { trunk, canopy, fringe: leafFringe(seed, masses, crown), height }
+  return { trunk, canopy, height }
+}
+
+/**
+ * One crown of the closed forest, at unit spread, centred on the origin.
+ *
+ * A few hundred broadleaf trees spread over a whole island read from the sea
+ * as lollipops on a lawn: you see every trunk and the bright ground between
+ * them. A tropical slope is a single lumpy roof of crowns with dark gaps, and
+ * that roof is what this builds — thousands of these, with no fringe and only
+ * three shoulder lumps, since they are mostly seen from a hundred metres off.
+ * A handful are built and the rest are scaled and turned copies. `detail` 0
+ * is the out-at-sea version: a quarter of the triangles, and at that range a
+ * crown is a couple of dozen pixels. `lumpDetail` drops just the shoulder
+ * lumps, which is how a phone keeps a smooth core at a third of the cost.
+ */
+function jungleCrown(seed: number, detail = 1, lumpDetail = detail) {
+  const crown = new THREE.Vector3(0, 0, 0)
+  const parts = [leafMass(0.92, detail, seed * 5 + 1, crown, crown, 0.62)]
+  const turn = scatter(seed, 5.5) * Math.PI * 2
+  for (let i = 0; i < 3; i++) {
+    const s = (n: number) => scatter(seed * 13 + i * 5 + n, 6.6)
+    const angle = turn + (i / 3) * Math.PI * 2 + (s(1) - 0.5) * 0.8
+    const out = 0.58 + s(2) * 0.3
+    const centre = new THREE.Vector3(Math.cos(angle) * out, (s(3) - 0.4) * 0.5, Math.sin(angle) * out)
+    parts.push(leafMass(0.5 + s(4) * 0.2, lumpDetail, seed * 5 + i + 2, centre, crown, 0.78))
+  }
+  return mergeGeometries(parts, false) as THREE.BufferGeometry
 }
 
 /** A hanging vine — a drooping strip of quads down a rock face or trunk. */
@@ -1428,6 +1392,82 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   }
   geometry.computeVertexNormals()
 
+  /**
+   * Metres from each grid point to the nearest water, by a two-pass chamfer
+   * over the height grid. Height alone can't say where the beach ends: the
+   * landing cove is a shelf a couple of metres up that runs a long way inland,
+   * and a cliff top is high but right over the sea.
+   */
+  const seaDist = new Float32Array(gridN * gridN)
+  {
+    const far = 1e6
+    const diag = step * Math.SQRT2
+    for (let k = 0; k < seaDist.length; k++) seaDist[k] = heights[k] < 0.3 ? 0 : far
+    const relax = (k: number, i: number, j: number, cost: number) => {
+      if (i < 0 || j < 0 || i >= gridN || j >= gridN) return
+      const d = seaDist[j * gridN + i] + cost
+      if (d < seaDist[k]) seaDist[k] = d
+    }
+    for (let j = 0; j < gridN; j++) {
+      for (let i = 0; i < gridN; i++) {
+        const k = j * gridN + i
+        relax(k, i - 1, j, step)
+        relax(k, i, j - 1, step)
+        relax(k, i - 1, j - 1, diag)
+        relax(k, i + 1, j - 1, diag)
+      }
+    }
+    for (let j = gridN - 1; j >= 0; j--) {
+      for (let i = gridN - 1; i >= 0; i--) {
+        const k = j * gridN + i
+        relax(k, i + 1, j, step)
+        relax(k, i, j + 1, step)
+        relax(k, i + 1, j + 1, diag)
+        relax(k, i - 1, j + 1, diag)
+      }
+    }
+  }
+  /** Bilinear read of `seaDist` at an island-local point. */
+  function distToSea(lx: number, lz: number) {
+    const gx = THREE.MathUtils.clamp((lx + SPAN) / step, 0, gridN - 1.001)
+    const gz = THREE.MathUtils.clamp((lz + SPAN) / step, 0, gridN - 1.001)
+    const i = Math.floor(gx)
+    const j = Math.floor(gz)
+    const fx = gx - i
+    const fz = gz - j
+    const d = (a: number, b: number) => seaDist[b * gridN + a]
+    return (d(i, j) * (1 - fx) + d(i + 1, j) * fx) * (1 - fz) + (d(i, j + 1) * (1 - fx) + d(i + 1, j + 1) * fx) * fz
+  }
+
+  /**
+   * How closed the forest is at a point: 0 on sand, bare rock and in glades,
+   * 1 under an unbroken roof. The crown planting and the ground colour both
+   * read this, so the floor darkens exactly where the roof is.
+   */
+  function forestCover(lx: number, lz: number) {
+    const h = surface(lx, lz)
+    if (h < 1.6) return 0
+    const dhx = (surface(lx + 4, lz) - surface(lx - 4, lz)) / 8
+    const dhz = (surface(lx, lz + 4) - surface(lx, lz - 4)) / 8
+    const slope = Math.hypot(dhx, dhz)
+    // Rainforest holds on to slopes that would be bare anywhere drier; only
+    // the true walls and the summit crags shed it
+    const rock = Math.max(
+      THREE.MathUtils.smoothstep(h, 128, 172),
+      THREE.MathUtils.smoothstep(slope, 1.05, 1.6),
+    )
+    // The landing cove stays an open beach with its palms; the roof starts
+    // further back there than anywhere else, not over the sand you walk up
+    const inCove = 1 - THREE.MathUtils.smoothstep(Math.hypot(lx - COVE_X, lz - COVE_Z), 60, 130)
+    // Sand, then the palm line, then the roof — the same band all the way round
+    const shoreline =
+      THREE.MathUtils.smoothstep(distToSea(lx, lz), 10 + 16 * inCove, 22 + 22 * inCove) *
+      THREE.MathUtils.smoothstep(h, 1.6, 3.2)
+    // Glades, so the roof has a grain of its own from the water
+    const glade = THREE.MathUtils.smoothstep(noise2(lx * 0.012 + 40.1, lz * 0.012 - 7.7), 0.12, 0.26)
+    return shoreline * (1 - rock) * glade
+  }
+
   // Scrub and basalt painted per vertex — one material, one draw call.
   //
   // The beach itself is not painted here. Its colour is a ramp in height
@@ -1440,13 +1480,14 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   // vertex colour + aSandW * sand(y) gives exactly the old blend — only with
   // the sand evaluated where the pixel is rather than where the corner was.
   const normal = geometry.attributes.normal
-  const moss = new THREE.Color('#5a8a3e')
+  const moss = new THREE.Color('#4e7a36')
   const fern = new THREE.Color('#3f6b2b')
-  const scrub = new THREE.Color('#77a04c')
+  const scrub = new THREE.Color('#62873f')
   const bush = new THREE.Color('#456b2c')
   const litter = new THREE.Color('#7a6238')
   const rock = new THREE.Color('#8d8471')
   const basalt = new THREE.Color('#5b5145')
+  const forestFloor = new THREE.Color('#2c3d22')
   const growth = new THREE.Color()
   const stone = new THREE.Color()
   const colors = new Float32Array(position.count * 3)
@@ -1471,6 +1512,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     growth.lerp(bush, mottle * 0.6)
     // Leaf litter under the interior — browns where the canopy is thickest
     growth.lerp(litter, THREE.MathUtils.smoothstep(gully, 0.55, 0.8) * 0.45)
+    // Under a closed roof the floor is in shade all day. From the sea that dark
+    // between the crowns is most of what reads as depth — a lit lawn showing
+    // through is what made the slopes look planted
+    growth.lerp(forestFloor, forestCover(x, z) * 0.55)
     const growing = THREE.MathUtils.smoothstep(y, 4, 15)
     // Steep faces shed soil — bare rock on the cliffs and up around the crater.
     // Mesh normals alone under-read carved faces (a cliff spans ~2 cells), so
@@ -1552,7 +1597,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const wrackParts: THREE.BufferGeometry[] = []
   const reedParts: THREE.BufferGeometry[] = []
   const bloomParts: THREE.BufferGeometry[] = []
-  const fringeParts: THREE.BufferGeometry[] = []
+  /** The closed forest roof and its boles — own batches, see the layer list. */
+  const jungleCanopy: THREE.BufferGeometry[] = []
+  const jungleTrunks: THREE.BufferGeometry[] = []
+  const jungleFar: THREE.BufferGeometry[] = []
   // Saplings share the broadleaf batches — same bark / canopy materials
   /** Hillside boulders + chunky beach stones — ellipsoid push like the wreck reef. */
   const rockBlockers: { centre: THREE.Vector3; axes: THREE.Vector3 }[] = []
@@ -1562,7 +1610,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const woodWanted = low ? 28 : 60
   const scrubWanted = low ? 300 : 880
   const broadWanted = low ? 150 : 380
-  const grassWanted = low ? 7000 : 24000
+  // Fewer than before the closed forest went in: these now all land in the
+  // open, where the old count was spread under the trees as well
+  const grassWanted = low ? 5000 : 16000
   const deadWanted = low ? 18 : 40
   const vineWanted = low ? 160 : 360
   const pathWanted = low ? 32 : 60
@@ -1573,6 +1623,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const reedWanted = low ? 60 : 130
   const bloomWanted = low ? 30 : 80
   const saplingWanted = low ? 110 : 260
+  /** Crowns in the closed forest roof — a ceiling, the grid spacing sets the real count. */
+  const jungleWanted = low ? 1800 : 4500
   // Extra cliff-scree stones — rubble at the foot of carved faces
   const screeWanted = low ? 40 : 90
   // broadWanted is the mid-story tree target; saplings add on top of that
@@ -1730,7 +1782,6 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     tree: {
       trunk: THREE.BufferGeometry
       canopy: THREE.BufferGeometry[]
-      fringe?: THREE.BufferGeometry[]
       height: number
     },
     seed: number,
@@ -1739,11 +1790,6 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     broadTrunks.push(bakeFor(tree.trunk, seed, SPECIES.broadTrunk).applyMatrix4(place))
     for (const blob of tree.canopy) {
       broadCanopy.push(bakeFor(blob, seed, SPECIES.canopy, tree.height).applyMatrix4(place))
-    }
-    // Same species and seed as the crown, so the leaves at its edge are the
-    // crown's own colour
-    for (const sprig of tree.fringe ?? []) {
-      fringeParts.push(bakeFor(sprig, seed, SPECIES.canopy, tree.height).applyMatrix4(place))
     }
   }
 
@@ -2041,6 +2087,22 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (slope > 7.5) continue
     plant(fernParts, fernClump(i + 1900), i + 1900, SPECIES.fern, lx, h, lz, 0.03)
   }
+  // And the floor under the closed roof, where the grass has given way: ferns
+  // are what a rainforest floor is mostly made of between the trunks
+  {
+    let floorFerns = 0
+    const floorWanted = low ? 300 : 1100
+    for (let i = 0; i < 9000 && floorFerns < floorWanted; i++) {
+      const angle = i * 2.39996
+      const radius = Math.sqrt(0.04 + (i % 2048) / 2048 * 0.96) * 290
+      const lx = Math.cos(angle) * radius + (scatter(i, 12.1) - 0.5) * 6
+      const lz = Math.sin(angle) * radius + (scatter(i, 13.2) - 0.5) * 6
+      if (scatter(i, 14.3) > forestCover(lx, lz) - 0.25) continue
+      const h = surface(lx, lz)
+      plant(fernParts, fernClump(i + 8100), i + 8100, SPECIES.fern, lx, h, lz, 0.03)
+      floorFerns++
+    }
+  }
 
   // Grass — ground cover across the whole green band.
   //
@@ -2072,6 +2134,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (h < 5 && scatter(i, 9.9) > 0.12 + ((h - 1.6) / 3.4) * 0.88) continue
     const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
     if (slope > 9) continue
+    // Grass wants sun. Under the closed roof the floor is litter and fern
+    if (scatter(i, 10.3) < forestCover(lx, lz) * 0.85) continue
     plant(grassParts, grassTuft(i + 500), i + 500, SPECIES.grass, lx, h, lz, 0.02)
   }
 
@@ -2117,6 +2181,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     plant(vineParts, vine(i + 900), i + 900, SPECIES.vine, lx, anchor, lz, 0)
   }
 
+  /** Where the path stones went, so the closed forest leaves the way open. */
+  const pathPoints: [number, number][] = []
   // A worn path from the landing beach up toward the interior — flat stones
   // and trampled ground, subtle enough that you find it by walking it.
   // Prefer a cove palm so the path starts where you actually come ashore.
@@ -2138,6 +2204,63 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
         const stone = new THREE.CylinderGeometry(0.5 + fbm(i, 5.5) * 0.5, 0.6 + fbm(i, 6.6) * 0.5, 0.16, 6)
         stone.rotateY(fbm(i, 7.7) * Math.PI)
         plant(pathParts, stone, i + 2400, SPECIES.path, lx, h, lz, 0.05)
+        pathPoints.push([lx, lz])
+      }
+    }
+  }
+
+  // —— closed forest ——————————————————————————————————————————
+  // The roof over the slopes: crowns on a jittered grid wherever forestCover
+  // allows, close enough that neighbours overlap. Trunks are bare open
+  // cylinders — from inside you see them, from the sea you shouldn't.
+  {
+    const templates = Array.from({ length: low ? 6 : 10 }, (_, k) => jungleCrown(k + 7100, 1, low ? 0 : 1))
+    const farTemplates = templates.map((_, k) => jungleCrown(k + 7100, 0))
+    const spacing = low ? 10.5 : 6.2
+    const reach = 300
+    let planted = 0
+    for (let gz = -reach; gz <= reach && planted < jungleWanted; gz += spacing) {
+      for (let gx = -reach; gx <= reach && planted < jungleWanted; gx += spacing) {
+        const seed = Math.round((gx + reach) * 13.1 + (gz + reach) * 7.3)
+        const lx = gx + (scatter(seed, 1.7) - 0.5) * spacing * 0.9
+        const lz = gz + (scatter(seed, 2.9) - 0.5) * spacing * 0.9
+        const cover = forestCover(lx, lz)
+        if (cover < 0.12 || scatter(seed, 3.1) > cover * 1.6) continue
+        if (pathPoints.some(([px, pz]) => Math.hypot(px - lx, pz - lz) < 7)) continue
+        const h = surface(lx, lz)
+        // Spread scaled to the grid, so a low-power roof is fewer, wider crowns
+        const size = (spacing / 6.2) * (3.3 + scatter(seed, 4.3) * 2.4) * (0.7 + 0.3 * cover)
+        // Margin trees stand lower, so the edge of the forest closes down onto
+        // the undergrowth instead of showing a colonnade of trunks to the sea
+        const trunkH = (2 + scatter(seed, 5.9) * 5.5) * (0.35 + 0.65 * cover)
+        const place = new THREE.Matrix4().setPosition(lx, h - 0.2, lz)
+        // A shade deeper than the specimen trees on the beach, and uneven
+        // crown to crown — sunlit tops beside darker ones is the texture a
+        // rainforest roof has from a distance
+        const deep = 0.66 + scatter(seed, 7.3) * 0.28
+        const stretch = 0.85 + scatter(seed, 6.1) * 0.3
+        const turn = scatter(seed, 6.7) * Math.PI * 2
+        const k = seed % templates.length
+        for (const [template, list] of [
+          [templates[k], jungleCanopy],
+          [farTemplates[k], jungleFar],
+        ] as const) {
+          const geo = template.clone()
+          geo.scale(size, size * stretch, size)
+          geo.rotateY(turn)
+          geo.translate(0, trunkH + size * 0.45, 0)
+          bakeFor(geo, seed, SPECIES.canopy, trunkH + size * 1.1)
+          const color = geo.getAttribute('color') as THREE.BufferAttribute
+          for (let i = 0; i < color.count; i++) {
+            color.setXYZ(i, color.getX(i) * deep, color.getY(i) * deep, color.getZ(i) * deep)
+          }
+          list.push(geo.applyMatrix4(place))
+        }
+        const bole = trunkH + size * 0.4
+        const trunk = new THREE.CylinderGeometry(0.1 + size * 0.02, 0.2 + size * 0.04, bole, 7, 1, true)
+        trunk.translate(0, bole / 2, 0)
+        jungleTrunks.push(bakeFor(trunk, seed, SPECIES.broadTrunk).applyMatrix4(place))
+        planted++
       }
     }
   }
@@ -2172,6 +2295,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     fill?: { emissive: THREE.Color; emissiveIntensity: number; shapedFill?: boolean }
     /** Metres past which this layer stops being drawn at all. */
     range?: number
+    /** Takes shadow but doesn't give it. */
+    noCast?: boolean
+    /** Only drawn past this range — the far stand-in for a layer with the same `range`. */
+    farFrom?: number
   }[] = [
     // Bark is rough but it is not chalk. Left at 0.95 a trunk picks up nothing
     // at all from the sky probe, so backlit it goes to a flat black cutout —
@@ -2182,11 +2309,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       parts: leaves,
       // A shade deeper than the old ribbons: feathered fronds turn far more
       // leaf to the sun, and at the old green a grove glowed lime from sea
-      color: 0x6a9a3a,
+      color: 0x5f9136,
       roughness: 0.82,
       wind: PALM_WIND,
-      translucency: 0.85,
-      throughColor: '#dcec7c',
+      translucency: 0.8,
+      throughColor: '#d2e276',
       shadowedBleed: true,
       doubleSided: true,
     },
@@ -2194,7 +2321,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     { parts: broadTrunks, color: 0x6d573a, roughness: 0.76, wind: BROAD_WIND },
     {
       parts: broadCanopy,
-      color: 0x5c9438,
+      color: 0x528a33,
       // A leaf has a waxy skin: enough gloss to take a highlight from the
       // sun and a sheen from the sky probe, where chalk-rough took neither
       roughness: 0.62,
@@ -2204,30 +2331,51 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       shadowedBleed: true,
       leafBump: 0.9,
     },
+    // The closed forest roof. It doesn't cast: thousands of overlapping crowns
+    // put the whole interior in one unbroken shadow, which under a near-black
+    // ground hemisphere is night at noon. The shade under it is painted into
+    // the ground instead (forestCover), and the specimen trees near the beach
+    // still throw real dappled shadow. It is also most of a depth pass saved.
     {
-      parts: fringeParts,
-      // Single blades a hand wide: past this they are sub-pixel and only
-      // shimmer, and the crown's own outline carries the shape
-      range: 150,
-      color: 0x5c9438,
-      roughness: 0.7,
+      parts: jungleCanopy,
+      color: 0x528a33,
+      roughness: 0.62,
       wind: BROAD_WIND,
       translucency: 0.85,
       throughColor: '#bfdd6a',
-      doubleSided: true,
+      shadowedBleed: true,
+      leafBump: 0.9,
+      noCast: true,
+      range: 300,
     },
+    // The same roof from out at sea, swapped in where the near one drops out
+    {
+      parts: jungleFar,
+      color: 0x528a33,
+      roughness: 0.62,
+      wind: BROAD_WIND,
+      translucency: 0.85,
+      throughColor: '#bfdd6a',
+      shadowedBleed: true,
+      noCast: true,
+      farFrom: 300,
+    },
+    // Rainforest bark runs pale — grey and lichen-blotched, not the brown of a
+    // temperate trunk — and in this much shade it needs the wood fill or every
+    // bole is a black post
+    { parts: jungleTrunks, color: 0x8a826e, roughness: 0.8, wind: BROAD_WIND, noCast: true, fill: woodFill, range: 300 },
     {
       parts: grassParts,
       range: 330,
-      color: 0x62903a,
+      color: 0x55803a,
       roughness: 0.93,
       wind: 0.15,
       // Grass is the one layer you are always inside. A canopy can afford to
       // glow because you see it from underneath against the sky; a blade lit
       // this hard at arm's length turns the same pale yellow whatever it's
       // doing, and a hillside of them speckles white from out at sea.
-      translucency: 0.42,
-      throughColor: '#cbdd7a',
+      translucency: 0.32,
+      throughColor: '#adc26a',
       doubleSided: true,
     },
     {
@@ -2301,6 +2449,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
    * names the range past which it is only costing frames.
    */
   const fadeOut: { mesh: THREE.Mesh; range: number }[] = []
+  const fadeIn: { mesh: THREE.Mesh; range: number }[] = []
 
   for (const layer of layers) {
     if (layer.parts.length === 0) continue
@@ -2320,8 +2469,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       mergeGeometries(layer.parts, false) as THREE.BufferGeometry,
       material,
     )
+    if (layer.noCast) mesh.userData.noCast = true
     group.add(mesh)
     if (layer.range) fadeOut.push({ mesh, range: layer.range })
+    if (layer.farFrom) fadeIn.push({ mesh, range: layer.farFrom })
   }
 
   // —— rain catchment ————————————————————————————————————————
@@ -2791,6 +2942,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // the island's centre rather than the nearest ground, so the switch happens
     // out at sea where there's nothing to see it happen to.
     for (const layer of fadeOut) layer.mesh.visible = range < layer.range + 320
+    for (const layer of fadeIn) layer.mesh.visible = range >= layer.range + 320
 
     const dt = wildlifeTime > 0 ? Math.min(0.05, Math.max(0, time - wildlifeTime)) : 0.016
     wildlifeTime = time
