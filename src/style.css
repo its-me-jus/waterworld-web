@@ -253,3 +253,24 @@ body.underwater #bubbles {
 #intro-fade.done {
   opacity: 0;
 }
+
+/* —— the drop —— */
+#skip-chute {
+  position: fixed;
+  z-index: 6;
+  left: 1rem;
+  bottom: 1rem;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid rgba(222, 238, 244, 0.28);
+  border-radius: 999px;
+  background: rgba(4, 30, 38, 0.38);
+  color: rgba(222, 238, 244, 0.82);
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+#skip-chute[hidden] {
+  display: none;
+}

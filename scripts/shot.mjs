@@ -73,6 +73,15 @@ const VIEWS = [
   { name: 'headland-c', url: 'http://localhost:5173/?x=1170&z=-351&yaw=0.52&pitch=0.04' },
   { name: 'headland-d', url: 'http://localhost:5173/?x=1294&z=-944&yaw=2.28&pitch=0.04' },
   { name: 'strand-look', url: 'http://localhost:5173/?x=765&z=-526&yaw=-0.2&pitch=-0.3' },
+  // Shore-life round: dry wrack and shells on two bays that are not the landing
+  // cove (east bay, south-west bay), and the rocky points from just off the surf
+  { name: 'r7-shell-e', url: 'http://localhost:5173/?x=1192&z=-656&yaw=-0.85&pitch=-0.4' },
+  { name: 'r7-shell-sw', url: 'http://localhost:5173/?x=904&z=-880&yaw=-0.735&pitch=-0.4' },
+  { name: 'r7-shell-close', url: 'http://localhost:5173/?x=910&z=-885&yaw=-0.67&pitch=-0.5' },
+  { name: 'r7-shell-down', url: 'http://localhost:5173/?x=913&z=-888&yaw=-0.47&pitch=-0.95' },
+  { name: 'r7-rock-a', url: 'http://localhost:5173/?x=1204&z=-607&yaw=1.257&pitch=0.02' },
+  { name: 'r7-rock-b', url: 'http://localhost:5173/?x=1115&z=-447&yaw=0.524&pitch=0.02' },
+  { name: 'r7-rock-c', url: 'http://localhost:5173/?x=1151&z=-916&yaw=2.51&pitch=0.02' },
   // Lagoon round: floating in it, outside the reef looking along the crest,
   // and under it at the crest
   { name: 'lagoon-in', url: 'http://localhost:5173/?x=804&z=-437&yaw=-0.63&pitch=0.0' },
@@ -81,6 +90,14 @@ const VIEWS = [
   // On the crest looking out over the reef's outer face into the deep
   { name: 'reef-wall', url: 'http://localhost:5173/?x=839&z=-373&yaw=2.71&pitch=-0.3', dive: 0.9 },
   { name: 'jungle-edge', url: 'http://localhost:5173/?x=780&z=-536&yaw=-0.75&pitch=0.18' },
+  // Round 7 reef wreck (the coaster on the barrier reef beside the landing pass):
+  // from the landing beach, swimming in through the pass, and under her hull
+  { name: 'reefwreck-beach', url: 'http://localhost:5173/?x=775&z=-532&yaw=1.446&pitch=0.06' },
+  { name: 'reefwreck-close', url: 'http://localhost:5173/?x=714&z=-540&yaw=1.45&pitch=0.1' },
+  { name: 'reefwreck-pass', url: 'http://localhost:5173/?x=705&z=-480&yaw=0.3&pitch=0.0' },
+  { name: 'reefwreck-under', url: 'http://localhost:5173/?x=695&z=-532&yaw=0.88&pitch=0.2&depth=2.4', dive: 0.3 },
+  { name: 'reefwreck-bow', url: 'http://localhost:5173/?x=690&z=-566&yaw=2.12&pitch=0.15' },
+  { name: 'reefwreck-air', url: 'http://localhost:5173/?x=722&z=-522&yaw=1.45&pitch=-0.32&fly=26' },
   // Climate — storm locked, night locked, shore foam up close
   { name: 'storm', url: 'http://localhost:5173/?storm=1&hour=14&yaw=-0.3&pitch=0.05' },
   { name: 'dusk', url: 'http://localhost:5173/?hour=17.6&yaw=-0.96&pitch=0.02' },

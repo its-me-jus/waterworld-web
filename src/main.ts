@@ -10,8 +10,10 @@ import { createInputState, isLowPowerDevice, preferTouchUI } from './input'
 import { createIsland } from './island'
 import { createLittoral } from './littoral'
 import { createOcean } from './ocean'
-import { bindKeyboardMouse, createPlayer, updatePlayer } from './player'
+import { createParachute } from './parachute'
+import { bindKeyboardMouse, createPlayer, updatePlayer, type PlayerFrame } from './player'
 import { createPostChain } from './post'
+import { createReefWreck } from './reefwreck'
 import { createSeaState } from './sea'
 import { createShoreSurf } from './shore'
 import { createSky } from './sky'
@@ -80,12 +82,16 @@ const skyRig = createSky(scene, 30, 38, {
 })
 scene.background = skyRig.horizonColor.clone()
 
+const OCEAN_SIZE = lowPower ? 900 : 1400
+const OCEAN_SEGMENTS = lowPower ? 150 : 300
 const { mesh: ocean, material: oceanMat, follow, syncWaves } = createOcean({
   // Big enough that fog + radial rim fade eat the edge before a square shows
-  size: lowPower ? 900 : 1400,
-  segments: lowPower ? 150 : 300,
+  size: OCEAN_SIZE,
+  segments: OCEAN_SEGMENTS,
   detailOctaves: lowPower ? 2 : 4,
 })
+/** The sea mesh grows in whole steps with height (see frame): from a parachute it has to reach the horizon. */
+let seaScale = 1
 oceanMat.uniforms.uHorizonColor.value.copy(skyRig.horizonColor)
 scene.add(ocean)
 
@@ -110,6 +116,9 @@ const island = createIsland(scene, {
   lowPower,
   hazeColor: skyRig.horizonColor,
 })
+
+// The second wreck: a coaster stranded on the barrier reef beside the landing pass
+const reefWreck = createReefWreck(scene, { heightAt: island.heightAt, lowPower })
 
 // Spar buoy ~a third of the way to the island — a mast in the haze so the
 // crossing isn't wreck-or-island and nothing between.
@@ -151,6 +160,7 @@ const shore = createShoreSurf(scene, {
 
 const collide = (p: { x: number; y: number; z: number }) => {
   wreck.resolve(p)
+  reefWreck.resolve(p)
   island.resolve(p)
 }
 
@@ -224,6 +234,33 @@ function captureEnv() {
 
 const player = createPlayer()
 
+// The way in is a parachute drop onto the island (src/parachute.ts). Anything
+// that asks for a specific place — ?x= ?z= ?yaw= ?pitch= ?depth=, the headless
+// screenshot script, ?chute=0 — skips it and spawns in the water as before;
+// ?chute=1 forces it, ?alt= sets the opening height.
+const wantChute =
+  params.get('chute') === '1' ||
+  (params.get('chute') !== '0' &&
+    !navigator.webdriver &&
+    !['x', 'z', 'yaw', 'pitch', 'depth'].some((k) => params.has(k)))
+const chute = createParachute(scene)
+
+// Where the drop starts and where the skip lands you. The cove is the one
+// beach with a proper approach, so the run-in is straight down its axis from
+// the open sea, high enough that the island is a shape and not yet a place.
+const coveBeach = island.shore.length > 0 ? island.shore[0] : island.centre
+const outward = new THREE.Vector2(coveBeach.x - island.centre.x, coveBeach.z - island.centre.z).normalize()
+const chuteStart = {
+  x: coveBeach.x + outward.x * 600,
+  z: coveBeach.z + outward.y * 600,
+  altitude: num('alt', 290),
+  // Facing the beach: forward is (-sin yaw, -cos yaw)
+  yaw: Math.atan2(outward.x, outward.y),
+}
+
+/** What you face when the drop is skipped. */
+const skipLookAt = { x: reefWreck.group.position.x, z: reefWreck.group.position.z }
+
 function spawn() {
   Object.assign(player, createPlayer())
   player.x = num('x', player.x)
@@ -233,6 +270,7 @@ function spawn() {
   player.y = sampleOcean(player.x, player.z, 0).y + (depth > 0 ? -depth : 1.5)
   if (depth > 0) player.pitch = 0.5
   player.pitch = num('pitch', player.pitch)
+  if (wantChute) chute.begin(player, { ...chuteStart, pitch: -0.12 }, 0)
 }
 spawn()
 
@@ -255,13 +293,63 @@ if (!navigator.webdriver) {
 }
 window.setTimeout(
   () =>
+    (!wantChute || chute.active) &&
     hud.whisper(
-      mobile
-        ? 'Drag to look around. The stick swims.'
-        : 'WASD to swim · click to look · Space and Shift to rise and dive',
+      wantChute
+        ? mobile
+          ? 'The stick steers and slows you. Rise flares near the ground.'
+          : 'A and D steer · W faster · S slower · Space to flare near the ground'
+        : mobile
+          ? 'Drag to look around. The stick swims.'
+          : 'WASD to swim · click to look · Space and Shift to rise and dive',
     ),
   navigator.webdriver ? 0 : 2600,
 )
+if (wantChute) {
+  window.setTimeout(() => chute.active && hud.whisper('Aim for the beach, and keep a little height to spend.'), 9000)
+}
+
+// One way out of the drop for anyone who has seen it: land on the beach now
+const skipChute = document.createElement('button')
+skipChute.id = 'skip-chute'
+skipChute.type = 'button'
+skipChute.textContent = 'Skip the drop'
+skipChute.hidden = !wantChute
+app.appendChild(skipChute)
+
+/** Where you stand when the drop is skipped: the first dry sand seaward along the cove's axis. */
+function cutAwayToBeach() {
+  if (!chute.active) return
+  chute.cut()
+  let x = coveBeach.x
+  let z = coveBeach.z
+  for (let d = -30; d < 90; d += 1) {
+    x = coveBeach.x + outward.x * d
+    z = coveBeach.z + outward.y * d
+    if (groundAt(x, z) < 2.2) break
+  }
+  player.x = x
+  player.z = z
+  player.mode = 'walk'
+  player.y = groundAt(x, z) + 1.62
+  player.vy = 0
+  player.speed = 0
+  player.fallFrom = null
+  player.roll = 0
+  // Face the wreck: out to sea, the way you would have come in
+  const toWreck = Math.atan2(-(skipLookAt.x - x), -(skipLookAt.z - z))
+  player.yaw = toWreck
+  player.pitch = 0.02
+  hud.whisper('You step onto the sand. A ship lies broken on the reef, just offshore.')
+}
+skipChute.addEventListener('click', cutAwayToBeach)
+// Dev hook for scripts/chute-flight.mjs — fly the whole drop without rendering it
+if (import.meta.env.DEV) {
+  ;(window as unknown as Record<string, unknown>).__chute = { chute, player, camera, groundAt, input, chuteStart, coveBeach, outward }
+}
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Enter') cutAwayToBeach()
+})
 
 // First time out of the water, whichever way you managed it
 let saidPerch = false
@@ -433,6 +521,7 @@ let shadowScanTimer = 0
 // Dancing sunlight on the seabed, the wreck and the island shelf
 const caustics = createCaustics(skyRig.sunDir)
 caustics.apply(wreck.group)
+caustics.apply(reefWreck.group)
 caustics.apply(island.terrain)
 
 const keyLight = new THREE.Color()
@@ -449,6 +538,14 @@ const moonColor = new THREE.Color('#9fb8ea')
 const oceanStormShallow = new THREE.Color('#1a3a48')
 const underHemiSky = new THREE.Color('#6fc6d8')
 const underHemiNight = new THREE.Color('#1a3a48')
+
+/** The moment the feet arrive. The controller takes over from the next frame. */
+function touchdown(td: { kind: 'land' | 'sea'; sink: number }) {
+  if (td.kind === 'sea') hud.whisper('Splashdown. The canopy settles on the water behind you.')
+  else if (td.sink < 1.6) hud.whisper('A soft landing.')
+  else if (td.sink < 3.2) hud.whisper('Firm, but you stay on your feet.')
+  else hud.whisper('A hard landing. You walk it off.')
+}
 
 function frame() {
   timer.update()
@@ -487,7 +584,13 @@ function frame() {
     x: sea.current.x * lee,
     z: sea.current.z * lee,
   }
-  const view = updatePlayer(player, camera, input, dt, t, collide, groundAt, drift)
+  const flight = chute.update(dt, t, player, camera, input, groundAt)
+  if (flight?.touchdown) touchdown(flight.touchdown)
+  const view: PlayerFrame = flight ? flight.frame : updatePlayer(player, camera, input, dt, t, collide, groundAt, drift)
+  chute.animate(dt, weather.daylight)
+  // The wind in the lines, for the sound
+  oceanAudio.setWindRush(chute.rush)
+  skipChute.hidden = !chute.active
   // ?fly=120 lifts the eye that many metres above the swimmer — a drone view
   // for judging the island's shape. Dev only; the swimmer stays below.
   if (flyLift) camera.position.y += flyLift
@@ -545,6 +648,7 @@ function frame() {
     ground: groundKind,
     lightning: weather.lightning,
     thunder: weather.thunder,
+    daylight: weather.daylight,
   })
   // Pointer-lock / first click also unlocks audio in case the global listeners missed it
   if (document.pointerLockElement) void oceanAudio.unlock()
@@ -575,7 +679,20 @@ function frame() {
     0.1,
     0.7,
   )
+  // From a parachute the sea has to run out to the horizon, or the strip beyond
+  // the mesh shows as a flat white plane. The mesh grows with height in whole
+  // steps (a continuous scale would shimmer its vertices); the waves live in
+  // world space, so scaling x and z changes nothing but how far it reaches.
+  const seaWant = THREE.MathUtils.clamp(1 + (camera.position.y - 25) / 55, 1, 5)
+  if (seaWant > seaScale + 0.6) seaScale++
+  else if (seaWant < seaScale - 0.6) seaScale--
+  ocean.scale.set(seaScale, 1, seaScale)
+  oceanMat.uniforms.uHalfExtent.value = OCEAN_SIZE * 0.5 * seaScale
   follow(camera.position.x, camera.position.z)
+  // follow() snaps to the unscaled vertex spacing; the grid is coarser now
+  const seaStep = (OCEAN_SIZE / OCEAN_SEGMENTS) * seaScale
+  ocean.position.x = Math.round(camera.position.x / seaStep) * seaStep
+  ocean.position.z = Math.round(camera.position.z / seaStep) * seaStep
   island.setHaze(skyRig.horizonColor)
   // A dead calm looks like a screenshot, so the trade wind never quite stops;
   // a squall roughly triples it.
@@ -594,7 +711,9 @@ function frame() {
   )
 
   oceanMat.uniforms.uTime.value = t
-  oceanMat.uniforms.uAmp.value = oceanState.amp
+  // From height the sea is too coarse a grid to carry the short waves (they
+  // alias into a honeycomb), and a real one looks calmer from up there anyway
+  oceanMat.uniforms.uAmp.value = oceanState.amp * (1 - 0.6 * THREE.MathUtils.smoothstep(camera.position.y, 40, 170))
   oceanMat.uniforms.uTide.value = oceanState.tide
   oceanMat.uniforms.uCameraPos.value.copy(camera.position)
   // Once the sun is down the sea catches the moon instead, laying a silver
@@ -723,6 +842,11 @@ function frame() {
   else if (depth < 0.25) showDepth = false
   if (showDepth) depthReadout.textContent = `${depth.toFixed(1)} m`
   depthReadout.style.opacity = showDepth ? '1' : '0'
+  // Under the canopy the same box reads height instead
+  if (chute.active) {
+    depthReadout.textContent = `${Math.max(0, Math.round(chute.height))} m up`
+    depthReadout.style.opacity = '1'
+  }
 
   // Under the surface the net of light is the whole show; from the beach it
   // is a shimmer on the sand in the shallows, so a good deal gentler
@@ -748,6 +872,7 @@ function frame() {
   })
 
   wreck.update(t, camera)
+  reefWreck.update(t, camera)
   island.update(camera, underwater, t)
   shore.update(t, camera, underwater)
   littoral.update(dt, player, { biolum: weather.biolum })
