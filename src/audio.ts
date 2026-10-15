@@ -11,6 +11,8 @@
  * first pointer/key/touch event (and again when pointer-lock engages).
  */
 
+import { isLowPowerDevice } from './input'
+
 const damp = (current: number, target: number, lambda: number, dt: number) =>
   current + (target - current) * (1 - Math.exp(-lambda * dt))
 
@@ -40,6 +42,35 @@ export type AudioFrame = {
   lightning: number
   /** One-shot clap intensity this frame (0 most of the time). */
   thunder: number
+  /**
+   * Climate daylight, 0 clear night … 1 noon. Only the quiet music bed reads
+   * it; left out, the bed stays on its daytime pick.
+   */
+  daylight?: number
+}
+
+/** Very quiet Lyria beds under the sea sound. Storm-bed is deliberately not
+ *  here — the world goes silent of music in a storm, so it is never fetched. */
+const MUSIC_URLS = {
+  surface: '/audio/surface-bed.mp3',
+  shore: '/audio/shore-bed.mp3',
+  under: '/audio/underwater-bed.mp3',
+} as const
+type MusicKey = keyof typeof MUSIC_URLS
+/** Peak level of a single bed on its own bus (the sea wash sits around 0.4). */
+const MUSIC_LEVEL = 0.07
+/** Crossfade rate (1/seconds) — about a 6 s time constant, ~20 s to settle. */
+const MUSIC_FADE = 0.17
+
+/** Skip the ~2 MB of music on phones, small screens, data saver and slow links. */
+function musicAllowed() {
+  if (isLowPowerDevice()) return false
+  const conn = (
+    navigator as unknown as { connection?: { saveData?: boolean; effectiveType?: string } }
+  ).connection
+  if (conn?.saveData) return false
+  if (conn?.effectiveType && /^(slow-2g|2g|3g)$/.test(conn.effectiveType)) return false
+  return true
 }
 
 function noiseBuffer(ctx: AudioContext, seconds = 3) {
@@ -161,6 +192,21 @@ export function createOceanAudio() {
 
   let seaWeight = 1
 
+  // Quiet in-world music bed (lazy, post-gesture, desktop only)
+  let musicBus: GainNode | null = null
+  let musicTone: BiquadFilterNode | null = null
+  const music: Partial<Record<MusicKey, { gain: GainNode }>> = {}
+  const gMusic: Record<MusicKey, number> = { surface: 0, shore: 0, under: 0 }
+  let musicStarted = false
+
+  // Parachute wind rush — level is set from outside, applied once the graph exists
+  let windRushLevel = 0
+  let windRushGain: GainNode | null = null
+  let gWindRush = 0
+
+  // Tab hidden → suspend the context so nothing runs in the background
+  let hiddenSuspend = false
+
   let lastSub = 0
   let lastMode: 'swim' | 'walk' | null = null
   let splashCool = 0
@@ -280,6 +326,52 @@ export function createOceanAudio() {
     landFilter.connect(ambientBus)
     landNoise = startNoise(ctx, noise, landFilter)
 
+    // —— parachute wind rush: air past the canopy ————————————————
+    // Band-passed noise whose level and colour drift on two slow, unrelated
+    // gusts. Silent (gain 0) until setWindRush() raises it.
+    {
+      const rushFilter = ctx.createBiquadFilter()
+      rushFilter.type = 'bandpass'
+      rushFilter.frequency.value = 620
+      rushFilter.Q.value = 0.5
+      const rushSoft = ctx.createBiquadFilter()
+      rushSoft.type = 'lowpass'
+      rushSoft.frequency.value = 2600
+      rushSoft.Q.value = 0.3
+      const gust = ctx.createGain()
+      gust.gain.value = 0.72
+      windRushGain = ctx.createGain()
+      windRushGain.gain.value = 0
+      rushFilter.connect(rushSoft)
+      rushSoft.connect(gust)
+      gust.connect(windRushGain)
+      windRushGain.connect(weatherBus)
+      startNoise(ctx, noise, rushFilter).gain.gain.value = 1
+      const lfo = (hz: number, depth: number, target: AudioParam) => {
+        const osc = ctx!.createOscillator()
+        osc.frequency.value = hz
+        const amt = ctx!.createGain()
+        amt.gain.value = depth
+        osc.connect(amt)
+        amt.connect(target)
+        osc.start(0)
+      }
+      lfo(0.13, 0.2, gust.gain)
+      lfo(0.37, 0.08, gust.gain)
+      lfo(0.09, 260, rushFilter.frequency)
+      lfo(0.23, 120, rushFilter.frequency)
+    }
+
+    // —— music bed bus ————————————————————————————————————
+    musicBus = ctx.createGain()
+    musicBus.gain.value = 1
+    musicTone = ctx.createBiquadFilter()
+    musicTone.type = 'lowpass'
+    musicTone.frequency.value = 7000
+    musicTone.Q.value = 0.4
+    musicBus.connect(musicTone)
+    musicTone.connect(master)
+
     // Optional beds / one-shots (generated offline — fail soft)
     const urls: [string, string][] = [
       ['rainBed', '/audio/rain.mp3'],
@@ -309,6 +401,45 @@ export function createOceanAudio() {
     }
 
     ready = true
+    void loadMusic()
+  }
+
+  /**
+   * Fetch the Lyria beds one at a time after everything else is up, so they
+   * never compete with the SFX for bandwidth. Failure just means no music.
+   */
+  async function loadMusic() {
+    if (musicStarted || !ctx || !musicBus || !musicAllowed()) return
+    musicStarted = true
+    const order: MusicKey[] = ['surface', 'shore', 'under']
+    for (const key of order) {
+      if (!ctx || !musicBus) return
+      const buf = await tryLoadSample(ctx, MUSIC_URLS[key])
+      if (!buf || !ctx || !musicBus) continue
+      music[key] = startBed(ctx, buf, musicBus)
+    }
+  }
+
+  function onVisibility() {
+    if (!ctx) return
+    if (document.hidden) {
+      if (ctx.state === 'running') {
+        hiddenSuspend = true
+        void ctx.suspend()
+      }
+    } else if (hiddenSuspend) {
+      hiddenSuspend = false
+      void ctx.resume()
+    }
+  }
+
+  /**
+   * Gentle rushing wind for a parachute descent: 0 off … 1 full. Safe to call
+   * at any time, including before the first click — the level is held and
+   * eased in once sound is running.
+   */
+  function setWindRush(level: number) {
+    windRushLevel = Number.isFinite(level) ? clamp01(level) : 0
   }
 
   function unlock() {
@@ -334,6 +465,7 @@ export function createOceanAudio() {
     window.addEventListener('pointerdown', once, { passive: true })
     window.addEventListener('keydown', once)
     window.addEventListener('touchstart', once, { passive: true })
+    document.addEventListener('visibilitychange', onVisibility)
   }
 
   function noiseBurst(
@@ -875,7 +1007,7 @@ export function createOceanAudio() {
     // Recovery from a mid-session browser suspension — throttled: without a
     // user gesture every attempt just logs a Chrome warning, per frame
     resumeCool -= dt
-    if (ctx.state === 'suspended' && resumeCool <= 0) {
+    if (ctx.state === 'suspended' && !document.hidden && resumeCool <= 0) {
       resumeCool = 1
       void ctx.resume()
     }
@@ -919,7 +1051,31 @@ export function createOceanAudio() {
     )
     underCutoff = damp(underCutoff, 1050 - murk * 650, 2.6, dt)
 
+    // —— music bed: by place and time of day, ducked under a big sea ————
+    // Open sea by day → surface bed. Dusk, night and anywhere near land →
+    // shore bed (warm, calm; darker at night). Head under → underwater bed.
+    // Storms and squalls fade all of it out, and a heavy sea ducks it too.
+    const daylight = clamp01(frame.daylight ?? 1)
+    const stormQuiet = 1 - clamp01(storm / 0.22)
+    const seaDuck = 1 - 0.55 * seaWeight
+    const landward = onLand ? 1 : clamp01(shore * 1.4)
+    const dayW = clamp01((daylight - 0.35) / 0.4)
+    const musicGate = stormQuiet * seaDuck * (1 - 0.5 * windRushLevel) * MUSIC_LEVEL
+    const wantSurface = surfaceW * dayW * (1 - landward)
+    const wantShore = surfaceW * Math.max(1 - dayW, landward)
+    gMusic.surface = damp(gMusic.surface, wantSurface * musicGate, MUSIC_FADE, dt)
+    gMusic.shore = damp(gMusic.shore, wantShore * musicGate * (0.8 + 0.2 * dayW), MUSIC_FADE, dt)
+    gMusic.under = damp(gMusic.under, underW * musicGate * 1.2, MUSIC_FADE, dt)
+
+    // Parachute wind rush — eased so a sudden 0→1 never snaps
+    gWindRush = damp(gWindRush, windRushLevel * 0.4, 1.6, dt)
+
     const now = ctx.currentTime
+    for (const key of Object.keys(music) as MusicKey[]) {
+      music[key]!.gain.gain.setTargetAtTime(gMusic[key], now, 0.3)
+    }
+    if (musicTone) musicTone.frequency.setTargetAtTime(2600 + 4400 * daylight, now, 2)
+    if (windRushGain) windRushGain.gain.setTargetAtTime(gWindRush, now, 0.25)
     surfaceNoise.gain.gain.setTargetAtTime(gSurface, now, 0.05)
     underNoise.gain.gain.setTargetAtTime(gUnder, now, 0.05)
     bobNoise.gain.gain.setTargetAtTime(gBob, now, 0.04)
@@ -986,5 +1142,5 @@ export function createOceanAudio() {
 
   bindUnlock()
 
-  return { unlock, update, setSeaWeight }
+  return { unlock, update, setSeaWeight, setWindRush }
 }
