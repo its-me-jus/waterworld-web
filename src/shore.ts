@@ -107,7 +107,10 @@ function foamMaterial(map: THREE.Texture, opacity: number) {
 export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {
   const low = opts.lowPower ?? false
   const flakes: Flake[] = []
-  const max = low ? 360 : 780
+  // Beach lap plus the reef break further out
+  const max = low ? 600 : 1300
+  /** Size multiplier for the patches being pushed — the reef's run bigger. */
+  let scale = 1
 
   const push = (
     x: number,
@@ -128,10 +131,43 @@ export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {
       dx,
       dz,
       phase: Math.random() * Math.PI * 2,
-      size: kind === 0 ? 2.2 + Math.random() * 3.4 : 1.2 + Math.random() * 2.2,
+      size: (kind === 0 ? 2.2 + Math.random() * 3.4 : 1.2 + Math.random() * 2.2) * scale,
       reach,
       kind,
     })
+  }
+
+  /**
+   * The reef break. Past the beach each ray runs on across the lagoon; where
+   * the floor comes back up to within a metre or so of the surface — the
+   * barrier reef's crest — the swell stands up and breaks white. Bigger,
+   * longer patches than the beach lap: it is a line you read from out at sea.
+   * A pass shows as a gap simply because no crest is found there.
+   */
+  const reefBreak = (dx: number, dz: number, from: number) => {
+    let best = -99
+    let bestR = 0
+    for (let r = from + 24; r < from + 150; r += 3) {
+      const h = opts.heightAt(opts.centre.x + dx * r, opts.centre.z + dz * r)
+      if (h > best) {
+        best = h
+        bestR = r
+      }
+    }
+    // A crest just under the water, not a motu (dry) or open lagoon floor
+    if (best < -1.5 || best > 0.1) return
+    const bx = opts.centre.x + dx * bestR
+    const bz = opts.centre.z + dz * bestR
+    scale = 1.9
+    push(bx, bz, dx, dz, 1.5 + Math.random() * 2, 0)
+    push(bx, bz, dx, dz, 0.5 + Math.random() * 1.5, 1)
+    if (!low) {
+      push(bx, bz, dx, dz, 3 + Math.random() * 3, 0)
+      const jx = -dz * (Math.random() - 0.5) * 6
+      const jz = dx * (Math.random() - 0.5) * 6
+      push(bx + jx, bz + jz, dx, dz, 1 + Math.random() * 2, 1)
+    }
+    scale = 1
   }
 
   const rays = low ? 140 : 260
@@ -162,6 +198,7 @@ export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {
           const jz = dx * (Math.random() - 0.5) * 5
           push(bx + jx, bz + jz, dx, dz, 0.6 + Math.random() * 2.2, Math.random() > 0.45 ? 1 : 0)
         }
+        reefBreak(dx, dz, at)
         break
       }
       prev = h

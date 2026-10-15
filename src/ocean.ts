@@ -274,8 +274,9 @@ void main() {
   // band and the waterline drifted off the actual beach.
   float depthW = waterDepth(vWorldPos);
   float hasBed = step(0.001, uSeabedRange.y);
-  // 1 in ankle-deep water, 0 past ~8 m
-  float shallow = mix(shelf, 1.0 - smoothstep(0.3, 8.0, depthW), hasBed);
+  // 1 in water up to ~1.5 m, 0 past ~9 m — a lagoon a few metres deep still
+  // reads as turquoise, not only the last stretch against the sand
+  float shallow = mix(shelf, 1.0 - smoothstep(1.5, 9.0, depthW), hasBed);
   // Warmer turquoise over the sand — beach shallows, not pool chlorine. With
   // real depth the tint covers more water than the radial shelf did, and the
   // old pale mix read as milky grey; this one keeps its saturation.
@@ -289,8 +290,10 @@ void main() {
   // Extra glow in the shallows — light bouncing off sand underfoot
   body += beachShallow * shallow * 0.08 * facing;
 
-  // Shallows give the sand more of a say — less mirror, more body colour
-  fres *= 1.0 - 0.5 * shallow;
+  // Shallows give the sand more of a say — less mirror, more body colour.
+  // Strong enough that a lagoon stays turquoise seen across it from swimming
+  // height, where the mirror would otherwise turn it the same blue as the sea
+  fres *= 1.0 - 0.72 * shallow;
 
   vec3 color = mix(body, sky, fres);
 

@@ -185,6 +185,51 @@ function valleyAt(lx: number, lz: number) {
   return valley
 }
 
+/**
+ * Metres from every point of an n×n grid to the nearest cell where `seed` is
+ * true — a two-pass chamfer, exact enough at grid scale and a few milliseconds.
+ */
+function chamfer(n: number, step: number, seed: (k: number) => boolean) {
+  const out = new Float32Array(n * n)
+  const diag = step * Math.SQRT2
+  for (let k = 0; k < out.length; k++) out[k] = seed(k) ? 0 : 1e6
+  const relax = (k: number, i: number, j: number, cost: number) => {
+    if (i < 0 || j < 0 || i >= n || j >= n) return
+    const d = out[j * n + i] + cost
+    if (d < out[k]) out[k] = d
+  }
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const k = j * n + i
+      relax(k, i - 1, j, step)
+      relax(k, i, j - 1, step)
+      relax(k, i - 1, j - 1, diag)
+      relax(k, i + 1, j - 1, diag)
+    }
+  }
+  for (let j = n - 1; j >= 0; j--) {
+    for (let i = n - 1; i >= 0; i--) {
+      const k = j * n + i
+      relax(k, i + 1, j, step)
+      relax(k, i, j + 1, step)
+      relax(k, i + 1, j + 1, diag)
+      relax(k, i - 1, j + 1, diag)
+    }
+  }
+  return out
+}
+
+/** Smallest angle between two bearings, 0–π. */
+function bearingGap(a: number, b: number) {
+  return Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)))
+}
+
+/**
+ * Motus — the sand-and-palm islets strung along a barrier reef. Two flank the
+ * swim-in so the island arrives framed by them; one sits round the back.
+ */
+const MOTUS = [COVE_BEARING + 1.25, COVE_BEARING - 1.3, COVE_BEARING + Math.PI + 0.2]
+
 /** Height above mean sea level, in island-local coordinates. */
 function ground(lx: number, lz: number) {
   let h =
@@ -938,6 +983,55 @@ function fallenLog(seed: number) {
   return geo
 }
 
+/**
+ * A coral head about a metre across: a lumpy brain dome, a table plate on a
+ * stalk, or a clutch of staghorn branches. Uncoloured — the hue goes on per
+ * head when it is planted. All three come out indexed with no uvs, so they
+ * merge into one batch.
+ */
+function coralHead(seed: number) {
+  const kind = Math.floor(scatter(seed, 1.9) * 3) % 3
+  if (kind === 0) {
+    const base = new THREE.IcosahedronGeometry(0.55 + scatter(seed, 2.1) * 0.5, 1)
+    base.deleteAttribute('uv')
+    base.deleteAttribute('normal')
+    const geo = mergeVertices(base)
+    const pos = geo.attributes.position
+    const v = new THREE.Vector3()
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i)
+      const lump = 1 + (noise2(v.x * 3.1 + seed, v.z * 3.1 - seed) - 0.5) * 0.35
+      v.multiplyScalar(lump)
+      v.y = Math.max(v.y * 0.62, -0.1)
+      pos.setXYZ(i, v.x, v.y, v.z)
+    }
+    geo.computeVertexNormals()
+    return geo
+  }
+  if (kind === 1) {
+    const r = 0.55 + scatter(seed, 2.3) * 0.5
+    const stem = new THREE.CylinderGeometry(0.07, 0.12, 0.42, 5, 1)
+    stem.translate(0, 0.21, 0)
+    const plate = new THREE.CylinderGeometry(r, r * 0.86, 0.1, 10, 1)
+    plate.translate(0, 0.46, 0)
+    plate.rotateZ((scatter(seed, 2.7) - 0.5) * 0.3)
+    for (const g of [stem, plate]) g.deleteAttribute('uv')
+    return mergeGeometries([stem, plate], false) as THREE.BufferGeometry
+  }
+  const parts: THREE.BufferGeometry[] = []
+  const n = 5 + Math.floor(scatter(seed, 3.1) * 4)
+  for (let i = 0; i < n; i++) {
+    const len = 0.45 + scatter(seed + i, 3.7) * 0.55
+    const twig = new THREE.ConeGeometry(0.06, len, 5, 1)
+    twig.deleteAttribute('uv')
+    twig.translate(0, len / 2, 0)
+    twig.rotateZ((scatter(seed + i, 4.3) - 0.5) * 1.1)
+    twig.rotateY(scatter(seed + i, 4.9) * Math.PI * 2)
+    parts.push(twig)
+  }
+  return mergeGeometries(parts, false) as THREE.BufferGeometry
+}
+
 /** A larger boulder — breaks the smooth green slopes into something geological. */
 function boulder(seed: number) {
   return stoneGeometry(seed, 1.8 + fbm(seed * 10.2, seed * 6.6) * 2.8, 1)
@@ -1223,6 +1317,90 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       heights[j * gridN + i] = ground(-SPAN + i * step, -SPAN + j * step)
     }
   }
+
+  /**
+   * The lagoon and its barrier reef.
+   *
+   * What makes a high island read as Bora Bora rather than any green rock is
+   * the ring of pale turquoise round it: a sandy lagoon a few metres deep, a
+   * reef crest just under the surface where the swell breaks white, and deep
+   * blue straight off its outer face. The sea shader already turns anything
+   * shallower than ~8 m turquoise and breaks surf over anything under ~1.3 m,
+   * so all of it is carved here, into the height grid, measured as distance
+   * off the actual beach rather than radius from the centre — the coast is
+   * nowhere near round.
+   *
+   * A pass cuts the crest in front of the landing cove, so the swim in from
+   * the spawn comes through the gap, and three motus stand up out of the crest.
+   * `reefMask` keeps how much each grid point is coral, for the ground colour.
+   */
+  const reefMask = new Float32Array(gridN * gridN)
+  {
+    const landDist = chamfer(gridN, step, (k) => heights[k] > 0)
+    for (let j = 0; j < gridN; j++) {
+      for (let i = 0; i < gridN; i++) {
+        const k = j * gridN + i
+        const h0 = heights[k]
+        if (h0 > 0) continue
+        const d = landDist[k]
+        if (d > 150) continue
+        const lx = -SPAN + i * step
+        const lz = -SPAN + j * step
+        const b = Math.atan2(lz, lx)
+        // The reef wanders between ~60 and ~105 m off the beach
+        const reefAt = 60 + noise2(Math.cos(b) * 2.2 + 13.1, Math.sin(b) * 2.2 - 4.7) * 46
+        // Sand bars and coral heads scattered over the lagoon floor
+        const patch = noise2(lx * 0.03 + 2.2, lz * 0.03 - 9.1)
+        const floorAt = (dd: number) =>
+          -0.5 - 3.4 * THREE.MathUtils.smoothstep(dd, 0, 34) +
+          (patch - 0.5) * 1.8 * THREE.MathUtils.smoothstep(dd, 14, 30)
+        // 0 inside the pass, 1 where the crest stands
+        const crestOn = THREE.MathUtils.smoothstep(bearingGap(b, COVE_BEARING), 0.055, 0.12)
+        const crestH = -0.75 + (noise2(lx * 0.07 + 5.5, lz * 0.07 - 1.3) - 0.5) * 0.8
+        const crestLevel = THREE.MathUtils.lerp(floorAt(reefAt), crestH, crestOn)
+        let h: number
+        if (d <= reefAt) {
+          const t = THREE.MathUtils.lerp(
+            floorAt(d),
+            crestLevel,
+            THREE.MathUtils.smoothstep(d, reefAt - 16, reefAt - 1),
+          )
+          // The first few metres off the sand keep the beach's own wade
+          h = THREE.MathUtils.lerp(h0, t, THREE.MathUtils.smoothstep(d, 0, 9))
+        } else {
+          // Outer face: off the crest and down to deep blue in twenty metres,
+          // then let the original seabed (the wall, the abyss) take over
+          const t = THREE.MathUtils.lerp(
+            crestLevel,
+            -20,
+            THREE.MathUtils.smoothstep(d, reefAt + 1, reefAt + 22),
+          )
+          h = THREE.MathUtils.lerp(Math.max(h0, t), h0, THREE.MathUtils.smoothstep(d, reefAt + 18, reefAt + 32))
+        }
+        // Motus: the crest stands up out of the water as a low sandy islet
+        let motu = 0
+        for (const mb of MOTUS) {
+          motu = Math.max(
+            motu,
+            (1 - THREE.MathUtils.smoothstep(bearingGap(b, mb), 0.05, 0.15)) *
+              (1 - THREE.MathUtils.smoothstep(Math.abs(d - reefAt + 4), 5, 17)),
+          )
+        }
+        if (motu > 0) {
+          const top = 1.7 + (noise2(lx * 0.05 - 3.1, lz * 0.05 + 8.2) - 0.5) * 1.2
+          h = THREE.MathUtils.lerp(h, top, THREE.MathUtils.smoothstep(motu, 0.05, 0.75))
+        }
+        heights[k] = h
+        // Coral along the crest and its outer face, and on the lagoon heads
+        const onCrest = (1 - THREE.MathUtils.smoothstep(Math.abs(d - reefAt - 3), 4, 16)) * crestOn
+        const heads =
+          THREE.MathUtils.smoothstep(patch, 0.62, 0.78) *
+          THREE.MathUtils.smoothstep(d, 20, 40) *
+          (1 - THREE.MathUtils.smoothstep(d, reefAt - 22, reefAt - 8))
+        reefMask[k] = Math.max(onCrest, heads * 0.8) * (1 - THREE.MathUtils.smoothstep(motu, 0.1, 0.5))
+      }
+    }
+  }
   const gridHeight = (i: number, j: number) =>
     i < 0 || j < 0 || i >= gridN || j >= gridN
       ? ground(-SPAN + i * step, -SPAN + j * step)
@@ -1300,35 +1478,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
    * landing cove is a shelf a couple of metres up that runs a long way inland,
    * and a cliff top is high but right over the sea.
    */
-  const seaDist = new Float32Array(gridN * gridN)
-  {
-    const far = 1e6
-    const diag = step * Math.SQRT2
-    for (let k = 0; k < seaDist.length; k++) seaDist[k] = heights[k] < 0.3 ? 0 : far
-    const relax = (k: number, i: number, j: number, cost: number) => {
-      if (i < 0 || j < 0 || i >= gridN || j >= gridN) return
-      const d = seaDist[j * gridN + i] + cost
-      if (d < seaDist[k]) seaDist[k] = d
-    }
-    for (let j = 0; j < gridN; j++) {
-      for (let i = 0; i < gridN; i++) {
-        const k = j * gridN + i
-        relax(k, i - 1, j, step)
-        relax(k, i, j - 1, step)
-        relax(k, i - 1, j - 1, diag)
-        relax(k, i + 1, j - 1, diag)
-      }
-    }
-    for (let j = gridN - 1; j >= 0; j--) {
-      for (let i = gridN - 1; i >= 0; i--) {
-        const k = j * gridN + i
-        relax(k, i + 1, j, step)
-        relax(k, i, j + 1, step)
-        relax(k, i + 1, j + 1, diag)
-        relax(k, i - 1, j + 1, diag)
-      }
-    }
-  }
+  const seaDist = chamfer(gridN, step, (k) => heights[k] < 0.3)
   /** Bilinear read of `seaDist` at an island-local point. */
   function distToSea(lx: number, lz: number) {
     const gx = THREE.MathUtils.clamp((lx + SPAN) / step, 0, gridN - 1.001)
@@ -1392,6 +1542,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const basalt = new THREE.Color('#5b5145')
   const forestFloor = new THREE.Color('#2c3d22')
   const seaRock = new THREE.Color('#38332e')
+  const coralA = new THREE.Color('#8c7656')
+  const coralB = new THREE.Color('#5f6e4c')
+  const coralC = new THREE.Color('#9a6a5e')
+  const coralTint = new THREE.Color()
   /** How much of a headland's waterline rock this vertex is (0–1). */
   const valleyFree = (x: number, z: number, y: number) =>
     (1 - valleyAt(x, z)) * THREE.MathUtils.smoothstep(y, -6, -1.5) * (1 - THREE.MathUtils.smoothstep(y, 5, 13))
@@ -1454,10 +1608,16 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const shading = 0.9 + mottle * 0.2
     const greenShare = growing * (1 - bare)
 
-    colors[i * 3] = (growth.r * greenShare + stone.r * bare) * shading
-    colors[i * 3 + 1] = (growth.g * greenShare + stone.g * bare) * shading
-    colors[i * 3 + 2] = (growth.b * greenShare + stone.b * bare) * shading
-    sandWeight[i] = (1 - growing) * (1 - bare) * sandGrit * shading
+    // Coral on the reef crest and the lagoon's heads: blotched ochre, olive
+    // and rose instead of sand, so the reef is a thing you see under you
+    const inGrid = gi >= 0 && gj >= 0 && gi < gridN && gj < gridN
+    const coralW = inGrid ? reefMask[gj * gridN + gi] * (0.55 + grit * 0.45) : 0
+    coralTint.copy(coralA).lerp(coralB, mottle).lerp(coralC, THREE.MathUtils.smoothstep(grit, 0.55, 0.8))
+
+    colors[i * 3] = (growth.r * greenShare + stone.r * bare + coralTint.r * coralW) * shading
+    colors[i * 3 + 1] = (growth.g * greenShare + stone.g * bare + coralTint.g * coralW) * shading
+    colors[i * 3 + 2] = (growth.b * greenShare + stone.b * bare + coralTint.b * coralW) * shading
+    sandWeight[i] = (1 - growing) * (1 - bare) * (1 - coralW) * sandGrit * shading
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
   geometry.setAttribute('aSandW', new THREE.BufferAttribute(sandWeight, 1))
@@ -1513,6 +1673,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const wrackParts: THREE.BufferGeometry[] = []
   const reedParts: THREE.BufferGeometry[] = []
   const bloomParts: THREE.BufferGeometry[] = []
+  const coralParts: THREE.BufferGeometry[] = []
   /** The closed forest roof and its boles — own batches, see the layer list. */
   const jungleCanopy: THREE.BufferGeometry[] = []
   const jungleTrunks: THREE.BufferGeometry[] = []
@@ -1579,6 +1740,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     fern: { spread: 1, sway: 1, flutter: 0.45, rootShade: 0.34, accent: 0.12 },
     scrub: { spread: 0.95, sway: 1, flutter: 0.3, rootShade: 0.3, underShade: 0.22, accent: 0.22 },
     bloom: { spread: 0.25, sway: 1, flutter: 0.5 },
+    coral: { spread: 0.35, sway: 0 },
     reed: { spread: 0.85, sway: 1, flutter: 0.5, rootShade: 0.28 },
     vine: { spread: 0.75, sway: 0, flutter: 1, hang: true },
     wrack: { spread: 0.7, sway: 0 },
@@ -2230,7 +2392,59 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       height: surface,
       valley: valleyAt,
       cover: forestCover,
+      reef: (lx: number, lz: number) => {
+        const i = Math.round((lx + SPAN) / step)
+        const j = Math.round((lz + SPAN) / step)
+        return i < 0 || j < 0 || i >= gridN || j >= gridN ? 0 : reefMask[j * gridN + i]
+      },
     }
+  }
+
+  // —— coral ——————————————————————————————————————————————————
+  // Heads along the reef crest and its outer lip, thinner over the lagoon's
+  // coral patches. The ground under them is already painted coral; these are
+  // what you swim over. Ochres, roses and purples, with olive and cream —
+  // living reef colour, not the bleached white of a postcard.
+  {
+    const CORAL_HUES = ['#c98a5a', '#b86b78', '#7d6aa0', '#8f9a5c', '#d9c7a0', '#5f8f8a', '#d08c4e'].map(
+      (c) => new THREE.Color(c),
+    )
+    const coralWanted = low ? 400 : 2200
+    // Thin evenly against the whole reef rather than filling the budget from
+    // the first rows scanned — that put every head on the north side
+    let reefArea = 0
+    for (let k = 0; k < reefMask.length; k++) if (reefMask[k] >= 0.25) reefArea += reefMask[k]
+    const thin = Math.min(1, coralWanted / Math.max(1, reefArea * (low ? 1 : 2)))
+    let heads = 0
+    for (let j = 0; j < gridN && heads < coralWanted; j++) {
+      for (let i = 0; i < gridN && heads < coralWanted; i++) {
+        const k = j * gridN + i
+        const mask = reefMask[k]
+        if (mask < 0.25) continue
+        const tries = low ? 1 : 2
+        for (let t = 0; t < tries && heads < coralWanted; t++) {
+          const seed = k * 3 + t
+          if (scatter(seed, 6.3) > mask * thin) continue
+          const lx = -SPAN + (i + scatter(seed, 7.1) - 0.5) * step
+          const lz = -SPAN + (j + scatter(seed, 7.9) - 0.5) * step
+          const h = surface(lx, lz)
+          // Under water, and not so deep that nobody would ever see it
+          if (h > -0.35 || h < -9) continue
+          const geo = bakeFor(coralHead(seed), seed, SPECIES.coral, 1)
+          const size = 0.7 + scatter(seed, 8.3) * 1.1
+          geo.scale(size, size * (0.8 + scatter(seed, 8.9) * 0.5), size)
+          geo.rotateY(scatter(seed, 9.4) * Math.PI * 2)
+          const hue = CORAL_HUES[Math.floor(scatter(seed, 9.9) * CORAL_HUES.length) % CORAL_HUES.length]
+          const color = geo.getAttribute('color') as THREE.BufferAttribute
+          for (let c = 0; c < color.count; c++) {
+            color.setXYZ(c, hue.r * color.getX(c) * 1.25, hue.g * color.getY(c) * 1.25, hue.b * color.getZ(c) * 1.25)
+          }
+          coralParts.push(placeAt(geo, lx, h, lz, 0.12))
+          heads++
+        }
+      }
+    }
+    if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__islandCoral = heads
   }
 
   // Prefer the landing-cove palms first so Pack→Island and the beach teleport
@@ -2404,6 +2618,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     { parts: wood, color: 0xa08a6a, roughness: 1, fill: woodFill },
     { parts: fallenParts, color: 0x63513a, roughness: 1, fill: woodFill },
     { parts: deadParts, color: 0xa89b86, roughness: 1, wind: 0.05, fill: woodFill },
+    // Reef coral: only matters once you are near enough to swim over it or
+    // look down into the lagoon
+    { parts: coralParts, range: 160, color: 0xffffff, roughness: 0.82 },
     { parts: pathParts,
       range: 320, color: 0x8f8674, roughness: 0.98 },
   ]

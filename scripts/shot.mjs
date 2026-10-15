@@ -54,6 +54,13 @@ const VIEWS = [
   { name: 'coast-e', url: 'http://localhost:5173/?x=1410&z=-640&yaw=1.48&pitch=0.08' },
   { name: 'coast-n', url: 'http://localhost:5173/?x=1040&z=-1110&yaw=3.0&pitch=0.08' },
   { name: 'coast-s', url: 'http://localhost:5173/?x=1080&z=-260&yaw=0.23&pitch=0.08' },
+  // Lagoon round: floating in it, outside the reef looking along the crest,
+  // and under it at the crest
+  { name: 'lagoon-in', url: 'http://localhost:5173/?x=804&z=-437&yaw=-0.63&pitch=0.0' },
+  { name: 'reef-out', url: 'http://localhost:5173/?x=805&z=-298&yaw=-0.43&pitch=-0.05' },
+  { name: 'reef-under', url: 'http://localhost:5173/?x=832&z=-356&yaw=-0.43&pitch=0.05&depth=4' },
+  // On the crest looking out over the reef's outer face into the deep
+  { name: 'reef-wall', url: 'http://localhost:5173/?x=839&z=-373&yaw=2.71&pitch=-0.3', dive: 0.9 },
   { name: 'jungle-edge', url: 'http://localhost:5173/?x=780&z=-536&yaw=-0.75&pitch=0.18' },
   // Climate — storm locked, night locked, shore foam up close
   { name: 'storm', url: 'http://localhost:5173/?storm=1&hour=14&yaw=-0.3&pitch=0.05' },

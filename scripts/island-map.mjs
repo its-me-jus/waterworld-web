@@ -13,6 +13,7 @@ const page = await browser.newPage()
 await page.goto(BASE + '/')
 await page.waitForFunction(() => window.__islandFields, null, { timeout: 240000 })
 console.log('closed-forest crowns:', await page.evaluate(() => window.__islandJungle))
+console.log('coral heads:', await page.evaluate(() => window.__islandCoral))
 const shots = await page.evaluate(() => {
   const f = window.__islandFields
   const N = 512
@@ -55,6 +56,13 @@ const shots = await page.evaluate(() => {
     const v = f.valley(x, z)
     const land = f.height(x, z) > 0 ? 1 : 0.4
     return [255 * (1 - v) * land, 120 * land, 255 * v * land]
+  })
+  paint('reef', (x, z) => {
+    const h = f.height(x, z)
+    if (h > 0) return [60, 90, 50]
+    const r = f.reef(x, z)
+    const d = Math.min(1, -h / 12)
+    return [40 + 200 * r, 140 * (1 - d) + 40 + 40 * r, 180 * (1 - d) + 60]
   })
   paint('cover', (x, z) => {
     const h = f.height(x, z)

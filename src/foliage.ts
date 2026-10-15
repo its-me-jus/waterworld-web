@@ -419,7 +419,10 @@ const beachRampBody = /* glsl */ `
     if (vSandW != 0.0) {
       float ys = vGroundPos.y + (gNoise(gp * 0.27 + vec2(11.0, -4.0)) - 0.5) * 0.45;
       float sandGrit = gNoise(gp * 0.09 + vec2(-1.4, 3.7)) * 0.6 + gNoise(gp * 0.52) * 0.4;
-      vec3 sand = mix(${glslColor('#4f6458')}, ${glslColor('#b89468')}, smoothstep(-9.0, -0.6, ys));
+      // Lagoon sand stays pale a few metres down — coral sand is near white,
+      // and it is what makes the water over it turquoise rather than teal
+      vec3 sand = mix(${glslColor('#4f6458')}, ${glslColor('#cbbb95')}, smoothstep(-12.0, -3.0, ys));
+      sand = mix(sand, ${glslColor('#b89468')}, smoothstep(-1.2, -0.3, ys));
       float wetBand = smoothstep(-1.1, 0.2, ys) * (1.0 - smoothstep(0.5, 2.6, ys));
       sand = mix(sand, ${glslColor('#7a6648')}, wetBand * (0.55 + sandGrit * 0.35));
       sand = mix(sand, ${glslColor('#f2e2b4')}, smoothstep(1.0, 5.2, ys));

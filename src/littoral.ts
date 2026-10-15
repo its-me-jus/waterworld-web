@@ -366,9 +366,10 @@ export function createLittoral(scene: THREE.Scene, deps: LittoralDeps) {
   {
     const wallCount = deps.lowPower ? 8 : 16
     let walls = 0
-    for (let i = 0; i < 500 && walls < wallCount; i++) {
+    for (let i = 0; i < 1500 && walls < wallCount; i++) {
       const angle = i * 2.399 + 0.15
-      const radius = 262 + ((i * 7) % 48)
+      // The barrier reef's outer face, wherever it wanders off this bearing
+      const radius = 300 + ((i * 7) % 120)
       const wx = ox + Math.cos(angle) * radius
       const wz = oz + Math.sin(angle) * radius
       const h = deps.heightAt(wx, wz)
