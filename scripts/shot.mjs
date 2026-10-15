@@ -54,6 +54,21 @@ const VIEWS = [
   { name: 'coast-e', url: 'http://localhost:5173/?x=1410&z=-640&yaw=1.48&pitch=0.08' },
   { name: 'coast-n', url: 'http://localhost:5173/?x=1040&z=-1110&yaw=3.0&pitch=0.08' },
   { name: 'coast-s', url: 'http://localhost:5173/?x=1080&z=-260&yaw=0.23&pitch=0.08' },
+  // Rock round: the spire from a drone close in, four headlands from just
+  // off the reef (ridge ends, from the scan of the valley field), and the strand where the
+  // landing beach meets the grass
+  { name: 'spire-air', url: 'http://localhost:5173/?x=1180&z=-480&yaw=0.65&pitch=-0.12&fly=90' },
+  { name: 'spire-zoom', url: 'http://localhost:5173/?x=1180&z=-480&yaw=0.65&pitch=-0.12&fly=90', zoom: { x: 380, y: 60, width: 420, height: 300 } },
+  { name: 'cliff-zoom', url: 'http://localhost:5173/?x=1180&z=-480&yaw=0.65&pitch=-0.12&fly=90', zoom: { x: 0, y: 440, width: 420, height: 280 } },
+  // Close to the wall (drone 70 m up, 90 m off, looking up): the rock's own
+  // colour with little haze in front of it
+  { name: 'spire-close', url: 'http://localhost:5173/?x=1075&z=-650&yaw=0.88&pitch=0.42&fly=70' },
+  { name: 'spire-close-b', url: 'http://localhost:5173/?x=1090&z=-760&yaw=-1.15&pitch=0.35&fly=60' },
+  { name: 'headland-a', url: 'http://localhost:5173/?x=606&z=-746&yaw=-1.75&pitch=0.04' },
+  { name: 'headland-b', url: 'http://localhost:5173/?x=1175&z=-1018&yaw=2.62&pitch=0.04' },
+  { name: 'headland-c', url: 'http://localhost:5173/?x=1170&z=-351&yaw=0.52&pitch=0.04' },
+  { name: 'headland-d', url: 'http://localhost:5173/?x=1294&z=-944&yaw=2.28&pitch=0.04' },
+  { name: 'strand-look', url: 'http://localhost:5173/?x=765&z=-526&yaw=-0.2&pitch=-0.3' },
   // Lagoon round: floating in it, outside the reef looking along the crest,
   // and under it at the crest
   { name: 'lagoon-in', url: 'http://localhost:5173/?x=804&z=-437&yaw=-0.63&pitch=0.0' },

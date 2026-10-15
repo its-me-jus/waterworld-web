@@ -389,7 +389,26 @@ const groundNormalBody = /* glsl */ `
     if (cliffN > 0.01) {
       float ly = vGroundPos.y * 0.55 + gNoise(gp * 0.035) * 6.0 + gNoise(gp * 0.11) * 1.5;
       float ledge = gNoise(vec2(ly + 0.25, 0.5)) - gNoise(vec2(ly - 0.25, 0.5));
-      bump.y += ledge * 1.6 * cliffN;
+      bump.y += ledge * 0.9 * cliffN;
+      // Columns. Basalt cools into vertical prisms, so the face is tilted
+      // sideways by stripes that depend on where you are along it and not on
+      // how high — a low sun then lights one flank of each column and not the
+      // other. Two diagonals so a wall facing any way still gets stripes.
+      float along = (gp.x + gp.y) * 0.7071;
+      float across = (gp.x - gp.y) * 0.7071;
+      // Six-metre flutes, so the sun picks out vertical stripes across a wall
+      // seen from the water, and metre-wide joints that fade by fifty metres
+      float fA = gNoise(vec2(along * 0.16, 3.1));
+      float fB = gNoise(vec2(across * 0.16, 8.7));
+      bump.xz += vec2(0.7071, 0.7071) * (fA - gNoise(vec2(along * 0.16 + 0.35, 3.1))) * 1.6 * cliffN;
+      bump.xz += vec2(0.7071, -0.7071) * (fB - gNoise(vec2(across * 0.16 + 0.35, 8.7))) * 1.6 * cliffN;
+      float jointNear = 1.0 - smoothstep(20.0, 70.0, gDist);
+      if (jointNear > 0.01) {
+        float jA = gNoise(vec2(along * 0.85, 5.3));
+        float jB = gNoise(vec2(across * 0.85, 1.9));
+        bump.xz += vec2(0.7071, 0.7071) * (jA - gNoise(vec2(along * 0.85 + 0.3, 5.3))) * 1.0 * cliffN * jointNear;
+        bump.xz += vec2(0.7071, -0.7071) * (jB - gNoise(vec2(across * 0.85 + 0.3, 1.9))) * 1.0 * cliffN * jointNear;
+      }
     }
     vec3 nw = normalize((vec4(normal, 0.0) * viewMatrix).xyz + bump);
     normal = normalize((viewMatrix * vec4(nw, 0.0)).xyz);
@@ -426,7 +445,10 @@ const beachRampBody = /* glsl */ `
       float wetBand = smoothstep(-1.1, 0.2, ys) * (1.0 - smoothstep(0.5, 2.6, ys));
       sand = mix(sand, ${glslColor('#7a6648')}, wetBand * (0.55 + sandGrit * 0.35));
       sand = mix(sand, ${glslColor('#f2e2b4')}, smoothstep(1.0, 5.2, ys));
-      diffuseColor.rgb += sand * vSandW;
+      // vSandW is interpolated between corners, so a triangle with one low
+      // corner on a steep wall smears pale sand up the rock as a wedge. A
+      // beach does not exist far above the tide: cut it by the pixel's height.
+      diffuseColor.rgb += sand * vSandW * (1.0 - smoothstep(7.0, 14.0, vGroundPos.y));
     }
 `
 
@@ -465,7 +487,10 @@ const groundColorBody = /* glsl */ `
     // ends simply never fire and the whole hillside comes out one colour.
     // Sand takes the value break-up but not the hue: green patches on a beach
     // read as algae. The band only opens above the tide line.
-    float green = smoothstep(5.0, 13.0, vGroundPos.y);
+    // Bare rock keeps its own colour: the sun-bleached and lush patches below
+    // are for soil, and on a cliff they came out as pink and olive stains.
+    float cliff = 1.0 - smoothstep(0.35, 0.62, vGroundUp);
+    float green = smoothstep(5.0, 13.0, vGroundPos.y) * (1.0 - cliff * 0.9);
     float dry = smoothstep(0.46, 0.66, macro * 0.65 + fine * 0.35) * green;
     float lush = smoothstep(0.46, 0.66, (1.0 - macro) * 0.5 + mid * 0.5) * green;
     vec3 patched = mix(bare, bleached, dry);
@@ -482,19 +507,35 @@ const groundColorBody = /* glsl */ `
     diffuseColor.rgb = patched * shading;
 
     // Rock faces. The vertex paint already turns steep ground to stone, but a
-    // whole cliff came out one tone per facet — a smooth slab. Lava piles up
-    // in layers, so: bands that wander with the face, finer beds inside them,
-    // and darker streaks where rain runs down. Each band shifts hue a little,
-    // warm ochre to cool basalt, because value alone dies in the tone map.
-    float cliff = 1.0 - smoothstep(0.35, 0.62, vGroundUp);
+    // whole cliff came out one tone per facet — a smooth slab. This is basalt,
+    // so what it needs is what basalt has: vertical columns (joint lines
+    // darker than the crown of each prism), faint flow bands that wander with
+    // the face, dark streaks where rain runs down, and a little moss and
+    // lichen on the seeps. It stays cool and nearly neutral — warm ochre bands
+    // are what made it read as sandstone — with the warmth confined to the
+    // weathered patches, because value alone dies in the tone map.
     if (cliff > 0.01) {
       float ly = vGroundPos.y * 0.55 + gNoise(gp * 0.035) * 6.0 + gNoise(gp * 0.11) * 1.5;
       float strata = gNoise(vec2(ly, 0.5));
       float beds = gNoise(vec2(ly * 3.1, 7.3));
+      float along = (gp.x + gp.y) * 0.7071;
+      float across = (gp.x - gp.y) * 0.7071;
+      // Flutes six metres wide, which still show from the sea, and joints a
+      // metre wide that only the nearer view resolves
+      float flute = gNoise(vec2(along * 0.16, 3.1)) * 0.5 + gNoise(vec2(across * 0.16, 8.7)) * 0.5;
+      float joint = gNoise(vec2(along * 0.85, 5.3)) * 0.5 + gNoise(vec2(across * 0.85, 1.9)) * 0.5;
+      float prism = (1.0 - abs(flute * 2.0 - 1.0)) * 0.7 + (1.0 - abs(joint * 2.0 - 1.0)) * 0.3 * (1.0 - smoothstep(60.0, 170.0, gDist));
       float streak = smoothstep(0.55, 0.8, gNoise(vec2((gp.x + gp.y) * 0.45, vGroundPos.y * 0.04)));
-      float tone = 0.8 + strata * 0.32 + (beds - 0.5) * 0.2 - streak * 0.2;
-      vec3 hue = mix(vec3(0.86, 0.9, 0.98), vec3(1.12, 1.02, 0.86), strata);
-      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * hue * tone, cliff);
+      float tone = 0.78 + prism * 0.36 + (strata - 0.5) * 0.14 + (beds - 0.5) * 0.12 - streak * 0.3;
+      float weathered = smoothstep(0.5, 0.75, gNoise(gp * 0.07 + vec2(vGroundPos.y * 0.03, 2.2)));
+      // Held a touch warm: the sky that lights a shaded face is blue, and a
+      // neutral albedo under it came out navy
+      vec3 hue = mix(vec3(1.0, 1.0, 1.0), vec3(1.16, 1.07, 0.9), weathered * 0.8);
+      vec3 rockC = diffuseColor.rgb * hue * tone;
+      // Moss collects on the benches and in the wet seams, never on a clean face
+      float seep = smoothstep(0.64, 0.84, gNoise(vec2(along * 0.3 + 4.0, vGroundPos.y * 0.09)));
+      rockC = mix(rockC, vec3(0.05, 0.085, 0.02) * (0.8 + prism * 0.5), seep * (1.0 - streak) * 0.4);
+      diffuseColor.rgb = mix(diffuseColor.rgb, rockC, cliff);
     }
 
     // Live tide wetness — the painted beach was a fixed band; the foreshore
@@ -510,6 +551,13 @@ const groundColorBody = /* glsl */ `
     gWetness = clamp((awash * 0.92 + swash * 0.55) * sandMask * wetNoise, 0.0, 1.0);
     vec3 wetTint = diffuseColor.rgb * vec3(0.52, 0.58, 0.64);
     diffuseColor.rgb = mix(diffuseColor.rgb, wetTint, gWetness * 0.78);
+
+    // A cliff in shade is lit by a clear sky, which is blue, and then has the
+    // grade's blue shadow lift added on top: a dark rock face lands on that
+    // floor and reads as ink however it is painted. Basalt has a colour of its
+    // own, so give it a share of itself back as emission, which keeps the
+    // columns, streaks and moss visible in shade and takes the cast off.
+    totalEmissiveRadiance += diffuseColor.rgb * cliff * 0.3;
   }
 `
 

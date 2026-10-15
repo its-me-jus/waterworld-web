@@ -826,17 +826,19 @@ function stoneGeometry(seed: number, radius: number, detail: number) {
 
 /**
  * Fold the baked creases into the plant tint and give each stone its own
- * tone, wet basalt through sun-bleached sandstone, so a beach of them stops
- * reading as one object copied fifty times.
+ * tone, fresh black basalt through sun-greyed, so a beach of them stops
+ * reading as one object copied fifty times. `pale` is a lump of bleached
+ * coral rubble: the layer's colour is basalt, so it is lifted back past it.
  */
-function shadeStone(geo: THREE.BufferGeometry, seed: number) {
+function shadeStone(geo: THREE.BufferGeometry, seed: number, pale = false) {
   const crease = geo.getAttribute('aCrease') as THREE.BufferAttribute
   const color = geo.getAttribute('color') as THREE.BufferAttribute
   if (!crease || !color) return
   const tone = fbm(seed * 3.3, seed * 8.1)
-  const r = THREE.MathUtils.lerp(0.5, 1.14, tone)
-  const g = THREE.MathUtils.lerp(0.54, 1.05, tone)
-  const b = THREE.MathUtils.lerp(0.62, 0.88, tone)
+  const lift = pale ? 1.9 : 1
+  const r = THREE.MathUtils.lerp(0.62, 1.14, tone) * lift
+  const g = THREE.MathUtils.lerp(0.64, 1.07, tone) * lift * (pale ? 0.97 : 1)
+  const b = THREE.MathUtils.lerp(0.7, 1.0, tone) * lift * (pale ? 0.88 : 1)
   for (let i = 0; i < color.count; i++) {
     const c = crease.getX(i)
     color.setXYZ(i, color.getX(i) * c * r, color.getY(i) * c * g, color.getZ(i) * c * b)
@@ -1538,10 +1540,12 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const scrub = new THREE.Color('#62873f')
   const bush = new THREE.Color('#456b2c')
   const litter = new THREE.Color('#7a6238')
-  const rock = new THREE.Color('#8d8471')
-  const basalt = new THREE.Color('#5b5145')
+  // Weathered grey-brown where the rock has seen sun, near-black charcoal where
+  // it is fresh or wet. The old tan-to-umber pair read as sandstone
+  const rock = new THREE.Color('#645d54')
+  const basalt = new THREE.Color('#383633')
   const forestFloor = new THREE.Color('#2c3d22')
-  const seaRock = new THREE.Color('#38332e')
+  const seaRock = new THREE.Color('#2b2a28')
   const coralA = new THREE.Color('#8c7656')
   const coralB = new THREE.Color('#5f6e4c')
   const coralC = new THREE.Color('#9a6a5e')
@@ -1581,7 +1585,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // Steep faces shed soil — bare rock on the cliffs and up around the crater.
     // Mesh normals alone under-read carved faces (a cliff spans ~2 cells), so
     // slope comes from the height grid the mesh was built from.
-    stone.copy(rock).lerp(basalt, 0.35 + mottle * 0.65)
+    stone.copy(rock).lerp(basalt, 0.5 + mottle * 0.5)
     // Wet black basalt at the foot of the headlands, not the pale tan of the
     // inland outcrops — from the water that tan reads as more beach
     stone.lerp(seaRock, valleyFree(x, z, y))
@@ -1595,15 +1599,21 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const steep = THREE.MathUtils.smoothstep(slope, 0.95, 1.7)
     const sheer = THREE.MathUtils.smoothstep(slope, 1.4, 2.4)
     const fromNormal = 1 - THREE.MathUtils.smoothstep(normal.getY(i), 0.22, 0.55)
-    // Can pass 1 on the sheerest faces, which pushes the blend past the rock
-    // colour — kept, because the weights below stay exact either way
     // Off the end of a ridge the shore is rock, not sand: the headlands
     // between the bays, wet basalt from a few metres under to a few above
     const headland = valleyFree(x, z, y)
-    const bare = Math.max(
-      THREE.MathUtils.smoothstep(y, 150, 210),
-      steep * 0.82 + sheer * 0.55 + fromNormal * 0.35,
-      headland * 0.95,
+    // Clamped to 1. The sum can reach ~1.7 on the sheerest faces, and the
+    // weights stayed "exact" there only on paper: (1 - bare) goes negative, so
+    // the green and the sand were *subtracted* from the rock, and taking green
+    // out of a brown leaves magenta. That is where the mauve cliffs and the
+    // purple spire came from, not from the rock colours at all.
+    const bare = Math.min(
+      1,
+      Math.max(
+        THREE.MathUtils.smoothstep(y, 150, 210),
+        steep * 0.82 + sheer * 0.55 + fromNormal * 0.35,
+        headland * 0.95,
+      ),
     )
     const shading = 0.9 + mottle * 0.2
     const greenShare = growing * (1 - bare)
@@ -1684,7 +1694,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
 
   const palmWanted = low ? 32 : 72
   const rockWanted = low ? 90 : 200
-  const woodWanted = low ? 28 : 60
+  const woodWanted = low ? 36 : 90
   const scrubWanted = low ? 300 : 880
   const broadWanted = low ? 150 : 380
   // Fewer than before the closed forest went in: these now all land in the
@@ -1815,9 +1825,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     lz: number,
     /** When set, register an ellipsoid blocker (boulders + big beach stones). */
     collide = false,
+    /** Bleached coral rubble instead of basalt. */
+    pale = false,
   ) => {
     const baked = bakeFor(stone.geo, seed, SPECIES.rock)
-    shadeStone(baked, seed)
+    shadeStone(baked, seed, pale)
     list.push(placeAt(baked, lx, h, lz, stone.sink))
     if (!collide) return
     stone.geo.computeBoundingBox()
@@ -2053,7 +2065,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
           stone.geo.boundingBox.max.z - stone.geo.boundingBox.min.z,
         )
       : 0
-    plantStone(rocks, stone, i + 40, lx, h, lz, span > 2.2)
+    // One in nine is a block of bleached coral washed up among the basalt
+    plantStone(rocks, stone, i + 40, lx, h, lz, span > 2.2, scatter(i, 36.6) < 0.11)
   }
 
   // Mid-slope boulders — the thing that stops a green cone reading as a cone.
@@ -2112,6 +2125,89 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     outcrops++
   }
 
+  // Headland aprons. A ridge that reaches the sea ends in fallen basalt:
+  // blocks the size of cars from just under the surf to a few metres above
+  // it, with rubble thrown round each. The coast's black paint was already
+  // saying "rock" with nothing to stand on, so from the water the points read
+  // as more beach. Bays (valley mouths) keep their sand.
+  const apronWanted = low ? 26 : 70
+  let aprons = 0
+  for (let i = 0; i < 6000 && aprons < apronWanted; i++) {
+    const angle = i * 2.399963
+    const radius = 215 + ((i * 7) % 120)
+    const lx = Math.cos(angle) * radius + (scatter(i, 21.1) - 0.5) * 8
+    const lz = Math.sin(angle) * radius + (scatter(i, 22.2) - 0.5) * 8
+    if (valleyAt(lx, lz) > 0.3) continue
+    const h = surface(lx, lz)
+    if (h < -0.9 || h > 5.5) continue
+    const slope = Math.abs(surface(lx + 4, lz) - h) + Math.abs(surface(lx, lz + 4) - h)
+    if (slope > 14) continue
+    const big = stoneGeometry(i + 5200, 1.4 + fbm((i + 5200) * 6.1, (i + 5200) * 2.7) * 2.4, low ? 1 : 2)
+    plantStone(boulderParts, big, i + 5200, lx, h, lz, true)
+    for (let k = 0; k < 3; k++) {
+      const a = scatter(i * 3 + k, 23.3) * Math.PI * 2
+      const d = 2.6 + scatter(i * 3 + k, 24.4) * 3.4
+      const rx = lx + Math.cos(a) * d
+      const rz = lz + Math.sin(a) * d
+      const rh = surface(rx, rz)
+      if (rh < -1.2 || rh > 6) continue
+      const rubble = stoneGeometry(i * 5 + k + 5300, 0.45 + scatter(i * 3 + k, 25.5) * 0.9, 1)
+      plantStone(rocks, rubble, i * 5 + k + 5300, rx, rh, rz, false)
+    }
+    aprons++
+  }
+
+  // A few sea stacks standing in the lagoon off the ridge ends: basalt
+  // columns that are what is left when the headland behind them retreats.
+  // Off the point, a few metres of water, well apart so they read as a
+  // scatter and not a fence.
+  const stackWanted = low ? 3 : 7
+  const stackSpots: { x: number; z: number }[] = []
+  for (let i = 0; i < 5000 && stackSpots.length < stackWanted; i++) {
+    const angle = i * 2.399963 + 0.7
+    const radius = 240 + ((i * 11) % 110)
+    const lx = Math.cos(angle) * radius
+    const lz = Math.sin(angle) * radius
+    if (valleyAt(lx, lz) > 0.2) continue
+    const h = surface(lx, lz)
+    if (h > -1.2 || h < -3.6) continue
+    if (stackSpots.some((s) => Math.hypot(s.x - lx, s.z - lz) < 45)) continue
+    stackSpots.push({ x: lx, z: lz })
+    const stack = stoneGeometry(i + 6100, 1.2 + scatter(i, 26.6) * 1.0, low ? 1 : 2)
+    const tall = 3.4 + scatter(i, 27.7) * 3.2
+    stack.geo.scale(0.72, tall, 0.72)
+    stack.sink *= tall
+    plantStone(boulderParts, stack, i + 6100, lx, h, lz, true)
+  }
+
+  // The strand: where the beach gives way to grass there is a line of
+  // tide-thrown stones, dark basalt cobbles and the odd bleached lump of coral,
+  // in drifts rather than spread even. It gives the sand-to-green edge
+  // something to happen in; before, it was one hard line.
+  const driftWanted = low ? 30 : 85
+  let drifts = 0
+  for (let i = 0; i < 7000 && drifts < driftWanted; i++) {
+    const coveBias = i % 2 === 0
+    const angle = i * 2.399963
+    const radius = 200 + ((i * 13) % 110)
+    const lx = coveBias ? COVE_X + (scatter(i, 28.8) - 0.5) * 130 : Math.cos(angle) * radius
+    const lz = coveBias ? COVE_Z + (scatter(i, 29.9) - 0.5) * 130 : Math.sin(angle) * radius
+    const h = surface(lx, lz)
+    if (h < 1.0 || h > 4.4) continue
+    const slope = Math.abs(surface(lx + 4, lz) - h) + Math.abs(surface(lx, lz + 4) - h)
+    if (slope > 4.5) continue
+    const n = 3 + Math.floor(scatter(i, 30.1) * 4)
+    for (let k = 0; k < n; k++) {
+      const px = lx + (scatter(i * 7 + k, 31.2) - 0.5) * 2.4
+      const pz = lz + (scatter(i * 7 + k, 32.3) - 0.5) * 2.4
+      const ph = surface(px, pz)
+      const seed = i * 7 + k + 7300
+      const pebble = stoneGeometry(seed, 0.1 + scatter(seed, 33.4) * 0.24, low ? 0 : 1)
+      plantStone(rocks, pebble, seed, px, ph, pz, false, scatter(seed, 34.5) < 0.3)
+    }
+    drifts++
+  }
+
   // Driftwood — mid-beach, sparse, sells the wash-up
   for (let i = 0; i < 1100 && wood.length < woodWanted; i++) {
     const angle = i * 2.618
@@ -2165,7 +2261,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       ? COVE_Z + (scatter(i, 2.8) - 0.5) * 170
       : Math.sin(angle) * radius + (scatter(i, 2.8) - 0.5) * 12
     const h = surface(lx, lz)
-    if (h < 2.8 || h > 62) continue
+    if (h < 2.2 || h > 62) continue
     const slope = Math.abs(surface(lx + 6, lz) - h) + Math.abs(surface(lx, lz + 6) - h)
     if (slope > 7.5) continue
     plant(scrubParts, scrubBush(i + 120), i + 120, SPECIES.scrub, lx, h, lz, 0.05)
@@ -2237,7 +2333,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (h < 1.6 || h > 110) continue
     // Open sand stays mostly open: a few tufts low on the beach, thickening
     // to full cover by the time the ground turns from sand to soil
-    if (h < 5 && scatter(i, 9.9) > 0.12 + ((h - 1.6) / 3.4) * 0.88) continue
+    // (a curve, not a line: a straight ramp put a wall of full-height grass at
+    // the first sand it could stand on)
+    if (h < 6.5 && scatter(i, 9.9) > 0.08 + Math.pow((h - 1.6) / 4.9, 1.7) * 0.92) continue
     const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
     if (slope > 9) continue
     // Grass wants sun. Under the closed roof the floor is litter and fern
@@ -2613,8 +2711,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     },
     { parts: wrackParts,
       range: 300, color: 0x4f5c3a, roughness: 0.95 },
-    { parts: rocks, color: 0x8b8371, roughness: 0.97, fill: stoneFill },
-    { parts: boulderParts, color: 0x79715f, roughness: 0.97, fill: stoneFill },
+    // Basalt: dark, cool and a touch glossy where the sea has wetted it. Pale
+    // coral cobbles are lifted back up in shadeStone, so these stay dark
+    { parts: rocks, color: 0x5f5a54, roughness: 0.9, fill: stoneFill },
+    { parts: boulderParts, color: 0x4d4a47, roughness: 0.92, fill: stoneFill },
     { parts: wood, color: 0xa08a6a, roughness: 1, fill: woodFill },
     { parts: fallenParts, color: 0x63513a, roughness: 1, fill: woodFill },
     { parts: deadParts, color: 0xa89b86, roughness: 1, wind: 0.05, fill: woodFill },
