@@ -169,6 +169,7 @@ let prevSurfaceForAudio = Number.NaN
 const params = new URLSearchParams(location.search)
 const num = (key: string, fallback: number) =>
   params.has(key) ? Number(params.get(key)) : fallback
+const flyLift = import.meta.env.DEV ? num('fly', 0) : 0
 
 const climate = createClimate({
   hour: num('hour', 9.5),
@@ -487,6 +488,9 @@ function frame() {
     z: sea.current.z * lee,
   }
   const view = updatePlayer(player, camera, input, dt, t, collide, groundAt, drift)
+  // ?fly=120 lifts the eye that many metres above the swimmer — a drone view
+  // for judging the island's shape. Dev only; the swimmer stays below.
+  if (flyLift) camera.position.y += flyLift
   const { underwater, surfaceY, depth } = view
 
   // Ashore and on dry ground — wading the shallows still counts as in the sea

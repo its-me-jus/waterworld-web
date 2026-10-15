@@ -79,7 +79,7 @@ function scatter(i: number, salt: number) {
 
 /** Half-width of the terrain patch — well past the shelf, into deep water. */
 const SPAN = 640
-const PEAK = 190
+const PEAK = 178
 /** How far the cones are pushed under, which is what carves the coastline. */
 const SEA_CUT = 22
 
@@ -120,173 +120,69 @@ const COVE_BEARING = Math.atan2(COVE_Z, COVE_X)
 const TO_WRECK = Math.atan2(576, -1018)
 
 /**
- * A cliff face: drop `amount` on the seaward side of a line through (cx, cz)
- * facing (fx, fz). `halfLen` is how far the wall runs along itself; `run` is
- * the horizontal span of the drop — keep it short so the mesh reads vertical.
+ * The summit tower — the island's Otemanu.
  *
- * Soft cones alone make a green dumpling. These faces are the geology.
- * Returns `{ drop, raise }` — raise builds a rocky shelf behind the lip so the
- * wall has a crown you can see from the water, not only a notch cut downhill.
+ * A soft cone reads as a hill however tall it is. What makes a high island
+ * read as volcanic from the sea is a plug of basalt standing out of the
+ * forest: walls steep enough to stay bare, a rounded, broken cap. Elongated
+ * and turned so it shows a long face to the approach and a narrow one from
+ * the side, and set a little behind the centre so you swim toward it over
+ * the green. Its outline wobbles with bearing so it isn't a drawn ellipse.
  */
-function cliffFace(
-  lx: number,
-  lz: number,
-  cx: number,
-  cz: number,
-  fx: number,
-  fz: number,
-  halfLen: number,
-  run: number,
-  amount: number,
-) {
-  const len = Math.hypot(fx, fz) || 1
-  const nx = fx / len
-  const nz = fz / len
-  const dx = lx - cx
-  const dz = lz - cz
-  // Outward distance from the face line; along-face is the 2D cross product
-  const out = dx * nx + dz * nz
-  const along = -dx * nz + dz * nx
-  const alongMask =
-    1 - THREE.MathUtils.smoothstep(Math.abs(along), halfLen * 0.55, halfLen)
-  if (alongMask <= 0) return { drop: 0, raise: 0 }
-  // Jag the lip so it isn't a drawn-compass wall
-  const jag =
-    (noise2(along * 0.045 + cx * 0.01, out * 0.08 + cz * 0.01) - 0.5) * 0.18 +
-    (noise2(along * 0.11 - 2.4, out * 0.14 + 5.1) - 0.5) * 0.1
-  // Linear grade across a short run — steeper (and more even) than smoothstep,
-  // which only pins the mesh for a cell or two in its middle
-  const t = THREE.MathUtils.clamp((out + run * 0.08) / run + jag, 0, 1)
-  const drop = amount * alongMask * t
-  // Shelf behind the lip: a few metres of raised rock so the face has a crown
-  const shelf =
-    THREE.MathUtils.smoothstep(out, -run * 2.8, -run * 0.35) *
-    (1 - THREE.MathUtils.smoothstep(out, -run * 0.2, run * 0.15))
-  const raise = amount * 0.28 * alongMask * shelf
-  return { drop, raise }
+const SPIRE_X = 30
+const SPIRE_Z = -24
+function spire(lx: number, lz: number) {
+  const dx = lx - SPIRE_X
+  const dz = lz - SPIRE_Z
+  const turn = 0.55
+  const u = dx * Math.cos(turn) + dz * Math.sin(turn)
+  const v = -dx * Math.sin(turn) + dz * Math.cos(turn)
+  const ang = Math.atan2(v, u)
+  const wobble = 1 + (noise2(Math.cos(ang) * 1.9 + 3.1, Math.sin(ang) * 1.9 - 2.2) - 0.5) * 0.42
+  const d = Math.hypot(u / 62, v / 42) * wobble
+  if (d >= 1) return 0
+  // Fluted walls: buttresses and chutes running up the face, so it takes the
+  // light in vertical stripes instead of shading as one smooth sugarloaf
+  // About ten round the base: any finer and a buttress is narrower than the
+  // terrain grid can draw, and the face goes back to smooth
+  const flute = noise2(Math.cos(ang) * 1.7 - 6.4, Math.sin(ang) * 1.7 + 9.7)
+  // Ridged, so each buttress has a sharp nose and the chutes between are deep
+  const fl = (0.5 - Math.abs(flute * 2 - 1)) * 0.4
+  // Benches partway up — ledges flat enough for the forest to climb onto,
+  // which is what puts green streaks on Otemanu's rock
+  const raw = 1 - d
+  const s = raw + Math.sin(raw * Math.PI * 5 + flute * 3) * 0.035
+  // Walls over the outer half of the footprint, then a cap that keeps rising
+  const wall = 92 * THREE.MathUtils.smoothstep(s + fl, 0.02, 0.45)
+  const cap = 18 * THREE.MathUtils.smoothstep(s, 0.45, 1)
+  // A broken top — knuckles of rock, not a dome
+  const jag = (noise2(lx * 0.045 + 7.3, lz * 0.045 - 1.9) - 0.5) * 26 * THREE.MathUtils.smoothstep(s, 0.3, 0.75)
+  return wall + cap + jag
 }
 
 /**
- * Rocky cliffs and headlands carved into the soft cone mass.
+ * How much a point sits in a valley rather than on a ridge, 0–1.
  *
- * Returns `{ drop, raise }` metres. The landing cove is protected — landfall
- * has to stay a beach — but its shoulders and the far/side coasts get vertical
- * rock so the silhouette reads as a place you could explore, not a painted hill.
+ * High volcanic islands erode into knife-edge ridges running down from the
+ * summit with deep, rounded valleys between them, and where a valley reaches
+ * the sea there is a bay with a beach; where a ridge reaches it, a rock
+ * headland. One field drives both, so the coast follows the mountain.
+ *
+ * Bearing is sampled on a circle in noise space (cos, sin) so there is no
+ * seam at ±π, and radius bends it so ridges curve and fork on the way down.
+ * The crest is the noise's mid-line — a single sharp line — and the valleys
+ * are everything either side of it, which is the right way round: narrow
+ * ridges, wide valleys. The landing cove is always a valley mouth.
  */
-function cliffRelief(lx: number, lz: number) {
-  const coveDist = Math.hypot(lx - COVE_X, lz - COVE_Z)
-  // Only the wadable cove floor is sacred — headland shoulders cliff freely
-  const coveProtect = 1 - THREE.MathUtils.smoothstep(coveDist, 28, 88)
-
-  let drop = 0
-  let raise = 0
-  const add = (face: { drop: number; raise: number }) => {
-    drop += face.drop
-    raise += face.raise
-  }
-
-  // —— Cove headlands —————————————————————————————————————————
-  // Two rocky points framing the beach: classic natural-harbour silhouette.
-  // Placed on the green shoulders (not out at sea) so the lip sits above the
-  // waterline and the seaward drop reads as basalt, not a hole in the shelf.
-  {
-    for (const side of [-1, 1] as const) {
-      const bearing = COVE_BEARING + side * 0.48
-      const radius = 185
-      const hx = Math.cos(bearing) * radius
-      const hz = Math.sin(bearing) * radius
-      // Face seaward, cupped slightly toward the cove mouth
-      const turn = side * 0.28
-      const fx = Math.cos(bearing + turn)
-      const fz = Math.sin(bearing + turn)
-      add(cliffFace(lx, lz, hx, hz, fx, fz, 72, 11, 42))
-    }
-  }
-
-  // —— Sea cliffs on the exposed coasts ———————————————————————
-  // Away from the cove bearing: steep rock dropping toward the waterline.
-  // Radii sit where inland is still green and the seaward drop hits near sea.
-  {
-    const faces: { bearing: number; radius: number; halfLen: number; run: number; amount: number }[] = [
-      // Flank readable past the cove's right shoulder from the approach
-      { bearing: COVE_BEARING + 1.05, radius: 178, halfLen: 85, run: 11, amount: 40 },
-      // Other approach shoulder
-      { bearing: COVE_BEARING - 1.1, radius: 182, halfLen: 80, run: 11, amount: 38 },
-      // Far side — opposite the wreck approach; the island's back wall
-      { bearing: COVE_BEARING + Math.PI * 0.92, radius: 165, halfLen: 100, run: 10, amount: 48 },
-      // East lobe — breaks the long green shoulder into a headland
-      { bearing: 0.2, radius: 175, halfLen: 70, run: 11, amount: 36 },
-      // Extra near-cove spur so the swim-in silhouette isn't soft on both sides
-      { bearing: COVE_BEARING + 0.75, radius: 200, halfLen: 48, run: 10, amount: 30 },
-      { bearing: COVE_BEARING - 0.8, radius: 205, halfLen: 48, run: 10, amount: 28 },
-    ]
-    for (const f of faces) {
-      const cx = Math.cos(f.bearing) * f.radius
-      const cz = Math.sin(f.bearing) * f.radius
-      add(
-        cliffFace(
-          lx,
-          lz,
-          cx,
-          cz,
-          Math.cos(f.bearing),
-          Math.sin(f.bearing),
-          f.halfLen,
-          f.run,
-          f.amount,
-        ),
-      )
-    }
-  }
-
-  // —— Inland scarps ——————————————————————————————————————————
-  // Mid-slope terrace steps: shelves to walk toward, rock faces between the
-  // green bands. Exploration needs somewhere the ground changes character.
-  {
-    const scarps: { bearing: number; radius: number; halfLen: number; run: number; amount: number }[] = [
-      { bearing: COVE_BEARING + 0.55, radius: 125, halfLen: 58, run: 10, amount: 22 },
-      { bearing: COVE_BEARING - 0.7, radius: 112, halfLen: 52, run: 10, amount: 20 },
-      { bearing: 1.9, radius: 95, halfLen: 64, run: 10, amount: 24 },
-      { bearing: -0.85, radius: 135, halfLen: 55, run: 10, amount: 20 },
-    ]
-    for (const s of scarps) {
-      const cx = Math.cos(s.bearing) * s.radius
-      const cz = Math.sin(s.bearing) * s.radius
-      add(
-        cliffFace(
-          lx,
-          lz,
-          cx,
-          cz,
-          Math.cos(s.bearing),
-          Math.sin(s.bearing),
-          s.halfLen,
-          s.run,
-          s.amount,
-        ),
-      )
-    }
-  }
-
-  // Never carve the wadable cove floor into a cliff — landfall is a beach
-  const protect = 1 - coveProtect * 0.92
-  drop *= protect
-  raise *= protect
-  // Extra jaggedness on whatever we did carve, so faces aren't planar slabs
-  if (drop > 0.5) {
-    drop +=
-      (noise2(lx * 0.028 + 4.2, lz * 0.028 - 7.6) - 0.5) * Math.min(drop, 18) * 0.18
-    // Mid-frequency ledges — without this a linear grade across two mesh cells
-    // reads as one flat shear plane from the water
-    drop +=
-      (noise2(lx * 0.09 - 1.7, lz * 0.09 + 6.3) - 0.5) * Math.min(drop, 22) * 0.22
-  }
-  // Overlapping faces can stack past what the mesh can hold — cap so a
-  // headland stays a wall above the water, not a trench through the shelf
-  return {
-    drop: THREE.MathUtils.clamp(drop, 0, 46),
-    raise: THREE.MathUtils.clamp(raise, 0, 14),
-  }
+function valleyAt(lx: number, lz: number) {
+  const r = Math.hypot(lx, lz)
+  const b = Math.atan2(lz, lx)
+  const warp = (noise2(lx * 0.007 + 3.3, lz * 0.007 - 8.1) - 0.5) * 1.8
+  const n = noise2(Math.cos(b) * 4.2 + warp + 21.7, Math.sin(b) * 4.2 + r * 0.008 - 5.2)
+  let valley = THREE.MathUtils.smoothstep(Math.abs(n * 2 - 1), 0.1, 0.78)
+  const angFromCove = Math.abs(Math.atan2(Math.sin(b - COVE_BEARING), Math.cos(b - COVE_BEARING)))
+  valley = Math.max(valley, 1 - THREE.MathUtils.smoothstep(angFromCove, 0.3, 0.62))
+  return valley
 }
 
 /** Height above mean sea level, in island-local coordinates. */
@@ -299,7 +195,17 @@ function ground(lx: number, lz: number) {
     // Broad low shoulder toward the approach, so the cove has something to carve
     cone(lx, lz, COVE_X * 0.85, COVE_Z * 0.85, 175, 22, 1.15)
 
-  h *= 1 + relief(lx, lz) * 1.15
+  h *= 1 + relief(lx, lz) * 0.75
+  // Valleys between the ridges — strongest on the mid-slopes, gone at the
+  // summit (the spire owns that) and eased near the coast so the bays stay
+  // swimmable rather than fjords
+  const rr = Math.hypot(lx, lz)
+  const valley = valleyAt(lx, lz)
+  const carveBand = THREE.MathUtils.smoothstep(rr, 25, 95) * (1 - 0.45 * THREE.MathUtils.smoothstep(rr, 210, 300))
+  // …except under the landing cove, whose shelf is tuned to sit at dry-sand
+  // height; carved, the whole beach sinks into the wet band
+  const coveKeep = 1 - THREE.MathUtils.smoothstep(Math.hypot(lx - COVE_X, lz - COVE_Z), 90, 180)
+  h *= 1 - 0.36 * valley * carveBand * (1 - coveKeep)
   // Micro-relief: root flares and hummocks under the green band so the ground
   // isn't a smooth plane once the grass and trees are in
   const greenBand = THREE.MathUtils.smoothstep(h, 3, 14) * (1 - THREE.MathUtils.smoothstep(h, 40, 90))
@@ -311,10 +217,14 @@ function ground(lx: number, lz: number) {
   h += (noise2(lx * 0.018 + 9.1, lz * 0.018 - 6.4) - 0.5) * 8.5 * midBand
   h += (noise2(lx * 0.041 - 3.7, lz * 0.041 + 12.8) - 0.5) * 3.4 * midBand
 
+  h += spire(lx, lz)
+
   h -= SEA_CUT
   // The last few metres either side of the waterline flatten into beach and
-  // shallows, instead of the cone driving straight into the sea
-  h *= 0.22 + 0.78 * THREE.MathUtils.smoothstep(Math.abs(h), 3, 40)
+  // shallows — in the bays. Off the end of a ridge the slope keeps most of
+  // its pitch into the water, which is what makes it a headland
+  const flat = 0.22 + 0.78 * THREE.MathUtils.smoothstep(Math.abs(h), 3, 40)
+  h *= THREE.MathUtils.lerp(THREE.MathUtils.lerp(1, flat, 0.3), flat, valley)
   // Landing cove: pull the spawn-facing shore onto a wadable shelf so landfall
   // is a beach with palms, not a cliff that rejects every plant.
   // (smoothstep needs min < max — an inverted range silently returns 1.)
@@ -338,14 +248,6 @@ function ground(lx: number, lz: number) {
     }
   }
 
-  // Rocky cliffs — after the beach softener, or the cove lerp sands the
-  // headlands back into a green dumpling. The softener already protected the
-  // wadable floor; cliffRelief skips the cove centre on its own.
-  {
-    const cliff = cliffRelief(lx, lz)
-    h += cliff.raise
-    h -= cliff.drop
-  }
   // How much this sample faces the wreck crossing (1 on the approach, 0 opposite)
   let approach = Math.cos(bearing - TO_WRECK)
   approach = Math.max(0, approach)
@@ -1453,18 +1355,19 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // Rainforest holds on to slopes that would be bare anywhere drier; only
     // the true walls and the summit crags shed it
     const rock = Math.max(
-      THREE.MathUtils.smoothstep(h, 128, 172),
-      THREE.MathUtils.smoothstep(slope, 1.05, 1.6),
+      THREE.MathUtils.smoothstep(h, 165, 215),
+      THREE.MathUtils.smoothstep(slope, 1.3, 1.95),
     )
     // The landing cove stays an open beach with its palms; the roof starts
     // further back there than anywhere else, not over the sand you walk up
     const inCove = 1 - THREE.MathUtils.smoothstep(Math.hypot(lx - COVE_X, lz - COVE_Z), 60, 130)
     // Sand, then the palm line, then the roof — the same band all the way round
     const shoreline =
-      THREE.MathUtils.smoothstep(distToSea(lx, lz), 10 + 16 * inCove, 22 + 22 * inCove) *
+      THREE.MathUtils.smoothstep(distToSea(lx, lz), 6 + 20 * inCove, 14 + 30 * inCove) *
       THREE.MathUtils.smoothstep(h, 1.6, 3.2)
     // Glades, so the roof has a grain of its own from the water
-    const glade = THREE.MathUtils.smoothstep(noise2(lx * 0.012 + 40.1, lz * 0.012 - 7.7), 0.12, 0.26)
+    // Kept rare and small: on a mountainside a big one is a bald lawn, not a glade
+    const glade = THREE.MathUtils.smoothstep(noise2(lx * 0.025 + 40.1, lz * 0.025 - 7.7), 0.06, 0.16)
     return shoreline * (1 - rock) * glade
   }
 
@@ -1488,6 +1391,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const rock = new THREE.Color('#8d8471')
   const basalt = new THREE.Color('#5b5145')
   const forestFloor = new THREE.Color('#2c3d22')
+  const seaRock = new THREE.Color('#38332e')
+  /** How much of a headland's waterline rock this vertex is (0–1). */
+  const valleyFree = (x: number, z: number, y: number) =>
+    (1 - valleyAt(x, z)) * THREE.MathUtils.smoothstep(y, -6, -1.5) * (1 - THREE.MathUtils.smoothstep(y, 5, 13))
   const growth = new THREE.Color()
   const stone = new THREE.Color()
   const colors = new Float32Array(position.count * 3)
@@ -1515,25 +1422,34 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // Under a closed roof the floor is in shade all day. From the sea that dark
     // between the crowns is most of what reads as depth — a lit lawn showing
     // through is what made the slopes look planted
-    growth.lerp(forestFloor, forestCover(x, z) * 0.55)
+    growth.lerp(forestFloor, forestCover(x, z) * 0.75)
     const growing = THREE.MathUtils.smoothstep(y, 4, 15)
     // Steep faces shed soil — bare rock on the cliffs and up around the crater.
     // Mesh normals alone under-read carved faces (a cliff spans ~2 cells), so
     // slope comes from the height grid the mesh was built from.
     stone.copy(rock).lerp(basalt, 0.35 + mottle * 0.65)
+    // Wet black basalt at the foot of the headlands, not the pale tan of the
+    // inland outcrops — from the water that tan reads as more beach
+    stone.lerp(seaRock, valleyFree(x, z, y))
     const gi = Math.round((x + SPAN) / step)
     const gj = Math.round((z + SPAN) / step)
     const dhx = (gridHeight(gi + 1, gj) - gridHeight(gi - 1, gj)) / (2 * step)
     const dhz = (gridHeight(gi, gj + 1) - gridHeight(gi, gj - 1)) / (2 * step)
     const slope = Math.hypot(dhx, dhz)
-    const steep = THREE.MathUtils.smoothstep(slope, 0.55, 1.35)
-    const sheer = THREE.MathUtils.smoothstep(slope, 1.1, 2.2)
+    // Rainforest holds slopes far steeper than temperate ground would, so the
+    // rock only shows through where the forest itself gives up (forestCover)
+    const steep = THREE.MathUtils.smoothstep(slope, 0.95, 1.7)
+    const sheer = THREE.MathUtils.smoothstep(slope, 1.4, 2.4)
     const fromNormal = 1 - THREE.MathUtils.smoothstep(normal.getY(i), 0.22, 0.55)
     // Can pass 1 on the sheerest faces, which pushes the blend past the rock
     // colour — kept, because the weights below stay exact either way
+    // Off the end of a ridge the shore is rock, not sand: the headlands
+    // between the bays, wet basalt from a few metres under to a few above
+    const headland = valleyFree(x, z, y)
     const bare = Math.max(
-      THREE.MathUtils.smoothstep(y, 108, 172),
+      THREE.MathUtils.smoothstep(y, 150, 210),
       steep * 0.82 + sheer * 0.55 + fromNormal * 0.35,
+      headland * 0.95,
     )
     const shading = 0.9 + mottle * 0.2
     const greenShare = growing * (1 - bare)
@@ -1878,6 +1794,34 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     shore.push(new THREE.Vector3(opts.x + lx, h, opts.z + lz))
   }
 
+  // Bay palms — every valley that reaches the sea ends in a sandy flat, and on
+  // a high island each of those is a coconut grove. Without them the far bays
+  // are bare tan shelves between the forest and the water.
+  {
+    let bayPalms = 0
+    const bayWanted = low ? 12 : 50
+    for (let i = 0; i < 6000 && bayPalms < bayWanted; i++) {
+      const angle = i * 2.39996
+      const radius = 150 + scatter(i, 15.1) * 200
+      const lx = Math.cos(angle) * radius
+      const lz = Math.sin(angle) * radius
+      if (onCove(lx, lz)) continue
+      const h = surface(lx, lz)
+      if (h < 0.8 || h > 7) continue
+      const sea = distToSea(lx, lz)
+      if (sea < 3 || sea > 34) continue
+      if (valleyAt(lx, lz) < 0.45) continue
+      const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
+      if (slope > 3.2) continue
+      if (shore.some((p) => Math.hypot(p.x - opts.x - lx, p.z - opts.z - lz) < 6)) continue
+      const seed = i + 5100
+      const place = new THREE.Matrix4().setPosition(lx, h - 0.3, lz)
+      plantPalm(palm(seed, low ? 11 : 15), seed, place)
+      shore.push(new THREE.Vector3(opts.x + lx, h, opts.z + lz))
+      bayPalms++
+    }
+  }
+
   // Broadleaf mid-story — the overgrown interior. Sits above the beach band,
   // thicker in the gullies where the relief dips — and piled onto the
   // approach face so the swim-in silhouette isn't a bare cone.
@@ -2216,7 +2160,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   {
     const templates = Array.from({ length: low ? 6 : 10 }, (_, k) => jungleCrown(k + 7100, 1, low ? 0 : 1))
     const farTemplates = templates.map((_, k) => jungleCrown(k + 7100, 0))
-    const spacing = low ? 10.5 : 6.2
+    const spacing = low ? 11 : 6.8
     const reach = 300
     let planted = 0
     for (let gz = -reach; gz <= reach && planted < jungleWanted; gz += spacing) {
@@ -2225,20 +2169,33 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
         const lx = gx + (scatter(seed, 1.7) - 0.5) * spacing * 0.9
         const lz = gz + (scatter(seed, 2.9) - 0.5) * spacing * 0.9
         const cover = forestCover(lx, lz)
-        if (cover < 0.12 || scatter(seed, 3.1) > cover * 1.6) continue
+        if (cover < 0.12 || scatter(seed, 3.1) > cover * 1.8) continue
         if (pathPoints.some(([px, pz]) => Math.hypot(px - lx, pz - lz) < 7)) continue
         const h = surface(lx, lz)
+        // On a steep face each row stands a storey above the one below it, and
+        // seen from the sea the hillside shows between them. Wider, lower
+        // crowns there step down the slope like shingles instead
+        const pitch = THREE.MathUtils.smoothstep(
+          Math.hypot(surface(lx + 3, lz) - surface(lx - 3, lz), surface(lx, lz + 3) - surface(lx, lz - 3)) / 6,
+          0.3,
+          0.95,
+        )
         // Spread scaled to the grid, so a low-power roof is fewer, wider crowns
-        const size = (spacing / 6.2) * (3.3 + scatter(seed, 4.3) * 2.4) * (0.7 + 0.3 * cover)
+        const size =
+          (spacing / 6.2) * (3.3 + scatter(seed, 4.3) * 2.4) * (0.7 + 0.3 * cover) * (1 + 0.4 * pitch)
         // Margin trees stand lower, so the edge of the forest closes down onto
         // the undergrowth instead of showing a colonnade of trunks to the sea
-        const trunkH = (2 + scatter(seed, 5.9) * 5.5) * (0.35 + 0.65 * cover)
+        const trunkH = (2 + scatter(seed, 5.9) * 5.5) * (0.35 + 0.65 * cover) * (1 - 0.65 * pitch)
         const place = new THREE.Matrix4().setPosition(lx, h - 0.2, lz)
         // A shade deeper than the specimen trees on the beach, and uneven
         // crown to crown — sunlit tops beside darker ones is the texture a
         // rainforest roof has from a distance
-        const deep = 0.66 + scatter(seed, 7.3) * 0.28
-        const stretch = 0.85 + scatter(seed, 6.1) * 0.3
+        // Darker down in the valleys, lit along the crests. With the roof
+        // casting no shadow this is what lets the ridges read through it
+        const gully = valleyAt(lx, lz) * THREE.MathUtils.smoothstep(Math.hypot(lx, lz), 25, 95)
+        const deep = (0.66 + scatter(seed, 7.3) * 0.28) * (1.06 - 0.3 * gully)
+        // Taller on a slope too, so each crown reaches up to the row above
+        const stretch = (0.85 + scatter(seed, 6.1) * 0.3) * (1 + 0.45 * pitch)
         const turn = scatter(seed, 6.7) * Math.PI * 2
         const k = seed % templates.length
         for (const [template, list] of [
@@ -2262,6 +2219,17 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
         jungleTrunks.push(bakeFor(trunk, seed, SPECIES.broadTrunk).applyMatrix4(place))
         planted++
       }
+    }
+    if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__islandJungle = planted
+  }
+
+  // Dev hook for scripts/island-map.mjs — paints the shape fields top-down
+  if (import.meta.env.DEV) {
+    ;(window as unknown as Record<string, unknown>).__islandFields = {
+      span: SPAN,
+      height: surface,
+      valley: valleyAt,
+      cover: forestCover,
     }
   }
 

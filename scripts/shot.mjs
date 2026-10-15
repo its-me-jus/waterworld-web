@@ -45,6 +45,15 @@ const VIEWS = [
   // Round-4 jungle: under the closed forest roof, and back out at the cove
   // looking up at where the roof starts
   { name: 'jungle-in', url: 'http://localhost:5173/?x=860&z=-600&yaw=-0.6&pitch=0.1' },
+  // Drone views of the whole island (?fly lifts the eye, dev only): the
+  // approach side from high and off-axis, and the far side
+  { name: 'aerial-approach', url: 'http://localhost:5173/?x=560&z=-380&yaw=-0.96&pitch=-0.32&fly=170' },
+  { name: 'aerial-side', url: 'http://localhost:5173/?x=1080&z=-170&yaw=0.2&pitch=-0.3&fly=150' },
+  { name: 'aerial-far', url: 'http://localhost:5173/?x=1420&z=-900&yaw=2.0&pitch=-0.28&fly=140' },
+  // Sea-level circuit of the coast: bays, headlands, the spire from each side
+  { name: 'coast-e', url: 'http://localhost:5173/?x=1410&z=-640&yaw=1.48&pitch=0.08' },
+  { name: 'coast-n', url: 'http://localhost:5173/?x=1040&z=-1110&yaw=3.0&pitch=0.08' },
+  { name: 'coast-s', url: 'http://localhost:5173/?x=1080&z=-260&yaw=0.23&pitch=0.08' },
   { name: 'jungle-edge', url: 'http://localhost:5173/?x=780&z=-536&yaw=-0.75&pitch=0.18' },
   // Climate — storm locked, night locked, shore foam up close
   { name: 'storm', url: 'http://localhost:5173/?storm=1&hour=14&yaw=-0.3&pitch=0.05' },
