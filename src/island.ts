@@ -739,19 +739,30 @@ function deadTree(seed: number) {
  * same triangle budget, and coverage is what the eye reads — a hillside with
  * gaps between clumps looks mown no matter how good the clumps are.
  */
-function grassTuft(seed: number) {
+function grassTuft(seed: number, scale = 1) {
   const rand = (n: number) => fbm(seed * 5.9 + n * 2.7, seed * 3.3 - n * 1.9)
   const blades: THREE.BufferGeometry[] = []
   // Narrow blades that keep their width and pinch at the tip. The old ones
   // were a hand's width and tapered from the root, so close up each tuft read
   // as a bunch of green paper spikes.
+  //
+  // `scale` is the strand's: dune grass is a hand or two high, not a metre, and
+  // blades shrink in width a little more slowly than in height so a short tuft
+  // doesn't turn to needles.
   const count = 5 + Math.floor(rand(1) * 3)
   for (let i = 0; i < count; i++) {
-    const h = 0.6 + rand(i + 2) * 1.2
-    const blade = leafBlade(0.075 + rand(i + 4) * 0.06, h, 0.26 + rand(i + 5) * 0.5, 2, 0.62, true)
+    const h = (0.6 + rand(i + 2) * 1.2) * scale
+    const blade = leafBlade(
+      (0.075 + rand(i + 4) * 0.06) * (0.55 + 0.45 * scale),
+      h,
+      (0.26 + rand(i + 5) * 0.5) * scale,
+      2,
+      0.62,
+      true,
+    )
     blade.rotateY(rand(i + 8) * Math.PI * 2)
     blade.rotateZ((rand(i + 6) - 0.5) * 0.4)
-    blade.translate((rand(i + 10) - 0.5) * 0.5, 0, (rand(i + 12) - 0.5) * 0.5)
+    blade.translate((rand(i + 10) - 0.5) * 0.5 * (0.5 + 0.5 * scale), 0, (rand(i + 12) - 0.5) * 0.5 * (0.5 + 0.5 * scale))
     blades.push(blade)
   }
   return mergeGeometries(blades, false) as THREE.BufferGeometry
@@ -844,6 +855,21 @@ function shadeStone(geo: THREE.BufferGeometry, seed: number, pale = false) {
     color.setXYZ(i, color.getX(i) * c * r, color.getY(i) * c * g, color.getZ(i) * c * b)
   }
   geo.deleteAttribute('aCrease')
+}
+
+/**
+ * Dune grass is straw and olive where inland grass is green: pull the red up
+ * and the blue down on a tuft's vertex colours by how far onto the beach it
+ * stands (0–1). The grass material is green, so the red needs a big factor
+ * before the yellow shows.
+ */
+function strawTint(geo: THREE.BufferGeometry, edge: number) {
+  const color = geo.getAttribute('color') as THREE.BufferAttribute
+  if (!color) return
+  const r = 1 + edge * 1.05
+  const g = 1 - edge * 0.06
+  const b = 1 - edge * 0.4
+  for (let i = 0; i < color.count; i++) color.setXYZ(i, color.getX(i) * r, color.getY(i) * g, color.getZ(i) * b)
 }
 
 /** A bleached plank or log washed up on the sand. */
@@ -2208,6 +2234,37 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     drifts++
   }
 
+  // The landing cove is where you arrive and where you stand to look, and the
+  // ramp there is 20 m wide: sand from the tide line to the first soil. Left
+  // to the general strand pass it got a few stones. Here it gets a proper
+  // high-water line — cobbles thickest where the swash stops, thinning up the
+  // slope into the grass — and the odd fallen coconut under each palm.
+  const coveDriftWanted = low ? 24 : 80
+  let coveDrifts = 0
+  for (let i = 0; i < 8000 && coveDrifts < coveDriftWanted; i++) {
+    const lx = COVE_X + (scatter(i, 41.1) - 0.5) * 120
+    const lz = COVE_Z + (scatter(i, 42.2) - 0.5) * 120
+    const h = surface(lx, lz)
+    if (h < 1.2 || h > 10.5) continue
+    // Thick between the swash and the first tussocks, a scatter above that
+    const want = 1 - THREE.MathUtils.smoothstep(h, 4.5, 10.5)
+    if (scatter(i, 43.3) > 0.2 + want * 0.8) continue
+    const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
+    if (slope > 5) continue
+    const n = 4 + Math.floor(scatter(i, 44.4) * 5)
+    for (let k = 0; k < n; k++) {
+      const px = lx + (scatter(i * 9 + k, 45.5) - 0.5) * 3
+      const pz = lz + (scatter(i * 9 + k, 46.6) - 0.5) * 3
+      const ph = surface(px, pz)
+      const seed = i * 9 + k + 9300
+      // Mostly gravel, a cobble now and then
+      const big = scatter(seed, 47.7) > 0.94
+      const r = big ? 0.26 + scatter(seed, 48.8) * 0.18 : 0.07 + scatter(seed, 48.8) * 0.2
+      plantStone(rocks, stoneGeometry(seed, r, big ? 2 : low ? 0 : 1), seed, px, ph, pz, false, scatter(seed, 49.9) < 0.3)
+    }
+    coveDrifts++
+  }
+
   // Driftwood — mid-beach, sparse, sells the wash-up
   for (let i = 0; i < 1100 && wood.length < woodWanted; i++) {
     const angle = i * 2.618
@@ -2220,6 +2277,40 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     const slope = Math.abs(surface(lx + 5, lz) - h) + Math.abs(surface(lx, lz + 5) - h)
     if (slope > 3.2) continue
     plant(wood, driftwood(i + 90), i + 90, SPECIES.wood, lx, h, lz, 0.08)
+  }
+
+  // Fallen coconuts: one or two under each palm that stands on sand, husk
+  // brown, in the wood layer because that one does not sway. After the
+  // driftwood, which counts the layer to know when to stop
+  {
+    const darkBrown = new THREE.Color('#6a4a2a')
+    let fallen = 0
+    for (const s of shore) {
+      if (fallen >= (low ? 30 : 90)) break
+      const px = s.x - opts.x
+      const pz = s.z - opts.z
+      const ph = surface(px, pz)
+      if (ph < 1.4 || ph > 11) continue
+      const count = 1 + (scatter(fallen, 51.1) > 0.5 ? 1 : 0)
+      for (let k = 0; k < count; k++) {
+        const a = scatter(fallen * 3 + k, 52.2) * Math.PI * 2
+        const d = 0.8 + scatter(fallen * 3 + k, 53.3) * 2.6
+        const nx = px + Math.cos(a) * d
+        const nz = pz + Math.sin(a) * d
+        const seed = fallen * 3 + k + 9900
+        const nut = mergeVertices(new THREE.IcosahedronGeometry(0.17, 1))
+        nut.scale(1, 0.82, 1.18)
+        nut.rotateY(scatter(seed, 54.4) * Math.PI)
+        const baked = bakeFor(nut, seed, SPECIES.wood)
+        const col = baked.getAttribute('color') as THREE.BufferAttribute
+        // The wood layer is pale driftwood; bring this down to husk brown
+        for (let v = 0; v < col.count; v++) {
+          col.setXYZ(v, col.getX(v) * darkBrown.r * 3.2, col.getY(v) * darkBrown.g * 3.2, col.getZ(v) * darkBrown.b * 3.2)
+        }
+        wood.push(placeAt(baked, nx, surface(nx, nz), nz, 0.07))
+      }
+      fallen++
+    }
   }
 
   // Tide wrack — wet-sand mats so the waterline isn't a painted edge
@@ -2331,16 +2422,34 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       : Math.sin(angle) * radius + (scatter(i, 8.8) - 0.5) * 7
     const h = surface(lx, lz)
     if (h < 1.6 || h > 110) continue
-    // Open sand stays mostly open: a few tufts low on the beach, thickening
-    // to full cover by the time the ground turns from sand to soil
-    // (a curve, not a line: a straight ramp put a wall of full-height grass at
-    // the first sand it could stand on)
-    if (h < 6.5 && scatter(i, 9.9) > 0.08 + Math.pow((h - 1.6) / 4.9, 1.7) * 0.92) continue
+    // The strand. The beach ramp at the landing cove is ~20 m wide and the
+    // ground stays sand colour up to about 10 m, so where the grass starts
+    // decides whether it reads as a lawn laid on sand. `edge` is 1 on the
+    // beach and 0 once the ground is soil:
+    //  - density climbs on a curve, not a line, across the whole ramp;
+    //  - the sparse tufts gather into tussocks with bare sand between, by a
+    //    slow noise, instead of being scattered evenly;
+    //  - and they are short and straw-coloured, like dune grass, growing to
+    //    metre-high green only inland.
+    const edge = 1 - THREE.MathUtils.smoothstep(h, 4, 12.5)
+    if (h < 12.5) {
+      if (scatter(i, 9.9) > 0.06 + Math.pow((h - 1.6) / 10.9, 1.5) * 0.94) continue
+      const patch = THREE.MathUtils.smoothstep(fbm(lx * 0.13 + 5.3, lz * 0.13 - 2.1), 0.4, 0.58)
+      if (scatter(i, 11.7) > 1 - edge * (1 - patch)) continue
+    }
     const slope = Math.abs(surface(lx + 3, lz) - h) + Math.abs(surface(lx, lz + 3) - h)
     if (slope > 9) continue
     // Grass wants sun. Under the closed roof the floor is litter and fern
     if (scatter(i, 10.3) < forestCover(lx, lz) * 0.85) continue
-    plant(grassParts, grassTuft(i + 500), i + 500, SPECIES.grass, lx, h, lz, 0.02)
+    const tufts = edge > 0.35 && scatter(i, 12.8) > 0.45 ? 2 : 1
+    for (let k = 0; k < tufts; k++) {
+      const seed = i + 500 + k * 90000
+      const tuft = bakeFor(grassTuft(seed, 0.4 + 0.6 * (1 - edge) - k * 0.08), seed, SPECIES.grass)
+      if (edge > 0.05) strawTint(tuft, edge)
+      const ox = k ? (scatter(i, 13.9) - 0.5) * 0.9 : 0
+      const oz = k ? (scatter(i, 14.1) - 0.5) * 0.9 : 0
+      grassParts.push(placeAt(tuft, lx + ox, surface(lx + ox, lz + oz), lz + oz, 0.02))
+    }
   }
 
   // Fallen logs — the interior's weather, lying where trees once stood
