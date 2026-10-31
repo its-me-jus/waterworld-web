@@ -22,7 +22,7 @@ const ATLAS = 1024
 const CELLS = 2
 
 /** Deterministic 0–1, so the island paints the same leaves every load. */
-function rng(seed: number) {
+export function rng(seed: number) {
   let s = (seed * 2654435761) >>> 0
   return () => {
     s = (s + 0x6d2b79f5) >>> 0
@@ -90,9 +90,10 @@ function bleed(data: Uint8ClampedArray, size: number, passes: number) {
   }
 }
 
-function toTexture(data: Uint8ClampedArray, w: number, h: number, repeat: boolean) {
+export function toTexture(data: Uint8ClampedArray, w: number, h: number, repeat: boolean, color = true) {
   const tex = new THREE.DataTexture(new Uint8Array(data.buffer.slice(0)), w, h, THREE.RGBAFormat)
-  tex.colorSpace = THREE.SRGBColorSpace
+  // Colour is authored in sRGB; data channels (masks, heights) stay as they are
+  tex.colorSpace = color ? THREE.SRGBColorSpace : THREE.NoColorSpace
   tex.minFilter = THREE.LinearMipmapLinearFilter
   tex.magFilter = THREE.LinearFilter
   tex.generateMipmaps = true

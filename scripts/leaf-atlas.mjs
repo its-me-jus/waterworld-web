@@ -1,4 +1,4 @@
-// Dev-only: dump the painted leaf atlas and bark to shots/ for eyeballing.
+// Dev-only: dump the painted leaf atlas, bark and ground detail to shots/ for eyeballing.
 // Needs `npm run dev` running.
 import { chromium } from 'playwright-core'
 import { writeFileSync } from 'node:fs'
@@ -29,9 +29,31 @@ const out = await page.evaluate(async (base) => {
     ctx.drawImage(tmp, 0, 0)
     return c.toDataURL('image/png').split(',')[1]
   }
-  return { leaf: dump(m.leafAtlas(), '#7fb0e0'), bark: dump(m.barkTexture(), '#000') }
+  // Ground detail: one channel at a time as grey, side by side
+  const g = await import(`${base}/src/groundtex.ts`)
+  const gt = g.groundDetail().image
+  const S = gt.width
+  const c = document.createElement('canvas')
+  c.width = S * 4
+  c.height = S
+  const ctx = c.getContext('2d')
+  const img = ctx.createImageData(S * 4, S)
+  for (let ch = 0; ch < 4; ch++) {
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const v = gt.data[(y * S + x) * 4 + ch]
+        const o = (y * S * 4 + ch * S + x) * 4
+        img.data[o] = img.data[o + 1] = img.data[o + 2] = v
+        img.data[o + 3] = 255
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0)
+  const ground = c.toDataURL('image/png').split(',')[1]
+  return { leaf: dump(m.leafAtlas(), '#7fb0e0'), bark: dump(m.barkTexture(), '#000'), ground }
 }, BASE)
 writeFileSync('shots/atlas-leaf.png', Buffer.from(out.leaf, 'base64'))
 writeFileSync('shots/atlas-bark.png', Buffer.from(out.bark, 'base64'))
+writeFileSync('shots/atlas-ground.png', Buffer.from(out.ground, 'base64'))
 await browser.close()
 console.log('wrote shots/atlas-leaf.png, shots/atlas-bark.png')

@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { DETAIL_TILE, groundDetail } from './groundtex'
 
 /**
  * Everything the island is made of, shaded.
@@ -71,6 +72,8 @@ export type FoliageParams = THREE.MeshStandardMaterialParameters & {
    * inflated balloon until something at the scale of a hand breaks it up.
    */
   leafBump?: number
+  /** Basalt grain, pits and cracks up close, projected by the world normal. */
+  stone?: boolean
 }
 
 export type PlantBake = {
@@ -412,6 +415,51 @@ const groundNormalBody = /* glsl */ `
     }
     vec3 nw = normalize((vec4(normal, 0.0) * viewMatrix).xyz + bump);
     normal = normalize((viewMatrix * vec4(nw, 0.0)).xyz);
+    normal = gDetailBump(normal, -vViewPosition, gDetailH);
+  }
+`
+
+/**
+ * Close-up detail, shared by the terrain and the stones: one tiling texture
+ * of data channels (see groundtex.ts), and a bump that needs no tangents.
+ *
+ * `gDetailH` is a height in metres, set during the colour stage — which runs
+ * before the normal stage in three's shader — and turned into a normal by its
+ * screen-space derivatives (Mikkelsen's surface-gradient bump). It has to be
+ * written outside any branch the derivatives would straddle.
+ */
+const detailPars = /* glsl */ `
+uniform sampler2D uDetail;
+float gDetailH = 0.0;
+float gDetailTone = 1.0;
+vec3 gDetailBump(vec3 N, vec3 p, float h) {
+  vec3 dpdx = dFdx(p);
+  vec3 dpdy = dFdy(p);
+  float dhx = dFdx(h);
+  float dhy = dFdy(h);
+  vec3 r1 = cross(dpdy, N);
+  vec3 r2 = cross(N, dpdx);
+  float det = dot(dpdx, r1);
+  vec3 grad = sign(det) * (dhx * r1 + dhy * r2);
+  return normalize(abs(det) * N - grad);
+}
+`
+
+/**
+ * Boulders and stones: basalt grain, pits and cracks, projected from three
+ * sides by the world normal, since stones carry no uv. Fades with range,
+ * where it would only shimmer.
+ */
+const stoneColorBody = /* glsl */ `
+  {
+    vec3 sw = pow(abs(normalize(vStoneN)), vec3(4.0));
+    sw /= dot(sw, vec3(1.0));
+    vec3 sp = vGroundPos / ${(DETAIL_TILE * 0.8).toFixed(3)};
+    float sr = texture2D(uDetail, sp.zy).b * sw.x + texture2D(uDetail, sp.xz).b * sw.y + texture2D(uDetail, sp.xy).b * sw.z;
+    float sFade = 1.0 - smoothstep(15.0, 45.0, length(vGroundPos - cameraPosition));
+    gDetailTone = mix(1.0, 0.7 + sr * 0.6, sFade);
+    diffuseColor.rgb *= gDetailTone;
+    gDetailH = (sr - 0.5) * 0.025 * sFade;
   }
 `
 
@@ -455,6 +503,21 @@ const beachRampBody = /* glsl */ `
 const groundColorBody = /* glsl */ `
   {
     vec2 gp = vGroundPos.xz;
+    // The forest floor is painted darker under the roof; litter follows it
+    float floorLum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+    // Taps before any branch, so their mip selection never straddles one
+    vec4 det = texture2D(uDetail, gp / ${DETAIL_TILE.toFixed(3)});
+    #ifdef GROUND_MICRO
+      // Cliffs: two side-on taps at a coarser repeat, weighted by the facet's
+      // own facing, since a top-down tap smears straight down a wall
+      vec3 facet = abs(normalize(cross(dFdx(vGroundPos), dFdy(vGroundPos))));
+      vec2 cw = facet.xz / max(facet.x + facet.z, 0.001);
+      float rockDet =
+        texture2D(uDetail, vGroundPos.zy / ${(DETAIL_TILE * 3).toFixed(3)}).b * cw.x +
+        texture2D(uDetail, vGroundPos.xy / ${(DETAIL_TILE * 3).toFixed(3)}).b * cw.y;
+    #else
+      float rockDet = 0.5;
+    #endif
     ${beachRampBody}
     // None of these bands fade with distance: the whole point is that a
     // hillside seen from four hundred metres still has patches on it. Only the
@@ -558,6 +621,25 @@ const groundColorBody = /* glsl */ `
       diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.34, 0.17, 0.03), lichen * 0.4 * zFade);
     }
 
+    // Close-up detail: sand grain, dead leaves on the soil, grain in the rock.
+    // All of it is gone by fifty metres, where one texture repeat is a pixel
+    // or two and the tiling would start to show.
+    float detFade = 1.0 - smoothstep(22.0, 50.0, gDist);
+    float sandAmt = clamp(vSandW, 0.0, 1.0) * (1.0 - smoothstep(7.0, 14.0, vGroundPos.y));
+    diffuseColor.rgb *= mix(1.0, 0.8 + det.r * 0.4, sandAmt * detFade);
+    // Litter thickest where the floor is darkest, under the roof; thin on the
+    // open lawn, none on sand or bare rock. Drifts by a slow noise too.
+    float soil = green * (1.0 - cliff) * (1.0 - sandAmt);
+    float litterAmt = soil * (0.25 + 0.75 * (1.0 - smoothstep(0.06, 0.14, floorLum))) *
+      (0.55 + 0.45 * smoothstep(0.25, 0.55, gNoise(gp * 0.21 + vec2(5.0, -2.0))));
+    float leafMask = smoothstep(0.03, 0.12, det.g);
+    vec3 leafC = mix(${glslColor('#5a3d22')}, ${glslColor('#94703c')}, smoothstep(0.08, 0.6, det.a));
+    leafC = mix(leafC, ${glslColor('#6f6a38')}, smoothstep(0.78, 0.96, det.a));
+    leafC = mix(leafC, ${glslColor('#3e3226')}, 1.0 - smoothstep(0.03, 0.06, det.a));
+    diffuseColor.rgb = mix(diffuseColor.rgb, leafC * (0.42 + det.g * 0.55), leafMask * litterAmt * detFade);
+    float cliffFade = 1.0 - smoothstep(40.0, 120.0, gDist);
+    diffuseColor.rgb *= mix(1.0, 0.8 + rockDet * 0.4, cliff * cliffFade);
+
     // Live tide wetness — the painted beach was a fixed band; the foreshore
     // now darkens and cools where the water actually sits, and sheens a touch.
     float relative = vGroundPos.y - uTide;
@@ -571,6 +653,18 @@ const groundColorBody = /* glsl */ `
     gWetness = clamp((awash * 0.92 + swash * 0.55) * sandMask * wetNoise, 0.0, 1.0);
     vec3 wetTint = diffuseColor.rgb * vec3(0.52, 0.58, 0.64);
     diffuseColor.rgb = mix(diffuseColor.rgb, wetTint, gWetness * 0.78);
+
+    // Relief for the bump: grain and wind ripples on dry sand (water smooths
+    // both), a few millimetres of leaf over the soil, centimetres on rock.
+    // Ripples run across the trade wind about a hand apart, so they are gone
+    // by ten metres, before they alias.
+    float rippleAmt = sandAmt * smoothstep(2.2, 4.0, vGroundPos.y) * (1.0 - smoothstep(3.0, 10.0, gDist));
+    float rp = dot(gp, vec2(0.83, 0.56)) * 26.0 + gNoise(gp * 0.9) * 7.0 + gNoise(gp * 3.1) * 1.5;
+    float ripple = pow(0.5 + 0.5 * sin(rp), 1.6);
+    gDetailH =
+      (sandAmt * (det.r - 0.5) * 0.0022 * (1.0 - gWetness) + ripple * 0.02 * rippleAmt) * detFade +
+      leafMask * litterAmt * det.g * 0.012 * detFade +
+      cliff * (rockDet - 0.5) * 0.08 * cliffFade;
 
     // A cliff in shade is lit by a clear sky, which is blue, and then has the
     // grade's blue shadow lift added on top: a dark rock face lands on that
@@ -626,6 +720,8 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
   const uCloudDrift = { value: new THREE.Vector2() }
   const uCloudShadow = { value: 0.45 }
   const uTide = { value: 0 }
+  // Painted on first use; the island's terrain and stones share it
+  const uDetail = { value: null as THREE.Texture | null }
   const depthMaterials = new WeakMap<THREE.Material, THREE.MeshDepthMaterial>()
 
   function material(params: FoliageParams) {
@@ -636,6 +732,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       ground = false,
       shadowedBleed = false,
       shapedFill = false,
+      stone = false,
       leafBump = 0,
       ...rest
     } = params
@@ -650,9 +747,10 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     // handed the same program whichever compiled first. Name what actually
     // changes the shader.
     const cards = !!rest.map && (rest.alphaTest ?? 0) > 0
-    const programKey = `foliage:${wind > 0}:${translucency > 0}:${ground}:${leafBump > 0}:${cards}`
+    const programKey = `foliage:${wind > 0}:${translucency > 0}:${ground}:${leafBump > 0}:${cards}:${stone}`
     mat.customProgramCacheKey = () => programKey
     const uShapedFill = { value: shapedFill ? 1 : 0 }
+    if ((ground || stone) && !uDetail.value) uDetail.value = groundDetail()
     const uWindScale = { value: wind }
     const uTranslucency = { value: translucency }
     const uLeafBump = { value: leafBump }
@@ -689,7 +787,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       shader.uniforms.uHazeDensity = { value: 0.0021 }
       shader.uniforms.uHazeMax = { value: 0.88 }
 
-      shader.vertexShader = `varying vec3 vGroundPos;\n${ground ? 'varying float vGroundUp;\nattribute float aSandW;\nvarying float vSandW;\n' : ''}${shader.vertexShader}`
+      shader.vertexShader = `varying vec3 vGroundPos;\n${ground ? 'varying float vGroundUp;\nattribute float aSandW;\nvarying float vSandW;\n' : ''}${stone ? 'varying vec3 vStoneN;\n' : ''}${shader.vertexShader}`
 
       if (wind > 0) addWind(shader)
 
@@ -699,6 +797,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
         '#include <project_vertex>',
         `vGroundPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
         ${ground ? 'vGroundUp = normalize(mat3(modelMatrix) * objectNormal).y;\n        vSandW = aSandW;' : ''}
+        ${stone ? 'vStoneN = mat3(modelMatrix) * objectNormal;' : ''}
         #include <project_vertex>`,
       )
 
@@ -717,6 +816,8 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
         ${cloudShadowPars}
         ${shapedFillPars}
         ${ground ? groundWetPars : ''}
+        ${ground || stone ? detailPars : ''}
+        ${stone ? 'varying vec3 vStoneN;' : ''}
         ${ground ? 'varying float vGroundUp;\n        varying float vSandW;' : ''}
         ${shader.fragmentShader}
       `
@@ -728,6 +829,19 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
           // Let the texel carry through it (its mean is about 0.55 linear).
           `#include <emissivemap_fragment>\n#ifdef USE_MAP\ntotalEmissiveRadiance *= sampledDiffuseColor.rgb * 1.8;\n#endif\n${shapedFillBody}`,
         )
+
+      if (ground || stone) shader.uniforms.uDetail = uDetail
+      if (stone) {
+        // The fill would light the pits as brightly as the crowns between
+        // them, so it takes the same grain
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <color_fragment>', `#include <color_fragment>\n${stoneColorBody}`)
+          .replace(
+            '#include <normal_fragment_begin>',
+            `#include <normal_fragment_begin>\nnormal = gDetailBump(normal, -vViewPosition, gDetailH);`,
+          )
+          .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\ntotalEmissiveRadiance *= gDetailTone;`)
+      }
 
       if (ground) {
         shader.uniforms.uTide = uTide

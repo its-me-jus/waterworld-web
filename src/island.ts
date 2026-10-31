@@ -1854,7 +1854,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   // fill keeps them reading as rock and wood rather than holes — shaped by
   // which way each face points, because a fill that lights the underside as
   // brightly as the top turned every boulder into pale unlit dough.
-  const stoneFill = { emissive: new THREE.Color('#7a7160'), emissiveIntensity: 0.55, shapedFill: true }
+  const stoneFill = { emissive: new THREE.Color('#7a7160'), emissiveIntensity: 0.55, shapedFill: true, stone: true }
   const woodFill = { emissive: new THREE.Color('#6b5a44'), emissiveIntensity: 0.55, shapedFill: true }
 
   const terrain = new THREE.Mesh(
