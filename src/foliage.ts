@@ -29,6 +29,12 @@ export type FoliageRig = {
   /** The key light the leaf backlight reads from. */
   setSun: (dir: THREE.Vector3, color: THREE.Color) => void
   /**
+   * The forest roof seen from above, for the `underRoof` layers: r is how
+   * closed the roof is, g the height of its underside in metres. `x`/`z` is
+   * the world centre of the map, `extent` its half-width in metres.
+   */
+  setCanopy: (map: THREE.Texture, x: number, z: number, extent: number) => void
+  /**
    * A lit material with aerial perspective, and optionally wind and leaf
    * backlight. `wind` is metres of sway at the tip of a fully-weighted vertex.
    */
@@ -74,6 +80,18 @@ export type FoliageParams = THREE.MeshStandardMaterialParameters & {
   leafBump?: number
   /** Basalt grain, pits and cracks up close, projected by the world normal. */
   stone?: boolean
+  /**
+   * Sun that comes straight through a leaf from behind it, whichever way you
+   * look, 0 for none. For the roof seen from underneath, where every leaf
+   * faces away from the sun and without this the whole ceiling is one dark lid.
+   */
+  transmit?: number
+  /**
+   * Lives under the forest roof: takes its shade from the canopy map (see
+   * setCanopy) — sun pools under the gaps, flecks under the crowns, less sky.
+   * Desktop only; a phone keeps the shade painted into the ground.
+   */
+  underRoof?: boolean
 }
 
 export type PlantBake = {
@@ -221,6 +239,7 @@ uniform vec3 uSunDir;
 uniform vec3 uSunColor;
 uniform float uTranslucency;
 uniform vec3 uThroughColor;
+uniform float uTransmit;
 `
 
 /**
@@ -254,7 +273,10 @@ const leafFragmentBody = /* glsl */ `
     // without this the half of every blade facing away from the sun crushes to
     // black — which is exactly what a lawn of flat sheets must not do.
     float wrap = max(dot(leafN, leafL) * 0.5 + 0.5, 0.0);
-    float bleed = back + wrap * 0.55;
+    // Light that came in the far face and leaves this one scattered, which a
+    // roof seen from below is almost nothing but. Scaled by how much the leaf
+    // turns its back to the sun, so the tops of the crowns don't take it too.
+    float bleed = back + wrap * 0.55 + max(-dot(leafN, leafL), 0.0) * uTransmit;
     #if defined( SHADOWED_BLEED ) && defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
       bleed *= 0.35 + 0.65 * getShadowMask();
     #endif
@@ -322,6 +344,52 @@ const cloudShadowBody = /* glsl */ `
     float shade = smoothstep(0.38, 0.74, deck) * uCloudShadow;
     reflectedLight.directDiffuse *= 1.0 - shade;
     reflectedLight.directSpecular *= 1.0 - shade;
+  }
+`
+
+/**
+ * Shade under the forest roof.
+ *
+ * The roof can't cast — a few thousand crowns in the shadow map put the whole
+ * interior in one night-dark shadow and cost a depth pass — so this reads a
+ * top-down map of it instead. One tap straight up finds the roof's underside;
+ * the second is slid toward the sun by that height, so the pool of light
+ * under a gap lands where the gap actually throws it and drifts with the day.
+ * Under the crowns the sun only gets through in flecks, small and moving
+ * gently as the leaves above them do, and the sky is mostly hidden, so the
+ * ambient drops too.
+ */
+const canopyShadePars = /* glsl */ `
+uniform sampler2D uCanopy;
+uniform vec3 uCanopyXf;
+uniform vec3 uCanopySun;
+uniform float uTime;
+`
+
+const canopyShadeBody = /* glsl */ `
+  {
+    vec2 cuv = (vGroundPos.xz - uCanopyXf.xy) * uCanopyXf.z;
+    vec2 over = texture2D(uCanopy, cuv).rg;
+    vec3 sunW = normalize(uCanopySun);
+    float above = max(over.g * 255.0 - vGroundPos.y, 0.0);
+    float roofShadow = texture2D(uCanopy, cuv + sunW.xz / max(sunW.y, 0.3) * above * uCanopyXf.z).r;
+    float ft = uTime * 0.4;
+    // Along the sun's rays down to sea level, so a fleck on a trunk is part of
+    // the same pattern as the ones on the floor beside it rather than a stripe
+    vec2 ray = vGroundPos.xz - sunW.xz / max(sunW.y, 0.3) * vGroundPos.y;
+    vec2 fp = ray * 0.9 + vec2(sin(ft + ray.y * 0.07), cos(ft * 0.8 + ray.x * 0.07)) * 0.1;
+    // Two octaves, cut high: small spots in loose clusters, not soft blobs
+    float spots = gNoise(fp) * 0.55 + gNoise(fp * 2.7 + 5.2) * 0.45;
+    float fleck = smoothstep(0.6, 0.71, spots) * (0.35 + 0.65 * smoothstep(0.3, 0.62, gNoise(vGroundPos.xz * 0.09 + 3.0)));
+    // A roof of leaves is not a slab: over a quarter of the sun still comes through
+    // scattered, and the flecks are the sun itself through a hole
+    float lit = 1.0 - roofShadow * (0.72 - fleck * 0.7);
+    reflectedLight.directDiffuse *= lit;
+    reflectedLight.directSpecular *= lit;
+    float sky = 1.0 - over.r * 0.15;
+    reflectedLight.indirectDiffuse *= sky;
+    reflectedLight.indirectSpecular *= sky;
+    totalEmissiveRadiance *= sky;
   }
 `
 
@@ -630,7 +698,14 @@ const groundColorBody = /* glsl */ `
     // Litter thickest where the floor is darkest, under the roof; thin on the
     // open lawn, none on sand or bare rock. Drifts by a slow noise too.
     float soil = green * (1.0 - cliff) * (1.0 - sandAmt);
-    float litterAmt = soil * (0.25 + 0.75 * (1.0 - smoothstep(0.06, 0.14, floorLum))) *
+    // Where the canopy map does the shading the floor is painted lighter
+    // (island.ts), so the same litter sits a step further up the scale
+    #ifdef CANOPY_SHADE
+      float litterLum = 1.0 - smoothstep(0.075, 0.16, floorLum);
+    #else
+      float litterLum = 1.0 - smoothstep(0.06, 0.14, floorLum);
+    #endif
+    float litterAmt = soil * (0.25 + 0.75 * litterLum) *
       (0.55 + 0.45 * smoothstep(0.25, 0.55, gNoise(gp * 0.21 + vec2(5.0, -2.0))));
     float leafMask = smoothstep(0.03, 0.12, det.g);
     vec3 leafC = mix(${glslColor('#5a3d22')}, ${glslColor('#94703c')}, smoothstep(0.08, 0.6, det.a));
@@ -705,7 +780,7 @@ const groundWetBody = /* glsl */ `
   metalnessFactor = mix(metalnessFactor, 0.06, gWetness * 0.55);
 `
 
-/** Texels across the leaf atlas, for the mip-level estimate on cards. */
+/** Texels across the leaf atlas, for the mip-level estimate on cards whose map doesn't say. */
 const CARD_TEX_SIZE = 1024
 
 export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = {}): FoliageRig {
@@ -722,6 +797,8 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
   const uTide = { value: 0 }
   // Painted on first use; the island's terrain and stones share it
   const uDetail = { value: null as THREE.Texture | null }
+  const uCanopy = { value: null as THREE.Texture | null }
+  const uCanopyXf = { value: new THREE.Vector3(0, 0, 1) }
   const depthMaterials = new WeakMap<THREE.Material, THREE.MeshDepthMaterial>()
 
   function material(params: FoliageParams) {
@@ -734,10 +811,14 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       shapedFill = false,
       stone = false,
       leafBump = 0,
+      transmit = 0,
+      underRoof = false,
       ...rest
     } = params
     const mat = new THREE.MeshStandardMaterial({ ...rest, fog: false })
     if (shadowedBleed) mat.defines = { ...mat.defines, SHADOWED_BLEED: '' }
+    const roofShade = underRoof && !opts.lowPower
+    if (roofShade) mat.defines = { ...mat.defines, CANOPY_SHADE: '' }
     // The two closest octaves of ground colour are the finest detail in the
     // frame and the least visible on a five-inch screen. They come out on a
     // phone, where the terrain is most of the fill in any shot facing inland.
@@ -747,12 +828,15 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     // handed the same program whichever compiled first. Name what actually
     // changes the shader.
     const cards = !!rest.map && (rest.alphaTest ?? 0) > 0
-    const programKey = `foliage:${wind > 0}:${translucency > 0}:${ground}:${leafBump > 0}:${cards}:${stone}`
+    const programKey = `foliage:${wind > 0}:${translucency > 0}:${ground}:${leafBump > 0}:${cards}:${stone}:${roofShade}`
     mat.customProgramCacheKey = () => programKey
     const uShapedFill = { value: shapedFill ? 1 : 0 }
     if ((ground || stone) && !uDetail.value) uDetail.value = groundDetail()
     const uWindScale = { value: wind }
     const uTranslucency = { value: translucency }
+    const uTransmit = { value: transmit }
+    // Texels across this card's texture, for the mip estimate below
+    const cardTexels = { value: (rest.map?.image as { width?: number } | undefined)?.width ?? CARD_TEX_SIZE }
     const uLeafBump = { value: leafBump }
     const uThrough = { value: new THREE.Color(throughColor ?? '#cfe27a') }
 
@@ -804,6 +888,13 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       shader.uniforms.uCloudDrift = uCloudDrift
       shader.uniforms.uCloudShadow = uCloudShadow
       shader.uniforms.uShapedFill = uShapedFill
+      if (roofShade) {
+        shader.uniforms.uCanopy = uCanopy
+        shader.uniforms.uCanopyXf = uCanopyXf
+        shader.uniforms.uCanopySun = uSunDir
+        shader.uniforms.uTime = uTime
+      }
+      if (cards) shader.uniforms.uCardTexels = cardTexels
 
       shader.fragmentShader = `
         uniform vec3 uHaze;
@@ -818,10 +909,12 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
         ${ground ? groundWetPars : ''}
         ${ground || stone ? detailPars : ''}
         ${stone ? 'varying vec3 vStoneN;' : ''}
+        ${roofShade ? canopyShadePars : ''}
+        ${cards ? 'uniform float uCardTexels;' : ''}
         ${ground ? 'varying float vGroundUp;\n        varying float vSandW;' : ''}
         ${shader.fragmentShader}
       `
-        .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${cloudShadowBody}`)
+        .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${cloudShadowBody}${roofShade ? canopyShadeBody : ''}`)
         .replace(
           '#include <emissivemap_fragment>',
           // The fill lifts shade evenly, which on a textured surface washes out
@@ -861,6 +954,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
         shader.uniforms.uSunDir = uSunDir
         shader.uniforms.uSunColor = uSunColor
         shader.uniforms.uTranslucency = uTranslucency
+        shader.uniforms.uTransmit = uTransmit
         shader.uniforms.uLeafBump = uLeafBump
         shader.uniforms.uThroughColor = uThrough
         shader.fragmentShader = shader.fragmentShader
@@ -882,16 +976,20 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
         }
       }
 
-      if (cards) {
+      if (cards || translucency > 0) {
         // A card's normal is the crown's, so at the rim of a crown it faces
         // across the view and Schlick takes the specular to full: a ring of
         // pale sky-coloured sprays round every tree. A real spray's leaves
         // face every way and never line up for that, so cap the grazing term.
+        // Palm fronds and blades seen edge-on against the sky flashed the
+        // same pale grey-blue, so every leaf takes the cap.
         shader.fragmentShader = shader.fragmentShader.replace(
           '#include <lights_physical_fragment>',
           `#include <lights_physical_fragment>
           material.specularF90 = 0.25;`,
         )
+      }
+      if (cards) {
         // Alpha-tested leaves thin out with range: each mip level averages
         // leaf with gap, the average drops under the cutoff, and a crown
         // that is a solid spray up close is a sparse net at a hundred metres.
@@ -900,7 +998,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
         shader.fragmentShader = shader.fragmentShader.replace(
           '#include <alphatest_fragment>',
           `{
-            vec2 texel = vMapUv * ${CARD_TEX_SIZE.toFixed(1)};
+            vec2 texel = vMapUv * uCardTexels;
             float lod = 0.5 * log2(max(max(dot(dFdx(texel), dFdx(texel)), dot(dFdy(texel), dFdy(texel))), 1.0));
             diffuseColor.a *= 1.0 + lod * 0.3;
           }
@@ -946,6 +1044,11 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     uSunColor.value.copy(color)
   }
 
+  function setCanopy(map: THREE.Texture, x: number, z: number, extent: number) {
+    uCanopy.value = map
+    uCanopyXf.value.set(x - extent, z - extent, 1 / (extent * 2))
+  }
+
   function mesh(geometry: THREE.BufferGeometry, material: THREE.MeshStandardMaterial) {
     const m = new THREE.Mesh(geometry, material)
     const depth = depthMaterials.get(material)
@@ -953,5 +1056,5 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     return m
   }
 
-  return { update, setSun, material, mesh }
+  return { update, setSun, setCanopy, material, mesh }
 }

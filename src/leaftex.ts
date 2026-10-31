@@ -335,6 +335,128 @@ export function shrinkCore(geo: THREE.BufferGeometry, k: number, centre = new TH
   return geo
 }
 
+/**
+ * Drop the faces of a crown's core that look down. Seen from under the roof
+ * that underside was the whole ceiling — one smooth dark lid — and the sprays
+ * hung over it never showed. Without it you look up through the lower sprays
+ * into the crown, past the inside of the lump (culled from in there) and out
+ * through the sprays on top to the sky. From the sea nobody sees a crown's
+ * underside, and it is a third of the core's triangles saved.
+ */
+export function openUnderside(geo: THREE.BufferGeometry, below = -0.2) {
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute
+  const index = geo.index
+  const tris = (index ? index.count : pos.count) / 3
+  const at = (k: number) => (index ? index.getX(k) : k)
+  const a = new THREE.Vector3()
+  const b = new THREE.Vector3()
+  const c = new THREE.Vector3()
+  const keep: number[] = []
+  for (let t = 0; t < tris; t++) {
+    const ia = at(t * 3)
+    const ib = at(t * 3 + 1)
+    const ic = at(t * 3 + 2)
+    a.fromBufferAttribute(pos, ia)
+    b.fromBufferAttribute(pos, ib)
+    c.fromBufferAttribute(pos, ic)
+    const n = b.sub(a).cross(c.sub(a)).normalize()
+    if (n.y >= below) keep.push(ia, ib, ic)
+  }
+  if (index) {
+    geo.setIndex(keep)
+  } else {
+    const out = geo.clone()
+    for (const name of Object.keys(geo.attributes)) {
+      const src = geo.getAttribute(name) as THREE.BufferAttribute
+      const arr = new Float32Array(keep.length * src.itemSize)
+      keep.forEach((v, i) => {
+        for (let k = 0; k < src.itemSize; k++) arr[i * src.itemSize + k] = src.array[v * src.itemSize + k]
+      })
+      out.setAttribute(name, new THREE.BufferAttribute(arr, src.itemSize))
+    }
+    return out
+  }
+  return geo
+}
+
+let fernCache: THREE.DataTexture | null = null
+
+/**
+ * One fern frond, cut out: a rachis up the middle and a comb of pointed
+ * pinnae angled toward the tip, gaps between every one. A fern drawn as a
+ * solid tapered blade is a green paper spike; the gaps are what make it read
+ * as a fern, and they are what the flecks of sun under the roof catch.
+ * The base is at v = 0, which is the top row of the canvas.
+ */
+export function fernTexture() {
+  if (fernCache) return fernCache
+  const S = 512
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = S
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) throw new Error('2D canvas unavailable')
+  const r = rng(97)
+  const mid = S / 2
+  const pairs = 15
+  for (let i = 0; i < pairs; i++) {
+    const t = (i + 0.6) / pairs
+    const y = 14 + t * (S - 40)
+    // Longest a third of the way up, short at the very base and the tip
+    const len = (S * 0.47) * Math.min(1, 0.55 + t * 1.6) * (1 - Math.pow(t, 3) * 0.55)
+    const wid = 15 + (1 - t) * 9
+    for (const side of [1, -1]) {
+      ctx.save()
+      ctx.translate(mid + side * 3, y + (side > 0 ? 0 : 7))
+      // Swept toward the tip, more so near it
+      ctx.rotate(side * (Math.PI / 2 - (0.45 + t * 0.35)))
+      const L = len * (0.92 + r() * 0.1)
+      const W = wid
+      const v = 0.72 + r() * 0.26
+      const path = new Path2D()
+      path.moveTo(0, -W * 0.35)
+      // Scalloped edge: a few lobes down each side of the pinna
+      const lobes = 6
+      for (let k = 1; k <= lobes; k++) {
+        const x = (k / lobes) * L
+        const w = W * 0.5 * (1 - Math.pow(k / lobes, 1.6) * 0.92)
+        path.quadraticCurveTo(x - L / lobes / 2, -w - 3, x, -w * 0.8)
+      }
+      path.lineTo(L, 0)
+      for (let k = lobes; k >= 1; k--) {
+        const x = (k / lobes) * L
+        const w = W * 0.5 * (1 - Math.pow(k / lobes, 1.6) * 0.92)
+        path.lineTo(x, w * 0.8)
+        path.quadraticCurveTo(x - L / lobes / 2, w + 3, x - L / lobes, w * 0.8)
+      }
+      path.closePath()
+      const grad = ctx.createLinearGradient(0, 0, L, 0)
+      grad.addColorStop(0, `rgb(${Math.round(150 * v)},${Math.round(170 * v)},${Math.round(118 * v)})`)
+      grad.addColorStop(0.4, `rgb(${Math.round(222 * v)},${Math.round(240 * v)},${Math.round(186 * v)})`)
+      grad.addColorStop(1, `rgb(${Math.round(232 * v)},${Math.round(246 * v)},${Math.round(192 * v)})`)
+      ctx.fillStyle = grad
+      ctx.fill(path)
+      ctx.strokeStyle = `rgba(245,255,215,${0.35 * v})`
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.moveTo(2, 0)
+      ctx.lineTo(L * 0.9, 0)
+      ctx.stroke()
+      ctx.restore()
+    }
+  }
+  // The rachis over the pinnae' roots
+  ctx.strokeStyle = 'rgb(150,150,104)'
+  ctx.lineWidth = 7
+  ctx.beginPath()
+  ctx.moveTo(mid, 0)
+  ctx.lineTo(mid, S - 10)
+  ctx.stroke()
+  const img = ctx.getImageData(0, 0, S, S)
+  bleed(img.data, S, 6)
+  fernCache = toTexture(img.data, S, S, false)
+  return fernCache
+}
+
 export type LeafCardOptions = {
   /** How many sprays to scatter over the surface. */
   count: number

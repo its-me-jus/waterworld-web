@@ -8,7 +8,8 @@ const CHROME =
   process.env.CHROME_PATH ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 // Vite moves to 5174+ when 5173 is already taken — SHOT_BASE follows it there
 const BASE = process.env.SHOT_BASE ?? 'http://localhost:5173'
-const OUT = 'shots'
+// SHOT_OUT=shots/before-r10 keeps a set of shots apart
+const OUT = process.env.SHOT_OUT ?? 'shots'
 // iPhone-ish portrait — the tightest FOV we have to keep the hands inside
 const PORTRAIT = { width: 430, height: 932 }
 // `dive` holds Shift for N seconds (~4 m/s down) then releases and shoots
@@ -45,6 +46,10 @@ const VIEWS = [
   // Round-4 jungle: under the closed forest roof, and back out at the cove
   // looking up at where the roof starts
   { name: 'jungle-in', url: 'http://localhost:5173/?x=860&z=-600&yaw=-0.6&pitch=0.1' },
+  // Roof round: straight up through the crowns, and a second stand further in
+  { name: 'jungle-up', url: 'http://localhost:5173/?x=860&z=-600&yaw=-0.6&pitch=0.75' },
+  { name: 'fern-close', url: 'http://localhost:5173/?x=852&z=-594&yaw=-0.6&pitch=-0.35' },
+  { name: 'jungle-deep', url: 'http://localhost:5173/?x=905&z=-640&yaw=0.4&pitch=0.15' },
   // Drone views of the whole island (?fly lifts the eye, dev only): the
   // approach side from high and off-axis, and the far side
   { name: 'aerial-approach', url: 'http://localhost:5173/?x=560&z=-380&yaw=-0.96&pitch=-0.32&fly=170' },
