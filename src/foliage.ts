@@ -611,6 +611,9 @@ const groundWetBody = /* glsl */ `
   metalnessFactor = mix(metalnessFactor, 0.06, gWetness * 0.55);
 `
 
+/** Texels across the leaf atlas, for the mip-level estimate on cards. */
+const CARD_TEX_SIZE = 1024
+
 export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = {}): FoliageRig {
   // Shared uniform holders. onBeforeCompile copies the reference, so one write
   // here reaches every material built off this rig.
@@ -646,7 +649,8 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     // what three keys compiled programs on — so a rock and a log could be
     // handed the same program whichever compiled first. Name what actually
     // changes the shader.
-    const programKey = `foliage:${wind > 0}:${translucency > 0}:${ground}:${leafBump > 0}`
+    const cards = !!rest.map && (rest.alphaTest ?? 0) > 0
+    const programKey = `foliage:${wind > 0}:${translucency > 0}:${ground}:${leafBump > 0}:${cards}`
     mat.customProgramCacheKey = () => programKey
     const uShapedFill = { value: shapedFill ? 1 : 0 }
     const uWindScale = { value: wind }
@@ -669,7 +673,13 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     // swaying frond would drop a rigid shadow. Give the depth material the
     // same displacement.
     if (wind > 0) {
-      const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking })
+      // A leaf card's shadow has to be cut out the same as the card, or every
+      // spray drops a solid rectangle
+      const depth = new THREE.MeshDepthMaterial({
+        depthPacking: THREE.RGBADepthPacking,
+        map: rest.map ?? null,
+        alphaTest: rest.alphaTest ?? 0,
+      })
       depth.onBeforeCompile = addWind
       depthMaterials.set(mat, depth)
     }
@@ -711,7 +721,13 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
         ${shader.fragmentShader}
       `
         .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${cloudShadowBody}`)
-        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${shapedFillBody}`)
+        .replace(
+          '#include <emissivemap_fragment>',
+          // The fill lifts shade evenly, which on a textured surface washes out
+          // exactly the bark fissures and leaf edges the texture is there for.
+          // Let the texel carry through it (its mean is about 0.55 linear).
+          `#include <emissivemap_fragment>\n#ifdef USE_MAP\ntotalEmissiveRadiance *= sampledDiffuseColor.rgb * 1.8;\n#endif\n${shapedFillBody}`,
+        )
 
       if (ground) {
         shader.uniforms.uTide = uTide
@@ -750,6 +766,32 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
             '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>',
           )
         }
+      }
+
+      if (cards) {
+        // A card's normal is the crown's, so at the rim of a crown it faces
+        // across the view and Schlick takes the specular to full: a ring of
+        // pale sky-coloured sprays round every tree. A real spray's leaves
+        // face every way and never line up for that, so cap the grazing term.
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <lights_physical_fragment>',
+          `#include <lights_physical_fragment>
+          material.specularF90 = 0.25;`,
+        )
+        // Alpha-tested leaves thin out with range: each mip level averages
+        // leaf with gap, the average drops under the cutoff, and a crown
+        // that is a solid spray up close is a sparse net at a hundred metres.
+        // Scaling alpha back up by how far down the mip chain the lookup is
+        // keeps the coverage the near view had.
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <alphatest_fragment>',
+          `{
+            vec2 texel = vMapUv * ${CARD_TEX_SIZE.toFixed(1)};
+            float lod = 0.5 * log2(max(max(dot(dFdx(texel), dFdx(texel)), dot(dFdy(texel), dFdy(texel))), 1.0));
+            diffuseColor.a *= 1.0 + lod * 0.3;
+          }
+          #include <alphatest_fragment>`,
+        )
       }
 
       shader.fragmentShader = shader.fragmentShader.replace(

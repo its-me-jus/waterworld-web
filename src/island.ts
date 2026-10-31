@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { bakePlant, createFoliage, plantTint, type PlantBake } from './foliage'
+import { barkTexture, barkUv, leafAtlas, leafCards, shrinkCore } from './leaftex'
 import { fbm, noise2 } from './waves'
 
 /**
@@ -1898,6 +1899,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const jungleCanopy: THREE.BufferGeometry[] = []
   const jungleTrunks: THREE.BufferGeometry[] = []
   const jungleFar: THREE.BufferGeometry[] = []
+  /** Leaf sprays over the crowns — alpha-cut cards, see leaftex.ts. */
+  const jungleLeaves: THREE.BufferGeometry[] = []
+  const broadLeaves: THREE.BufferGeometry[] = []
   // Saplings share the broadleaf batches — same bark / canopy materials
   /** Hillside boulders + chunky beach stones — ellipsoid push like the wreck reef. */
   const rockBlockers: { centre: THREE.Vector3; axes: THREE.Vector3 }[] = []
@@ -2103,10 +2107,23 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     seed: number,
     place: THREE.Matrix4,
   ) => {
-    broadTrunks.push(bakeFor(tree.trunk, seed, SPECIES.broadTrunk).applyMatrix4(place))
-    for (const blob of tree.canopy) {
+    broadTrunks.push(bakeFor(barkUv(tree.trunk, tree.height), seed, SPECIES.broadTrunk).applyMatrix4(place))
+    tree.canopy.forEach((blob, b) => {
+      // Sprays by surface area, about a metre long: these are the trees you
+      // walk under, so they get the densest cover on the island
+      blob.computeBoundingSphere()
+      const sphere = blob.boundingSphere ?? new THREE.Sphere(new THREE.Vector3(), 1)
+      const radius = sphere.radius
+      const sprayLen = Math.min(1.5, 0.6 + radius * 0.45)
+      // About one and a half times the lump's skin in leaf, so it hides
+      const count = Math.round(
+        THREE.MathUtils.clamp((radius * radius * 9 * (low ? 0.55 : 1)) / (sprayLen * sprayLen * 0.5 * 0.6), 8, low ? 40 : 110),
+      )
+      const cards = leafCards(blob, { count, length: sprayLen, seed: seed * 31 + b, fold: false, lean: 0.5, depth: radius * 0.18 })
+      broadLeaves.push(bakeFor(cards, seed, SPECIES.canopy, tree.height).applyMatrix4(place))
+      shrinkCore(blob, 0.84, sphere.center.clone())
       broadCanopy.push(bakeFor(blob, seed, SPECIES.canopy, tree.height).applyMatrix4(place))
-    }
+    })
   }
 
   // Hibiscus red, coastal gold, blush pink, coral — the only warm notes on an
@@ -2872,6 +2889,14 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   {
     const templates = Array.from({ length: low ? 6 : 10 }, (_, k) => jungleCrown(k + 7100, 1, low ? 0 : 1))
     const farTemplates = templates.map((_, k) => jungleCrown(k + 7100, 0))
+    // Sprays about 0.4 of the crown's spread: 1.5–2.5 m once scaled, a few
+    // dozen leaves each. Only near — past the swap the far lumps stand alone
+    // Flat cards: the roof is seen from ten metres up at the nearest, where a
+    // fold along the rib doesn't show and would double the count
+    const leafTemplates = templates.map((t, k) =>
+      leafCards(t, { count: low ? 30 : 64, length: 0.62, seed: k + 7100, fold: false, depth: 0.16 }),
+    )
+    for (const t of templates) shrinkCore(t, 0.82)
     const spacing = low ? 11 : 6.8
     const reach = 300
     let planted = 0
@@ -2921,6 +2946,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
         for (const [template, list] of [
           [templates[k], jungleCanopy],
           [farTemplates[k], jungleFar],
+          [leafTemplates[k], jungleLeaves],
         ] as const) {
           const geo = template.clone()
           geo.scale(size, size * stretch, size)
@@ -2934,7 +2960,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
           list.push(geo.applyMatrix4(place))
         }
         const bole = trunkH + size * 0.4
-        const trunk = new THREE.CylinderGeometry(0.1 + size * 0.02, 0.2 + size * 0.04, bole, 7, 1, true)
+        const trunk = new THREE.CylinderGeometry(0.1 + size * 0.02, 0.2 + size * 0.04, bole, 10, 1, true)
+        barkUv(trunk, bole, 2)
         trunk.translate(0, bole / 2, 0)
         jungleTrunks.push(bakeFor(trunk, seed, SPECIES.broadTrunk).applyMatrix4(place))
         planted++
@@ -2954,6 +2981,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       jungleCrown(k + 7300, low ? 1 : 2, low ? 1 : 2),
     )
     const crownFar = crownTemplates.map((_, k) => jungleCrown(k + 7300, low ? 0 : 1, 0))
+    // Bigger crowns, so relatively smaller sprays and more of them
+    const crownLeaves = crownTemplates.map((t, k) =>
+      leafCards(t, { count: low ? 60 : 150, length: 0.42, seed: k + 7300, fold: false, depth: 0.16 }),
+    )
+    for (const t of crownTemplates) shrinkCore(t, 0.82)
     const emergentWanted = low ? 22 : 64
     const spots: { x: number; z: number }[] = []
     for (let i = 0; i < 12000 && spots.length < emergentWanted; i++) {
@@ -2986,6 +3018,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       for (const [template, list] of [
         [crownTemplates[k], jungleCanopy],
         [crownFar[k], jungleFar],
+        [crownLeaves[k], jungleLeaves],
       ] as const) {
         const geo = template.clone()
         geo.scale(size * wide, size * stretch, size / wide)
@@ -3000,6 +3033,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       }
       const bole = trunkH + size * stretch * 0.3
       const trunk = new THREE.CylinderGeometry(0.4 + size * 0.035, 0.8 + size * 0.07, bole, 8, 1, true)
+      barkUv(trunk, bole, 3)
       trunk.translate(0, bole / 2, 0)
       jungleTrunks.push(bakeFor(trunk, seed, SPECIES.broadTrunk).applyMatrix4(place))
     }
@@ -3112,6 +3146,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
    * through the leaf, and `throughColor` is what colour it is by the time it
    * gets out — always yellower than the leaf itself.
    */
+  const leafMap = leafAtlas()
+  const bark = barkTexture()
   const layers: {
     parts: THREE.BufferGeometry[]
     color: number
@@ -3131,6 +3167,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     noCast?: boolean
     /** Only drawn past this range — the far stand-in for a layer with the same `range`. */
     farFrom?: number
+    /** Texture, multiplied into the colour — leaf atlas or bark. */
+    map?: THREE.Texture
+    /** Cut-out threshold on the map's alpha, for leaf cards. */
+    alphaTest?: number
   }[] = [
     // Bark is rough but it is not chalk. Left at 0.95 a trunk picks up nothing
     // at all from the sky probe, so backlit it goes to a flat black cutout —
@@ -3150,10 +3190,14 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       doubleSided: true,
     },
     { parts: nuts, color: 0x7c6038, roughness: 1, wind: PALM_WIND },
-    { parts: broadTrunks, color: 0x6d573a, roughness: 0.76, wind: BROAD_WIND },
+    // Brighter than the old flat bark: the texture averages about half, so
+    // the colour is doubled (in linear) to land on the same mean
+    { parts: broadTrunks, color: 0x967851, roughness: 0.76, wind: BROAD_WIND, map: bark },
     {
       parts: broadCanopy,
-      color: 0x528a33,
+      // The lumps are now the shaded inside of the crown, seen only through
+      // gaps between sprays, so a shade darker than the leaves over them
+      color: 0x44752a,
       // A leaf has a waxy skin: enough gloss to take a highlight from the
       // sun and a sheen from the sky probe, where chalk-rough took neither
       roughness: 0.62,
@@ -3163,6 +3207,24 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       shadowedBleed: true,
       leafBump: 0.9,
     },
+    // The sprays over those lumps. Casts, cut out, so a specimen tree drops a
+    // dappled shadow instead of a solid blot. Brighter than the lumps by the
+    // atlas's average value (~0.6 linear), so the crown keeps its old tone
+    {
+      parts: broadLeaves,
+      color: 0x67aa41,
+      // Rougher than the lumps: a flat card takes the sky's sheen as one
+      // pale sheet, where a real spray scatters it leaf by leaf
+      roughness: 0.88,
+      wind: BROAD_WIND,
+      translucency: 0.85,
+      throughColor: '#bfdd6a',
+      shadowedBleed: true,
+      doubleSided: true,
+      map: leafMap,
+      alphaTest: 0.5,
+      range: 420,
+    },
     // The closed forest roof. It doesn't cast: thousands of overlapping crowns
     // put the whole interior in one unbroken shadow, which under a near-black
     // ground hemisphere is night at noon. The shade under it is painted into
@@ -3170,13 +3232,29 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // still throw real dappled shadow. It is also most of a depth pass saved.
     {
       parts: jungleCanopy,
-      color: 0x528a33,
+      color: 0x44752a,
       roughness: 0.62,
       wind: BROAD_WIND,
       translucency: 0.85,
       throughColor: '#bfdd6a',
       shadowedBleed: true,
       leafBump: 0.9,
+      noCast: true,
+      range: 300,
+    },
+    {
+      parts: jungleLeaves,
+      color: 0x67aa41,
+      // Rougher than the lumps: a flat card takes the sky's sheen as one
+      // pale sheet, where a real spray scatters it leaf by leaf
+      roughness: 0.88,
+      wind: BROAD_WIND,
+      translucency: 0.85,
+      throughColor: '#bfdd6a',
+      shadowedBleed: true,
+      doubleSided: true,
+      map: leafMap,
+      alphaTest: 0.5,
       noCast: true,
       range: 300,
     },
@@ -3195,7 +3273,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // Rainforest bark runs pale — grey and lichen-blotched, not the brown of a
     // temperate trunk — and in this much shade it needs the wood fill or every
     // bole is a black post
-    { parts: jungleTrunks, color: 0x8a826e, roughness: 0.8, wind: BROAD_WIND, noCast: true, fill: woodFill, range: 300 },
+    { parts: jungleTrunks, color: 0xbcb398, roughness: 0.8, wind: BROAD_WIND, noCast: true, fill: woodFill, range: 300, map: bark },
     {
       parts: grassParts,
       range: 330,
@@ -3301,6 +3379,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       throughColor: layer.throughColor,
       shadowedBleed: layer.shadowedBleed,
       leafBump: layer.leafBump,
+      map: layer.map ?? null,
+      alphaTest: layer.alphaTest ?? 0,
       ...(layer.fill ?? skylight),
     })
     const mesh = foliage.mesh(

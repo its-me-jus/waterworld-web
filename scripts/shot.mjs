@@ -169,6 +169,13 @@ for (const { name, url, dive = 0, fwd = 0, rise = 0, zoom, viewport } of VIEWS) 
     viewport: viewport ?? { width: 1280, height: 720 },
     deviceScaleFactor: zoom ? 3 : 1,
   })
+  // SHOT_LOW=1 fakes a 2-core device, which is what flips the scene to its
+  // phone budget; shots then land in shots/low-<name>.png
+  if (process.env.SHOT_LOW) {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 2 })
+    })
+  }
   // Benign: three's Clock nag, and headless Chrome has no user gesture for audio
   const noise = /THREE.Clock: This module has been deprecated|AudioContext was not allowed to start/
   page.on('console', (m) => {
@@ -192,7 +199,7 @@ for (const { name, url, dive = 0, fwd = 0, rise = 0, zoom, viewport } of VIEWS) 
   const wait = Math.max(dive, fwd, rise)
   if (wait > 0) await page.waitForTimeout(wait * 1000)
   if (dive > 0) await page.keyboard.up('Shift')
-  await page.screenshot({ path: `${OUT}/${name}.png`, clip: zoom, timeout: 150000 })
+  await page.screenshot({ path: `${OUT}/${process.env.SHOT_LOW ? 'low-' : ''}${name}.png`, clip: zoom, timeout: 150000 })
   if (fwd > 0) await page.keyboard.up('KeyW')
   if (rise > 0) await page.keyboard.up('Space')
   console.log(`[${name}] captured`)
