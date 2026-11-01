@@ -130,19 +130,25 @@ export function createPlayer(): PlayerState {
 export function bindKeyboardMouse(
   canvas: HTMLElement,
   player: PlayerState,
-  opts: { enablePointerLock: boolean; onLockChange?: (locked: boolean) => void },
+  opts: { enablePointerLock: boolean | (() => boolean); onLockChange?: (locked: boolean) => void },
 ) {
   const keys = new Set<string>()
 
   const onKeyDown = (e: KeyboardEvent) => {
+    // Let Space/Enter activate a focused help or arrival button normally.
+    if ((e.code === 'Space' || e.code === 'Enter') && (e.target as HTMLElement)?.closest?.('button')) return
     keys.add(e.code)
     if (e.code === 'Space') e.preventDefault()
   }
   const onKeyUp = (e: KeyboardEvent) => keys.delete(e.code)
 
   const onClick = () => {
-    if (!opts.enablePointerLock) return
-    if (document.pointerLockElement !== canvas) canvas.requestPointerLock()
+    const enabled = typeof opts.enablePointerLock === 'function' ? opts.enablePointerLock() : opts.enablePointerLock
+    if (!enabled) return
+    if (document.pointerLockElement !== canvas) {
+      const request = canvas.requestPointerLock()
+      request?.catch(() => opts.onLockChange?.(false))
+    }
   }
 
   const onLock = () => {
@@ -159,6 +165,10 @@ export function bindKeyboardMouse(
 
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('keyup', onKeyUp)
+  const clearKeys = () => keys.clear()
+  window.addEventListener('blur', clearKeys)
+  const onVisibility = () => { if (document.hidden) clearKeys() }
+  document.addEventListener('visibilitychange', onVisibility)
   canvas.addEventListener('click', onClick)
   document.addEventListener('pointerlockchange', onLock)
   window.addEventListener('mousemove', onMouse)
@@ -187,6 +197,8 @@ export function bindKeyboardMouse(
     dispose() {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', clearKeys)
+      document.removeEventListener('visibilitychange', onVisibility)
       canvas.removeEventListener('click', onClick)
       document.removeEventListener('pointerlockchange', onLock)
       window.removeEventListener('mousemove', onMouse)

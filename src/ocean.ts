@@ -123,6 +123,7 @@ uniform float uUnderwater;
 uniform float uTime;
 uniform float uChopScale;
 uniform float uHalfExtent;
+uniform float uDaylight;
 // Same lee as the vertex stage: xy = centre, z = calm radius, w = open radius
 uniform vec4 uShelter;
 // Island shelf for shallows: xy = centre, z = ankle-deep radius, w = deep-again
@@ -216,7 +217,7 @@ void main() {
     // Light shafts / caustics rippling on the underside of the surface
     float caus = fbm(vWorldPos.xz * 0.4 + vec2(uTime * 0.25, -uTime * 0.18), 3);
     caus *= fbm(vWorldPos.xz * 0.9 - vec2(uTime * 0.15, uTime * 0.1), 2);
-    murk += vec3(0.2, 0.5, 0.46) * pow(caus, 1.6) * 0.8;
+    murk += vec3(0.2, 0.5, 0.46) * pow(caus, 1.6) * 0.8 * mix(0.025, 1.0, uDaylight);
 
     // Looking up through the surface: Snell's window opens toward vertical,
     // everything outside it mirrors the dark water back at you.
@@ -230,7 +231,7 @@ void main() {
       : min(textureCube(uEnvMap, refr).rgb, vec3(1.3));
 
     float snell = smoothstep(0.24, 0.95, upness);
-    vec3 mirror = mix(murk * 1.15, vec3(0.3, 0.55, 0.6), 0.25);
+    vec3 mirror = mix(murk * 1.15, vec3(0.3, 0.55, 0.6) * mix(0.025, 1.0, uDaylight), 0.25);
     // Outside the window the surface is a rippled mirror of the sea below —
     // let the swell and chop modulate it so it reads as moving water, not a lid
     float ripple = clamp(0.5 + (N.x * 0.7 + N.z * 0.5) * 1.3, 0.0, 1.0);
@@ -302,13 +303,16 @@ void main() {
   // real depth the tint covers more water than the radial shelf did, and the
   // old pale mix read as milky grey; this one keeps its saturation.
   vec3 sandTint = mix(vec3(0.52, 0.8, 0.74), vec3(0.16, 0.6, 0.56), hasBed);
+  // Sand bounce needs sunlight. A constant tint made the night lagoon glow
+  // turquoise even when its beach and sky were dark.
+  sandTint *= mix(0.025, 1.0, uDaylight);
   vec3 beachShallow = mix(uShallowColor * 1.65, sandTint, 0.48);
   body = mix(body, beachShallow, shallow * 0.82);
-  body = mix(body, mix(uShallowColor * 1.2, vec3(0.06, 0.4, 0.47), 0.55), reefFall * 0.6);
+  body = mix(body, mix(uShallowColor * 1.2, vec3(0.06, 0.4, 0.47) * mix(0.025, 1.0, uDaylight), 0.55), reefFall * 0.6);
 
   // Subsurface glow where the sun shines through a wave back
   float sss = pow(max(dot(-L, V) * 0.5 + 0.5, 0.0), 3.0) * (1.0 - facing);
-  body += vec3(0.05, 0.3, 0.24) * sss * 0.8;
+  body += vec3(0.05, 0.3, 0.24) * sss * 0.8 * mix(0.025, 1.0, uDaylight);
   // Extra glow in the shallows — light bouncing off sand underfoot
   body += beachShallow * shallow * 0.08 * facing;
 
@@ -339,7 +343,7 @@ void main() {
   foam = min(1.0, foam * (1.0 + uChopScale * 0.55));
   foam *= 1.0 - 0.9 * shelf; // no open-ocean whitecaps in the lap
   // Foam is only as white as the light on it — moonlit it should read grey-blue
-  float foamLight = 0.4 + 0.6 * smoothstep(0.62, 1.0, uSunColor.r);
+  float foamLight = 0.06 + 0.94 * uDaylight;
   color = mix(color, vec3(0.88, 0.94, 0.97) * foamLight, foam * (0.5 + uChopScale * 0.12));
 
   // Soft lace of white at the waterline — complements shore.ts foam flakes
@@ -361,16 +365,19 @@ void main() {
   if (hasBed > 0.5) {
     float zone = (1.0 - smoothstep(0.2, 1.3, depthW)) * smoothstep(-0.05, 0.1, depthW);
     float wobble = fbm(vWorldPos.xz * 0.11 + vec2(uTime * 0.04, 0.0), 2);
-    float band = pow(0.5 + 0.5 * sin(depthW * 6.0 + wobble * 3.5 + uTime * 1.15), 6.0);
-    float broken = smoothstep(0.32, 0.7, laceNoise);
+    float band = pow(0.5 + 0.5 * sin(depthW * 5.0 + wobble * 5.0 + uTime * 1.05), 9.0);
+    // Gaps have a larger scale than the fine foam. A whole contour turning
+    // white at once reads as a painted ring, especially from the drop.
+    float breaks = noise(vWorldPos.xz * 0.22 + vec2(uTime * 0.055, -uTime * 0.03));
+    float broken = smoothstep(0.46, 0.7, laceNoise) * smoothstep(0.30, 0.66, breaks);
     // The swash: a wet edge of white where the water runs out on the sand,
     // and a lacy line of foam riding up and back with each wave
     float edge = (1.0 - smoothstep(0.0, 0.28, depthW)) * smoothstep(-0.03, 0.04, depthW);
     float wash = 0.5 + 0.5 * sin(uTime * 0.55 + wobble * 4.0);
     float washLine = exp(-pow((depthW - (0.04 + wash * 0.3)) / 0.07, 2.0)) * smoothstep(-0.03, 0.04, depthW);
     float lace = smoothstep(0.25, 0.6, laceNoise);
-    surf = clamp(band * broken * zone * 0.75 + edge * (0.5 + 0.4 * laceNoise) + washLine * lace * 0.9, 0.0, 1.0);
-    color = mix(color, foamWhite, surf * 0.85);
+    surf = clamp(band * broken * zone * 0.65 + edge * (0.15 + 0.35 * laceNoise) + washLine * lace * (0.2 + 0.5 * breaks), 0.0, 1.0);
+    color = mix(color, foamWhite, surf * 0.65);
   }
 
   // Blend toward the sky near the mesh rim so a finite square doesn't silhouette
@@ -456,6 +463,7 @@ export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: O
       uCameraPos: { value: new THREE.Vector3() },
       uUnderwater: { value: 0 },
       uHalfExtent: { value: size * 0.5 },
+      uDaylight: { value: 1 },
     },
     vertexShader,
     fragmentShader: fragmentShader.replaceAll('DETAIL_OCT', String(detailOctaves)),

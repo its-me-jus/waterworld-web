@@ -59,8 +59,8 @@ export function createTouchControls(parent: HTMLElement) {
   const actions = document.createElement('div')
   actions.className = 'touch-actions'
   actions.innerHTML = `
-    <button type="button" class="touch-btn" data-act="rise" aria-label="Swim up">▲</button>
-    <button type="button" class="touch-btn touch-dive" data-act="dive" aria-label="Dive">▼</button>
+    <button type="button" class="touch-btn" data-act="rise" aria-label="Swim up"><span aria-hidden="true">↑</span><small>RISE</small></button>
+    <button type="button" class="touch-btn touch-dive" data-act="dive" aria-label="Dive"><span aria-hidden="true">↓</span><small>DIVE</small></button>
   `
   wrap.appendChild(actions)
 
@@ -157,6 +157,38 @@ export function createTouchControls(parent: HTMLElement) {
   lookPad.addEventListener('pointerup', endLook)
   lookPad.addEventListener('pointercancel', endLook)
 
+  const riseButton = actions.querySelector<HTMLButtonElement>('[data-act="rise"]')!
+  const diveButton = actions.querySelector<HTMLButtonElement>('[data-act="dive"]')!
+  let mode = ''
+
+  function reset() {
+    resetStick(move)
+    rise = dive = false
+    lookId = null
+    lookDeltaX = lookDeltaY = 0
+    riseButton.classList.remove('active')
+    diveButton.classList.remove('active')
+  }
+
+  // A released finger can be lost when a browser backgrounds or rotates.
+  window.addEventListener('blur', reset)
+  document.addEventListener('visibilitychange', () => { if (document.hidden) reset() })
+  move.root.addEventListener('lostpointercapture', () => resetStick(move))
+  lookPad.addEventListener('lostpointercapture', () => { lookId = null })
+
+  function setMode(next: 'glide' | 'walk' | 'swim') {
+    if (mode === next) return
+    mode = next
+    rise = dive = false
+    riseButton.classList.remove('active')
+    diveButton.classList.remove('active')
+    move.root.querySelector('.stick-label')!.textContent = next === 'glide' ? 'STEER' : next.toUpperCase()
+    riseButton.hidden = next === 'walk'
+    diveButton.hidden = next !== 'swim'
+    riseButton.setAttribute('aria-label', next === 'glide' ? 'Flare for a soft landing' : 'Swim up')
+    riseButton.querySelector('small')!.textContent = next === 'glide' ? 'FLARE' : 'RISE'
+  }
+
   /** Merge touch into input (call before keyboard merge). */
   function apply(input: InputState) {
     input.moveStrafe = move.dx / move.radius
@@ -170,9 +202,10 @@ export function createTouchControls(parent: HTMLElement) {
   }
 
   function setVisible(on: boolean) {
+    if (!on) reset()
     wrap.classList.toggle('visible', on)
     document.body.classList.toggle('touch-ui', on)
   }
 
-  return { apply, setVisible, root: wrap }
+  return { apply, setVisible, setMode, root: wrap }
 }

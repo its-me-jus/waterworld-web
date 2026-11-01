@@ -18,8 +18,19 @@ export function createHud(app: HTMLElement) {
   let showing = false
 
   /** A quiet one-liner, queued so several can't stomp each other. */
-  function whisper(text: string) {
+  function whisper(text: string, replace = false) {
+    if (replace) {
+      queue.length = 0
+      timer = 0
+    }
     if (queue.length < WHISPER_QUEUE_MAX) queue.push(text)
+  }
+
+  function clear() {
+    queue.length = 0
+    timer = 0
+    showing = false
+    whisperBox.classList.remove('on')
   }
 
   function update(dt: number) {
@@ -37,7 +48,7 @@ export function createHud(app: HTMLElement) {
     }
   }
 
-  return { whisper, update }
+  return { whisper, update, clear }
 }
 
 export type Hud = ReturnType<typeof createHud>

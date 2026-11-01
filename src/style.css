@@ -143,7 +143,7 @@ body.underwater #bubbles {
 
 /* Desktop mouse-look uses pointer lock on the canvas — don't steal clicks. */
 @media (hover: hover) and (pointer: fine) {
-  .look-pad {
+  body:not(.touch-ui) .look-pad {
     pointer-events: none;
   }
 
@@ -258,9 +258,9 @@ body.underwater #bubbles {
 #skip-chute {
   position: fixed;
   z-index: 6;
-  left: 1rem;
-  bottom: 1rem;
-  padding: 0.35rem 0.8rem;
+  left: max(1.25rem, env(safe-area-inset-left));
+  top: max(1.25rem, env(safe-area-inset-top));
+  padding: 0.65rem 1rem;
   border: 1px solid rgba(222, 238, 244, 0.28);
   border-radius: 999px;
   background: rgba(4, 30, 38, 0.38);
@@ -279,6 +279,141 @@ body.underwater #bubbles {
 body.film #depth,
 body.film #whisper,
 body.film #skip-chute,
-body.film #touch-controls {
+body.film #touch-controls,
+body.film #arrival-title,
+body.film #control-hint,
+body.film #sea-help {
   display: none !important;
+}
+
+/* A title over the landscape, then just the landscape. */
+#arrival-title {
+  position: fixed;
+  top: max(17%, 8rem);
+  left: 0;
+  width: 100%;
+  padding: 0 1.25rem;
+  z-index: 5;
+  text-align: center;
+  color: #f4f2df;
+  text-shadow: 0 1px 3px rgba(3, 24, 32, 0.48), 0 2px 25px rgba(7, 38, 46, 0.45);
+  pointer-events: none;
+  animation: arrival-title 12s both;
+}
+
+.arrival-kicker {
+  display: block;
+  font-size: 0.57rem;
+  letter-spacing: 0.28em;
+  font-weight: 500;
+}
+
+#arrival-title h1 {
+  font: normal clamp(3.3rem, 7.5vw, 6.6rem)/1.12 Georgia, 'Times New Roman', serif;
+  letter-spacing: -0.055em;
+  margin: 0.8rem 0 1.15rem;
+}
+
+.arrival-rule {
+  display: block;
+  width: 2.5rem;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.65;
+  margin: auto;
+}
+
+#arrival-title p {
+  font: italic 0.85rem Georgia, serif;
+  letter-spacing: 0.06em;
+  margin: 0.9rem 0 0;
+}
+
+@keyframes arrival-title {
+  0%, 9% { opacity: 0; transform: translateY(8px); }
+  26%, 65% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-5px); }
+}
+
+#control-hint {
+  position: fixed;
+  bottom: max(2.1rem, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  width: max-content;
+  max-width: calc(100vw - 3rem);
+  text-align: center;
+  color: #f1f3e9;
+  text-shadow: 0 1px 12px #07313b, 0 1px 3px #07313b;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.8s;
+  padding: 0.7rem 1.1rem;
+  border-radius: 0.5rem;
+  background: rgba(4, 29, 35, 0.48);
+}
+
+#control-hint.on { opacity: 1; }
+.control-context {
+  display: block;
+  font-size: 0.55rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  margin-bottom: 0.55rem;
+  opacity: 0.75;
+}
+.control-copy { font-size: 0.85rem; letter-spacing: 0.025em; line-height: 1.6; }
+body.touch-ui #control-hint { bottom: max(11.25rem, calc(env(safe-area-inset-bottom) + 9.5rem)); max-width: min(27rem, calc(100vw - 3.5rem)); }
+body.touch-ui #whisper { bottom: 38%; }
+
+#sea-help {
+  position: fixed;
+  z-index: 7;
+  top: max(1.1rem, env(safe-area-inset-top));
+  right: max(1.1rem, env(safe-area-inset-right));
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid rgba(234, 245, 236, 0.28);
+  border-radius: 50%;
+  color: rgba(242, 246, 234, 0.85);
+  background: rgba(8, 37, 43, 0.22);
+  font: italic 1rem Georgia, serif;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+#sea-help:hover, #skip-chute:hover { background: rgba(16, 63, 69, 0.6); }
+button:focus-visible { outline: 2px solid #f2e6b8; outline-offset: 5px; }
+.touch-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 62px; height: 62px; border-width: 1px; background: rgba(8, 37, 43, 0.32); }
+.touch-btn small { font: 500 0.5rem/1.1 'Segoe UI', sans-serif; letter-spacing: 0.09em; }
+.touch-btn[hidden] { display: none; }
+.stick { width: 112px; height: 112px; border-width: 1px; background: rgba(8, 37, 43, 0.25); bottom: max(2rem, calc(env(safe-area-inset-bottom) + 1rem)); }
+.stick-knob { width: 44px; height: 44px; border-width: 1px; background: rgba(213, 234, 230, 0.4); }
+.touch-actions { bottom: max(2rem, calc(env(safe-area-inset-bottom) + 1rem)); }
+
+@media (max-width: 600px) {
+  #depth { top: max(5rem, calc(env(safe-area-inset-top) + 4rem)); }
+}
+
+@media (max-height: 500px) {
+  #arrival-title { top: max(22%, 5.5rem); }
+  #arrival-title h1 { font-size: 3.2rem; margin: 0.3rem 0 0.65rem; }
+  #arrival-title p { margin-top: 0.5rem; }
+  body.touch-ui #control-hint { bottom: 1.4rem; max-width: calc(100vw - 23rem); }
+  body.touch-ui #whisper { bottom: 29%; }
+}
+
+@media (max-height: 500px) and (min-width: 480px) {
+  #depth { top: max(1.4rem, env(safe-area-inset-top)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #arrival-title { animation: arrival-title 12s both; }
+  @keyframes arrival-title {
+    0%, 9%, 100% { opacity: 0; }
+    26%, 65% { opacity: 1; }
+  }
+  #intro-fade { transition-duration: 0.4s; }
+  #control-hint, #whisper, #depth { transition-duration: 0.15s; }
 }

@@ -561,7 +561,7 @@ const beachRampBody = /* glsl */ `
       vec3 sand = mix(${glslColor('#4f6458')}, ${glslColor('#cbbb95')}, smoothstep(-12.0, -3.0, ys));
       sand = mix(sand, ${glslColor('#b89468')}, smoothstep(-1.2, -0.3, ys));
       float wetBand = smoothstep(-1.1, 0.2, ys) * (1.0 - smoothstep(0.5, 2.6, ys));
-      sand = mix(sand, ${glslColor('#7a6648')}, wetBand * (0.55 + sandGrit * 0.35));
+      sand = mix(sand, ${glslColor('#b0a082')}, wetBand * (0.28 + sandGrit * 0.18));
       sand = mix(sand, ${glslColor('#f2e2b4')}, smoothstep(1.0, 5.2, ys));
       // vSandW is interpolated between corners, so a triangle with one low
       // corner on a steep wall smears pale sand up the rock as a wedge. A
@@ -728,8 +728,10 @@ const groundColorBody = /* glsl */ `
     float swash = smoothstep(0.05, 0.55, relative) * (1.0 - smoothstep(0.9, 2.2, relative));
     float wetNoise = 0.72 + 0.28 * gNoise(gp * 0.85 + vec2(uTide * 0.4, 0.0));
     gWetness = clamp((awash * 0.92 + swash * 0.55) * sandMask * wetNoise, 0.0, 1.0);
-    vec3 wetTint = diffuseColor.rgb * vec3(0.52, 0.58, 0.64);
-    diffuseColor.rgb = mix(diffuseColor.rgb, wetTint, gWetness * 0.78);
+    // Wet coral sand holds its pale mineral colour. Most of the change is
+    // sheen, not a second dark-brown stripe painted over the beach ramp.
+    vec3 wetTint = diffuseColor.rgb * vec3(0.72, 0.79, 0.81);
+    diffuseColor.rgb = mix(diffuseColor.rgb, wetTint, gWetness * 0.62);
 
     // Relief for the bump: grain and wind ripples on dry sand (water smooths
     // both), a few millimetres of leaf over the soil, centimetres on rock.
@@ -738,8 +740,12 @@ const groundColorBody = /* glsl */ `
     float rippleAmt = sandAmt * smoothstep(2.2, 4.0, vGroundPos.y) * (1.0 - smoothstep(3.0, 10.0, gDist));
     float rp = dot(gp, vec2(0.83, 0.56)) * 26.0 + gNoise(gp * 0.9) * 7.0 + gNoise(gp * 3.1) * 1.5;
     float ripple = pow(0.5 + 0.5 * sin(rp), 1.6);
+    float tidalRipple = sandAmt * smoothstep(-7.0, -2.0, relative) *
+      (1.0 - smoothstep(0.0, 1.2, relative)) * (1.0 - smoothstep(5.0, 18.0, gDist));
+    float tidalRidge = sin(dot(gp, vec2(0.57, 0.82)) * 18.0 + gNoise(gp * 1.2) * 3.5);
+    diffuseColor.rgb *= 1.0 + tidalRidge * tidalRipple * 0.045;
     gDetailH =
-      (sandAmt * (det.r - 0.5) * 0.0022 * (1.0 - gWetness) + ripple * 0.02 * rippleAmt) * detFade +
+      (sandAmt * (det.r - 0.5) * 0.0022 * (1.0 - gWetness) + ripple * 0.02 * rippleAmt + tidalRidge * tidalRipple * 0.008) * detFade +
       leafMask * litterAmt * det.g * 0.012 * detFade +
       cliff * (rockDet - 0.5) * 0.08 * cliffFade;
 

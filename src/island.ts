@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { createCoastalTerrain } from './coastmesh'
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { bakePlant, createFoliage, plantTint, type PlantBake } from './foliage'
 import { barkTexture, barkUv, fernTexture, leafAtlas, leafCards, openUnderside, palmBarkTexture, shrinkCore } from './leaftex'
@@ -1735,14 +1736,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     range: new THREE.Vector2(SEABED_MIN, SEABED_SPAN),
   }
 
-  const geometry = new THREE.PlaneGeometry(SPAN * 2, SPAN * 2, segments, segments)
-  geometry.rotateX(-Math.PI / 2)
-
+  const geometry = createCoastalTerrain(SPAN, segments, surface, low)
   const position = geometry.attributes.position
-  for (let i = 0; i < position.count; i++) {
-    position.setY(i, surface(position.getX(i), position.getZ(i)))
-  }
-  geometry.computeVertexNormals()
 
   /**
    * Metres from each grid point to the nearest water, by a two-pass chamfer

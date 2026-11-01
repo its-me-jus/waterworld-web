@@ -25,11 +25,22 @@ type Flake = {
   reach: number
   /** Soft sheet (0) vs bright lace (1). */
   kind: 0 | 1
+  /** Height samples along its small run-in; immutable terrain needs no frame-time lookup. */
+  bed: number[]
+}
+
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
+const smooth = (a: number, b: number, v: number) => { const t = clamp01((v - a) / (b - a)); return t * t * (3 - 2 * t) }
+const hash = (x: number, y: number) => { const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return n - Math.floor(n) }
+function noise(x: number, y: number) {
+  const ix = Math.floor(x), iy = Math.floor(y)
+  const u = smooth(0, 1, x - ix), v = smooth(0, 1, y - iy)
+  return THREE.MathUtils.lerp(THREE.MathUtils.lerp(hash(ix, iy), hash(ix + 1, iy), u), THREE.MathUtils.lerp(hash(ix, iy + 1), hash(ix + 1, iy + 1), u), v)
 }
 
 /** Soft elliptical falloff — stretches into lace when the instance is long. */
 function softFoamTexture(lace: boolean) {
-  const size = 96
+  const size = 192
   const canvas = document.createElement('canvas')
   canvas.width = size
   canvas.height = size
@@ -50,14 +61,13 @@ function softFoamTexture(lace: boolean) {
       // or the patch ends in a hard straight edge
       const end = Math.min(1, Math.max(0, (Math.abs(nx) - 0.7) / 0.3))
       a *= 1 - end * end * (3 - 2 * end)
-      if (lace) {
-        // Feathered edge so the lace breaks into soft white
-        const edge = Math.sin(nx * 9.4 + ny * 5.1) * 0.5 + 0.5
-        a *= 0.55 + edge * 0.55
-        a = Math.pow(Math.max(0, a), 1.35)
-      } else {
-        a = Math.pow(Math.max(0, a), 1.15) * 0.85
-      }
+      const drift = noise(nx * 4.5 + 9, ny * 4.5 + 3)
+      const cells = noise(nx * 25 + drift * 3 + 40, ny * 18 + drift * 2 + 20)
+      const froth = noise(nx * 55 + 10, ny * 40 + 17)
+      // A cellular web with real holes, rather than a soft white lozenge.
+      const web = Math.pow(1 - Math.abs(cells - 0.5) * 2, 7)
+      a *= lace ? (0.12 + web * 0.88) * smooth(0.23, 0.56, drift) : (0.12 + froth * 0.35) * smooth(0.2, 0.65, drift)
+      a = Math.pow(Math.max(0, a), lace ? 0.95 : 1.1)
       const i = (y * size + x) * 4
       const v = lace ? 255 : 245
       img.data[i] = v
@@ -75,7 +85,7 @@ function softFoamTexture(lace: boolean) {
 }
 
 /** How far foam is pulled toward the eye in the depth test, in metres. */
-const FOAM_DEPTH_LIFT = 0.5
+const FOAM_DEPTH_LIFT = 0.18
 
 function foamMaterial(map: THREE.Texture, opacity: number) {
   const mat = new THREE.MeshBasicMaterial({
@@ -85,15 +95,19 @@ function foamMaterial(map: THREE.Texture, opacity: number) {
     opacity,
     depthWrite: false,
     depthTest: true,
-    fog: false,
+    fog: true,
     side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending,
+    blending: THREE.NormalBlending,
   })
   // The sea writes depth from the air, and a flat foam patch on a curved swell
   // dips under it at the edges — the cut showed as hard straight lines across
   // the lap. Sliding each vertex toward the eye along its own sight line keeps
   // it where it was on screen but lets it win the depth test over the water.
   mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = 'attribute float aFoamAlpha;\nvarying float vFoamAlpha;\n' + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvFoamAlpha = aFoamAlpha;')
+    shader.fragmentShader = 'varying float vFoamAlpha;\n' + shader.fragmentShader
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.a *= vFoamAlpha;')
     shader.vertexShader = shader.vertexShader.replace(
       '#include <project_vertex>',
       `#include <project_vertex>
@@ -106,6 +120,8 @@ function foamMaterial(map: THREE.Texture, opacity: number) {
 
 export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {
   const low = opts.lowPower ?? false
+  let seed = 5192
+  const rand = () => ((seed = seed * 16807 % 2147483647) - 1) / 2147483646
   const flakes: Flake[] = []
   // Beach lap plus the reef break further out
   const max = low ? 600 : 1300
@@ -130,10 +146,11 @@ export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {
       z: oz,
       dx,
       dz,
-      phase: Math.random() * Math.PI * 2,
-      size: (kind === 0 ? 2.2 + Math.random() * 3.4 : 1.2 + Math.random() * 2.2) * scale,
+      phase: rand() * Math.PI * 2,
+      size: (kind === 0 ? 2.2 + rand() * 3.4 : 1.2 + rand() * 2.2) * scale,
       reach,
       kind,
+      bed: [-1.5, -0.75, 0, 0.75, 1.5].map(d => opts.heightAt(ox + dx * d, oz + dz * d)),
     })
   }
 
@@ -159,13 +176,13 @@ export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {
     const bx = opts.centre.x + dx * bestR
     const bz = opts.centre.z + dz * bestR
     scale = 1.9
-    push(bx, bz, dx, dz, 1.5 + Math.random() * 2, 0)
-    push(bx, bz, dx, dz, 0.5 + Math.random() * 1.5, 1)
+    push(bx, bz, dx, dz, 1.5 + rand() * 2, 0)
+    push(bx, bz, dx, dz, 0.5 + rand() * 1.5, 1)
     if (!low) {
-      push(bx, bz, dx, dz, 3 + Math.random() * 3, 0)
-      const jx = -dz * (Math.random() - 0.5) * 6
-      const jz = dx * (Math.random() - 0.5) * 6
-      push(bx + jx, bz + jz, dx, dz, 1 + Math.random() * 2, 1)
+      push(bx, bz, dx, dz, 3 + rand() * 3, 0)
+      const jx = -dz * (rand() - 0.5) * 6
+      const jz = dx * (rand() - 0.5) * 6
+      push(bx + jx, bz + jz, dx, dz, 1 + rand() * 2, 1)
     }
     scale = 1
   }
@@ -186,17 +203,17 @@ export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {
         const bx = opts.centre.x + dx * at
         const bz = opts.centre.z + dz * at
         // Soft sheet against the sand — the body of the lap
-        push(bx, bz, dx, dz, 0.25 + Math.random() * 0.9, 0)
-        push(bx, bz, dx, dz, 1.4 + Math.random() * 1.6, 0)
+        push(bx, bz, dx, dz, 0.25 + rand() * 0.9, 0)
+        push(bx, bz, dx, dz, 1.4 + rand() * 1.6, 0)
         // Brighter lace slightly out — the lip that breaks
-        push(bx, bz, dx, dz, 0.8 + Math.random() * 1.2, 1)
+        push(bx, bz, dx, dz, 0.8 + rand() * 1.2, 1)
         if (!low) {
-          push(bx, bz, dx, dz, 2.8 + Math.random() * 2.2, 0)
-          push(bx, bz, dx, dz, 2.0 + Math.random() * 2.0, 1)
+          push(bx, bz, dx, dz, 2.8 + rand() * 2.2, 0)
+          push(bx, bz, dx, dz, 2.0 + rand() * 2.0, 1)
           // Along-shore jitter so the line isn't a picket fence
-          const jx = -dz * (Math.random() - 0.5) * 5
-          const jz = dx * (Math.random() - 0.5) * 5
-          push(bx + jx, bz + jz, dx, dz, 0.6 + Math.random() * 2.2, Math.random() > 0.45 ? 1 : 0)
+          const jx = -dz * (rand() - 0.5) * 5
+          const jz = dx * (rand() - 0.5) * 5
+          push(bx + jx, bz + jz, dx, dz, 0.6 + rand() * 2.2, rand() > 0.45 ? 1 : 0)
         }
         reefBreak(dx, dz, at)
         break
@@ -210,6 +227,11 @@ export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {
 
   const geo = new THREE.PlaneGeometry(1, 1)
   geo.rotateX(-Math.PI / 2)
+  const laceGeo = geo.clone()
+  const sheetAlpha = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, sheets.length)), 1).setUsage(THREE.DynamicDrawUsage)
+  const laceAlpha = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, lace.length)), 1).setUsage(THREE.DynamicDrawUsage)
+  geo.setAttribute('aFoamAlpha', sheetAlpha)
+  laceGeo.setAttribute('aFoamAlpha', laceAlpha)
 
   const sheetMat = foamMaterial(softFoamTexture(false), 0.7)
   const laceMat = foamMaterial(softFoamTexture(true), 0.9)
@@ -221,7 +243,7 @@ export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {
   sheetMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
   scene.add(sheetMesh)
 
-  const laceMesh = new THREE.InstancedMesh(geo, laceMat, Math.max(1, lace.length))
+  const laceMesh = new THREE.InstancedMesh(laceGeo, laceMat, Math.max(1, lace.length))
   laceMesh.name = 'ShoreSurfLace'
   laceMesh.frustumCulled = false
   laceMesh.renderOrder = 5
@@ -243,13 +265,20 @@ export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {
     time: number,
     layer: 0 | 1,
   ) {
+    const alphas = mesh.geometry.getAttribute('aFoamAlpha') as THREE.InstancedBufferAttribute
     for (let i = 0; i < list.length; i++) {
       const f = list[i]
-      const water = sampleOcean(f.x, f.z, time)
-      const ground = opts.heightAt(f.x, f.z)
+      const run = Math.sin(time * 0.78 + f.x * 0.012 + f.z * 0.009 - f.reach * 0.42)
+      const offset = -run * 1.2
+      const x = f.x + f.dx * offset, z = f.z + f.dz * offset
+      const water = sampleOcean(x, z, time)
+      const bi = (offset + 1.5) / 0.75
+      const index = Math.min(3, Math.floor(bi))
+      const ground = THREE.MathUtils.lerp(f.bed[index], f.bed[index + 1], bi - index)
       const depth = water.y - ground
       // Never plant foam on dry sand, or out in deep water past the lap
       if (ground > water.y + 0.2 || depth > 2.8) {
+        alphas.setX(i, 0)
         dummy.scale.setScalar(0)
         dummy.position.set(f.x, water.y, f.z)
         dummy.updateMatrix()
@@ -260,13 +289,11 @@ export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {
       // Crest relative to mean tide — higher water = fuller foam
       const crest = Math.max(0, Math.min(1, (water.y - oceanState.tide + 0.2) / 0.85))
       // Slow lap: outer patches crest later than the ones against the sand
-      const lap =
-        0.42 +
-        0.58 * Math.sin(time * 1.28 - f.reach * 0.62 + f.phase) * (0.5 + 0.5 * crest)
+      const lap = 0.5 + 0.5 * run
       const breath = 0.82 + 0.18 * Math.sin(time * 0.65 + f.phase * 0.45)
       // Sheets sit a hair lower; lace rides the lip
       const lift = layer === 1 ? 0.08 : 0.045
-      dummy.position.set(f.x, water.y + lift, f.z)
+      dummy.position.set(x, water.y + lift, z)
 
       waveUp.set(water.normal.x, water.normal.y, water.normal.z)
       tilt.setFromUnitVectors(up, waveUp)
@@ -278,6 +305,7 @@ export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {
       const outMul = layer === 0 ? 0.32 + lap * 0.38 : 0.22 + lap * 0.48
       // Fade scale as depth grows so the band hugs the waterline
       const depthFade = 1 - Math.min(1, Math.max(0, (depth - 0.15) / 2.4))
+      alphas.setX(i, (0.15 + 0.85 * lap) * (0.45 + 0.55 * crest) * smooth(-0.16, 0.12, depth) * depthFade)
       const alongLen = f.size * alongMul * breath * (0.55 + 0.45 * depthFade)
       const outLen = f.size * outMul * (0.65 + 0.35 * depthFade)
       dummy.scale.set(alongLen, 1, outLen)
@@ -285,16 +313,18 @@ export function createShoreSurf(scene: THREE.Scene, opts: ShoreSurfOptions) {
       mesh.setMatrixAt(i, dummy.matrix)
     }
     mesh.instanceMatrix.needsUpdate = true
-    const pulse = 0.5 + 0.5 * Math.sin(time * 1.12)
-    mat.opacity = layer === 0 ? 0.38 + 0.22 * pulse : 0.48 + 0.32 * pulse
+    alphas.needsUpdate = true
+    mat.opacity = layer === 0 ? 0.38 : 0.72
   }
 
-  function update(time: number, camera: THREE.Camera, underwater: boolean) {
+  function update(time: number, camera: THREE.Camera, underwater: boolean, daylight = 1) {
     const near = camera.position.distanceToSquared(opts.centre) < 560 * 560
     const show = near && !underwater && flakes.length > 0
     sheetMesh.visible = show && sheets.length > 0
     laceMesh.visible = show && lace.length > 0
     if (!show) return
+    sheetMat.color.setRGB(0.84, 0.91, 0.87).multiplyScalar(0.13 + daylight * 0.87)
+    laceMat.color.copy(sheetMat.color)
 
     if (sheetMesh.visible) paint(sheets, sheetMesh, sheetMat, time, 0)
     if (laceMesh.visible) paint(lace, laceMesh, laceMat, time, 1)

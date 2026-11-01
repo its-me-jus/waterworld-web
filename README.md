@@ -9,6 +9,12 @@ menus — just somewhere to move around.
 
 ## The world
 
+- **The arrival.** Glide toward the landing cove under a parachute, or choose
+  **Begin on the beach**. Clouds leave a clear window onto the island. A brief
+  title and contextual movement hints fade away as you settle in.
+- **The lagoon.** Small resident shoals turn through the shallows between the
+  landing beach and the reef wreck. Their patches follow the seabed and tide;
+  they are places to discover, not fish attached to the camera.
 - **The ocean.** Real swell you ride rather than fight. Glass-offs come with the
   settled sky; a squall now and then turns the water grey and brings rain and
   distant thunder, but it never gets worse than atmosphere.
@@ -34,6 +40,13 @@ already doing ("The tide is turning."). That is the whole interface.
 
 - **Touch:** left stick to swim · drag anywhere to look · ▲ rise / ▼ dive
 - **Desktop:** WASD to swim · click for mouse-look · Space/E rise · Shift/Q dive
+- **Under the canopy:** A/D steer · W/S speed/brakes · Space (touch: Flare)
+  for a soft landing. Enter begins on the beach.
+- **Help:** tap **?** or press **H** to recover the controls for where you are.
+  Touch controls change with flight, walking and swimming; resizing or rotating
+  the screen updates the interface.
+- **Motion:** the system's reduced-motion preference removes extra head bob,
+  sway and camera banking while retaining the physical sea.
 
 ## Local
 
@@ -44,6 +57,9 @@ npm run dev
 
 ## Dev
 
+- `node scripts/check-coastmesh.mjs` — checks tidal-band surface accuracy,
+  upward face winding, finite normals and bounded phone/desktop geometry.
+  Uses Node's built-in TypeScript support (Node 22.18+).
 - `npm run shot` — headless vantage points into `shots/`, fails loudly on
   console or shader errors. Needs `npm run dev` running.
   `SHOT_BASE=http://localhost:5174` follows the dev server if it moved port;

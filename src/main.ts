@@ -1,6 +1,7 @@
 import './style.css'
 import * as THREE from 'three'
 import { createOceanAudio, type AudioGround } from './audio'
+import { createArrival } from './arrival'
 import { createCaustics } from './caustics'
 import { createClimate, DAY_LENGTH } from './climate'
 import { createCreatures } from './creatures'
@@ -9,6 +10,7 @@ import { createHud } from './hud'
 import { createInputState, isLowPowerDevice, preferTouchUI } from './input'
 import { createIsland } from './island'
 import { createLittoral } from './littoral'
+import { createLagoonLife } from './lagoon'
 import { createOcean } from './ocean'
 import { createParachute } from './parachute'
 import { bindKeyboardMouse, createPlayer, updatePlayer, type PlayerFrame } from './player'
@@ -28,8 +30,11 @@ import { createWreck } from './wreck'
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('#app missing')
 
-const mobile = preferTouchUI()
+let mobile = preferTouchUI()
 const lowPower = isLowPowerDevice()
+const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)')
+let reducedMotion = motionPreference.matches
+motionPreference.addEventListener('change', (e) => { reducedMotion = e.matches })
 
 const depthReadout = document.createElement('div')
 depthReadout.id = 'depth'
@@ -338,6 +343,7 @@ const touch = createTouchControls(app)
 touch.setVisible(mobile)
 
 const hud = createHud(app)
+const arrival = createArrival(app, { drop: wantChute, touch: () => mobile, enabled: !film.on })
 glassWhisper = hud.whisper
 // Arrive gently: the world fades up out of the dark, and only then does one
 // quiet line say how to move. After that the world speaks for itself.
@@ -349,29 +355,12 @@ if (!navigator.webdriver) {
   requestAnimationFrame(() => requestAnimationFrame(() => introFade.classList.add('done')))
   window.setTimeout(() => introFade.remove(), 4200)
 }
-window.setTimeout(
-  () =>
-    (!wantChute || chute.active) &&
-    hud.whisper(
-      wantChute
-        ? mobile
-          ? 'The stick steers and slows you. Rise flares near the ground.'
-          : 'A and D steer · W faster · S slower · Space to flare near the ground'
-        : mobile
-          ? 'Drag to look around. The stick swims.'
-          : 'WASD to swim · click to look · Space and Shift to rise and dive',
-    ),
-  navigator.webdriver ? 0 : 2600,
-)
-if (wantChute) {
-  window.setTimeout(() => chute.active && hud.whisper('Aim for the beach, and keep a little height to spend.'), 9000)
-}
 
 // One way out of the drop for anyone who has seen it: land on the beach now
 const skipChute = document.createElement('button')
 skipChute.id = 'skip-chute'
 skipChute.type = 'button'
-skipChute.textContent = 'Skip the drop'
+skipChute.textContent = 'Begin on the beach'
 skipChute.hidden = !wantChute
 app.appendChild(skipChute)
 
@@ -398,7 +387,8 @@ function cutAwayToBeach() {
   const toWreck = Math.atan2(-(skipLookAt.x - x), -(skipLookAt.z - z))
   player.yaw = toWreck
   player.pitch = 0.02
-  hud.whisper('You step onto the sand. A ship lies broken on the reef, just offshore.')
+  saidShore = true
+  hud.whisper('You step onto the sand. A ship lies broken on the reef, just offshore.', true)
 }
 skipChute.addEventListener('click', cutAwayToBeach)
 // Dev hook for scripts/chute-flight.mjs — fly the whole drop without rendering it
@@ -406,7 +396,7 @@ if (import.meta.env.DEV) {
   ;(window as unknown as Record<string, unknown>).__chute = { chute, player, camera, groundAt, input, chuteStart, coveBeach, outward }
 }
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'Enter') cutAwayToBeach()
+  if (e.code === 'Enter' && !(e.target as HTMLElement)?.closest?.('button')) cutAwayToBeach()
 })
 
 // First time out of the water, whichever way you managed it
@@ -435,6 +425,9 @@ function landfall(onPerch: boolean) {
 }
 
 const beach = island.shore.length > 0 ? island.shore[0] : island.centre
+const lagoon = createLagoonLife(scene, {
+  beach, wreck: reefWreck.group.position, heightAt: island.heightAt, lowPower,
+})
 const littoral = createLittoral(scene, {
   hud,
   heightAt: island.heightAt,
@@ -456,9 +449,10 @@ const creatures = createCreatures(scene, {
 })
 
 const desktop = bindKeyboardMouse(renderer.domElement, player, {
-  enablePointerLock: !mobile,
+  enablePointerLock: () => !mobile,
   onLockChange: (locked) => {
     document.body.classList.toggle('playing', locked)
+    if (!locked) arrival.show(8)
   },
 })
 
@@ -480,6 +474,7 @@ if (import.meta.env.DEV) {
       shore,
       littoral,
       creatures,
+      lagoon,
       sky: skyRig,
       underwater: underwaterWorld,
     },
@@ -517,6 +512,9 @@ function applyView() {
 }
 
 function onResize() {
+  mobile = preferTouchUI()
+  touch.setVisible(mobile)
+  document.body.classList.toggle('playing', mobile || document.pointerLockElement === renderer.domElement)
   applyView()
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap))
   renderer.setSize(window.innerWidth, window.innerHeight)
@@ -604,11 +602,15 @@ const underHemiNight = new THREE.Color('#1a3a48')
 
 /** The moment the feet arrive. The controller takes over from the next frame. */
 function touchdown(td: { kind: 'land' | 'sea'; sink: number }) {
+  hud.clear()
   if (td.kind === 'sea') hud.whisper('Splashdown. The canopy settles on the water behind you.')
   else if (td.sink < 1.6) hud.whisper('A soft landing.')
   else if (td.sink < 3.2) hud.whisper('Firm, but you stay on your feet.')
   else hud.whisper('A hard landing. You walk it off.')
 }
+
+let diveControls = false
+let firstDive = false
 
 function frame() {
   timer.update()
@@ -616,6 +618,7 @@ function frame() {
   const t = timer.getElapsed()
 
   const weather = climate.update(film.frozen ? 0 : dt)
+  oceanMat.uniforms.uDaylight.value = weather.daylight
   applyStormToWaves(weather.storm)
   syncWaves()
   // The sea breathes under the squalls — glass-offs oil the chop down, and
@@ -650,6 +653,14 @@ function frame() {
   const flight = chute.update(dt, t, player, camera, input, groundAt)
   if (flight?.touchdown) touchdown(flight.touchdown)
   const view: PlayerFrame = flight ? flight.frame : updatePlayer(player, camera, input, dt, t, collide, groundAt, drift)
+  // Retain the physical sea but honour a request for a steady head and horizon.
+  if (reducedMotion && !film.pose) {
+    camera.rotation.z = 0
+    if (!flight) {
+      camera.position.set(player.x, player.y, player.z)
+      camera.rotation.x = player.pitch
+    }
+  }
   chute.animate(dt, weather.daylight)
   // The wind in the lines, for the sound
   oceanAudio.setWindRush(chute.rush)
@@ -680,6 +691,15 @@ function frame() {
     })
   }
   const { underwater, surfaceY, depth } = view
+  if (depth > 1) diveControls = true
+  else if (depth < 0.25) diveControls = false
+  const travelMode = chute.active ? 'glide' : diveControls ? 'swim' : view.walking ? 'walk' : 'swim'
+  touch.setMode(travelMode)
+  arrival.update(dt, travelMode === 'swim' && diveControls ? 'dive' : travelMode)
+  if (!firstDive && depth > 1.5 && !film.on) {
+    firstDive = true
+    hud.whisper('The swell goes quiet above you.')
+  }
 
   // Ashore and on dry ground — wading the shallows still counts as in the sea
   const onLand = view.walking && view.groundY > 0.3
@@ -976,7 +996,8 @@ function frame() {
     lowClouds.update(t, camera, skyRig.sunDir, deck.uTint.value, deck.uShadow.value, weather.daylight)
   }
   island.update(camera, underwater, t)
-  shore.update(t, camera, underwater)
+  shore.update(t, camera, underwater, weather.daylight)
+  lagoon.update(dt, t, camera, weather.daylight)
   littoral.update(dt, player, { biolum: weather.biolum })
   underwaterWorld.fish.setAttractors(littoral.fishAttractors())
   creatures.update(dt, t, camera, {

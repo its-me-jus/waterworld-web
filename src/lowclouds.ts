@@ -45,6 +45,7 @@ uniform vec3 uSunDir;
 uniform vec3 uSunColor;
 uniform vec3 uShade;
 uniform float uFade;
+uniform vec3 uIslandCentre;
 varying vec2 vUv;
 varying float vSeed;
 varying vec3 vCentre;
@@ -77,7 +78,15 @@ void main() {
   col *= 0.92 + detail * 0.16;
   // Fade well before the lens: a puff beside the camera veils half the frame,
   // and the drop starts inside the cloud band. They slide past, never over.
-  alpha *= smoothstep(30.0, 110.0, vDist) * uFade;
+  alpha *= smoothstep(65.0, 180.0, length(vCentre - cameraPosition)) * uFade;
+  // Keep a broad window onto the island. Side clouds still give the descent
+  // scale, but a billboard between the eye and the beach must not hide it.
+  vec3 sight = uIslandCentre - cameraPosition;
+  float along = dot(vCentre - cameraPosition, sight) / max(dot(sight, sight), 1.0);
+  vec3 nearest = cameraPosition + sight * clamp(along, 0.0, 1.0);
+  float corridor = 1.0 - smoothstep(100.0, 270.0, length(vCentre - nearest));
+  float inFront = smoothstep(-0.1, 0.1, along) * (1.0 - smoothstep(0.8, 1.2, along));
+  alpha *= 1.0 - corridor * inFront * 0.96;
   if (alpha < 0.01) discard;
   gl_FragColor = vec4(col, alpha);
   #include <tonemapping_fragment>
@@ -132,6 +141,7 @@ export function createLowClouds(scene: THREE.Scene, centre: THREE.Vector3, low: 
       uSunColor: { value: new THREE.Color(1, 1, 1) },
       uShade: { value: new THREE.Color(0.55, 0.62, 0.7) },
       uFade: { value: 0 },
+      uIslandCentre: { value: new THREE.Vector3(centre.x, 35, centre.z) },
     },
     vertexShader: vertex,
     fragmentShader: fragment,
