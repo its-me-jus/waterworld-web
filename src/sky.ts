@@ -14,6 +14,8 @@ export type SkyRig = {
   sunLight: THREE.DirectionalLight
   hemi: THREE.HemisphereLight
   horizonColor: THREE.Color
+  /** The far sea's colour, for the strip below the horizon seen from height. */
+  seaFar: THREE.Color
   /** Baseline hemisphere colours — the frame loop restores from these in air. */
   dayHemiSky: THREE.Color
   dayHemiGround: THREE.Color
@@ -329,6 +331,12 @@ const NIGHT_CLOUD_SHADOW = new THREE.Color('#05080c')
 /** See the note where it's wired in — brings Preetham's radiances into the
  * same range as the light rig that lights everything under them. */
 const skyScale = { value: 0.3 }
+/**
+ * What the dome shows below the horizon. Only seen from height, in the strip
+ * between the end of the sea mesh and the true horizon, where the plain dome
+ * painted a white band; main.ts sets it to the far sea's hazy blue.
+ */
+const seaFar = { value: new THREE.Color(0.5, 0.6, 0.68) }
 
 /** Fixed moon direction — high enough to read, offset from the sun track. */
 const MOON_ELEVATION = 42
@@ -374,9 +382,14 @@ export function createSky(
   // photographed sky sits, and the zenith gets to stay blue.
   sky.material.onBeforeCompile = (shader) => {
     shader.uniforms.uSkyScale = skyScale
+    shader.uniforms.uSeaFar = seaFar
     shader.fragmentShader = shader.fragmentShader
-      .replace('void main() {', 'uniform float uSkyScale;\nvoid main() {')
-      .replace('gl_FragColor = vec4( texColor, 1.0 );', 'gl_FragColor = vec4( texColor * uSkyScale, 1.0 );')
+      .replace('void main() {', 'uniform float uSkyScale;\nuniform vec3 uSeaFar;\nvoid main() {')
+      .replace(
+        'gl_FragColor = vec4( texColor, 1.0 );',
+        `float belowSea = smoothstep(0.0, -0.03, normalize(vWorldPosition - cameraPosition).y);
+        gl_FragColor = vec4(mix(texColor * uSkyScale, uSeaFar, belowSea), 1.0);`,
+      )
   }
 
   const sunDir = new THREE.Vector3()
@@ -605,6 +618,8 @@ export function createSky(
     dayHemiSky,
     dayHemiGround,
     focusShadow,
+    /** The far sea's colour, for the strip below the horizon seen from height. */
+    seaFar: seaFar.value,
     update(time: number, climate: Climate) {
       cloudMat.uniforms.uTime.value = time
       starMat.uniforms.uTime.value = time

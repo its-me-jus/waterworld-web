@@ -28,6 +28,8 @@ export type FoliageRig = {
   ) => void
   /** The key light the leaf backlight reads from. */
   setSun: (dir: THREE.Vector3, color: THREE.Color) => void
+  /** Scale the aerial perspective — haze sits low, so it thins as the eye climbs. */
+  setHazeScale: (k: number) => void
   /**
    * The forest roof seen from above, for the `underRoof` layers: r is how
    * closed the roof is, g the height of its underside in metres. `x`/`z` is
@@ -792,6 +794,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
   const uSunDir = { value: new THREE.Vector3(0, 1, 0) }
   const uSunColor = { value: new THREE.Color(1, 0.95, 0.85) }
   const uHaze = { value: haze }
+  const uHazeDensity = { value: 0.0021 }
   const uCloudDrift = { value: new THREE.Vector2() }
   const uCloudShadow = { value: 0.45 }
   const uTide = { value: 0 }
@@ -868,7 +871,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
 
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uHaze = uHaze
-      shader.uniforms.uHazeDensity = { value: 0.0021 }
+      shader.uniforms.uHazeDensity = uHazeDensity
       shader.uniforms.uHazeMax = { value: 0.88 }
 
       shader.vertexShader = `varying vec3 vGroundPos;\n${ground ? 'varying float vGroundUp;\nattribute float aSandW;\nvarying float vSandW;\n' : ''}${stone ? 'varying vec3 vStoneN;\n' : ''}${shader.vertexShader}`
@@ -1056,5 +1059,9 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     return m
   }
 
-  return { update, setSun, setCanopy, material, mesh }
+  function setHazeScale(k: number) {
+    uHazeDensity.value = 0.0021 * k
+  }
+
+  return { update, setSun, setHazeScale, setCanopy, material, mesh }
 }

@@ -302,6 +302,48 @@ export function barkTexture() {
   return barkCache
 }
 
+let palmBarkCache: THREE.DataTexture | null = null
+
+/**
+ * A palm trunk is not bark at all: it is the stacked scars of every frond the
+ * tree has dropped, a ring every hand's width, grey and fibrous, each one a
+ * little ragged and not quite level. One repeat is about three metres of
+ * trunk once `barkUv` has scaled it, so thirty rings to the tile.
+ */
+export function palmBarkTexture() {
+  if (palmBarkCache) return palmBarkCache
+  const W = 128
+  const H = 512
+  const RINGS = 30
+  const data = new Uint8ClampedArray(W * H * 4)
+  const r = rng(91)
+  const jitter = Array.from({ length: RINGS }, () => ({ tilt: (r() - 0.5) * 0.25, depth: 0.6 + r() * 0.4, tone: 0.85 + r() * 0.3 }))
+  const fibre = Array.from({ length: W }, () => 0.85 + r() * 0.3)
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const u = x / W
+      // Each ring tilts a little and wanders round the trunk
+      const ringPos = (y / H) * RINGS
+      const k = Math.floor(ringPos) % RINGS
+      const j = jitter[k]
+      const f = ringPos - Math.floor(ringPos) + j.tilt * Math.sin(u * Math.PI * 2 + k)
+      const t = f - Math.floor(f)
+      // The scar: a dark groove at the bottom of each ring, a pale lip above it
+      const groove = Math.exp(-((t - 0.06) ** 2) / 0.003) * j.depth
+      const lip = Math.exp(-((t - 0.16) ** 2) / 0.004) * 0.5
+      let tone = (0.62 + lip * 0.25 - groove * 0.45) * j.tone
+      tone *= fibre[x] * (0.92 + 0.08 * Math.sin(y * 0.9 + x))
+      const i = (y * W + x) * 4
+      data[i] = Math.min(255, tone * 226)
+      data[i + 1] = Math.min(255, tone * 216)
+      data[i + 2] = Math.min(255, tone * 198)
+      data[i + 3] = 255
+    }
+  }
+  palmBarkCache = toTexture(data, W, H, true)
+  return palmBarkCache
+}
+
 /**
  * Give a cylinder's uv metres instead of 0–1, so one repeat of bark covers
  * about the same patch of trunk however tall the tree is. `around` is how

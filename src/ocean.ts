@@ -194,8 +194,17 @@ void main() {
   }
 
   float fade = 1.0 / (1.0 + dist * 0.035);
-  vec3 base = normalize(vNormal);
-  vec3 detail = detailNormal(vWorldPos.xz, fade * (1.0 - 0.78 * lee));
+  // The swell is a sum of a few fixed wave trains, and from any height their
+  // crossing shows as a regular diamond lattice. Real sea breaks into big slow
+  // patches — slicks and rougher wind lanes — so the far normal is eased
+  // toward flat by a patch field a couple of hundred metres across.
+  float macro = fbm(vWorldPos.xz * 0.0045 + vec2(uTime * 0.004, -uTime * 0.003), 3);
+  float farN = smoothstep(60.0, 520.0, dist);
+  // Past a kilometre or so the swell is finer than the grid it's drawn on and
+  // only aliases into the lattice; the sea out there is an even sheen anyway
+  float farFlat = max(farN * (0.45 + 0.45 * macro), smoothstep(380.0, 1300.0, dist));
+  vec3 base = normalize(mix(vNormal, vec3(0.0, 1.0, 0.0), farFlat));
+  vec3 detail = detailNormal(vWorldPos.xz, fade * (1.0 - 0.78 * lee) * (0.7 + 0.6 * macro));
   vec3 N = normalize(base + vec3(detail.x, 0.0, detail.z) * 0.7);
   N.y = max(N.y, 0.12);
   N = normalize(N);
@@ -224,18 +233,21 @@ void main() {
     vec3 mirror = mix(murk * 1.15, vec3(0.3, 0.55, 0.6), 0.25);
     // Outside the window the surface is a rippled mirror of the sea below —
     // let the swell and chop modulate it so it reads as moving water, not a lid
-    float ripple = clamp(0.5 + (N.x * 0.7 + N.z * 0.5) * 2.2, 0.0, 1.0);
-    mirror *= 0.72 + 0.55 * ripple + pow(caus, 1.4) * 0.7;
+    float ripple = clamp(0.5 + (N.x * 0.7 + N.z * 0.5) * 1.3, 0.0, 1.0);
+    mirror *= 0.8 + 0.4 * ripple + pow(caus, 1.4) * 0.6;
     // Haze the sky patch so the window edge feels like water, not a cutout
     sky = mix(mirror, sky, 0.72);
     vec3 col = mix(mirror, sky, snell);
 
     col += uSunColor * ggx(Nd, -I, L, 0.45) * 0.25 * snell;
+    // Far off, the underside dissolves into the water colour the backdrop
+    // and the fog share, so the surface fades away instead of ending in a band
     col = mix(col, murk, smoothstep(8.0, 60.0, dist));
+    col = mix(col, uUnderColor, smoothstep(30.0, 110.0, dist));
 
     float planarU = length(vWorldPos.xz - uCameraPos.xz);
     float rimU = 1.0 - smoothstep(uHalfExtent * 0.52, uHalfExtent * 0.97, planarU);
-    col = mix(col, murk * 0.7, 1.0 - rimU);
+    col = mix(col, uUnderColor, 1.0 - rimU);
     gl_FragColor = vec4(col, 0.95 * rimU);
 
     #include <tonemapping_fragment>
@@ -260,6 +272,8 @@ void main() {
   // Body colour: deeper looking down the wave, brighter on the shoulders
   float facing = clamp(N.y, 0.0, 1.0);
   vec3 body = mix(uDeepColor, uShallowColor, pow(facing, 2.2));
+  // The slicks read a shade darker and glassier than the wind lanes
+  body *= 0.9 + 0.2 * macro;
 
   // Island shelf — ankle-deep water over the sand, opaque blue again offshore.
   // Approximates depth from radial distance (volcanic cone); good enough that
@@ -274,15 +288,23 @@ void main() {
   // band and the waterline drifted off the actual beach.
   float depthW = waterDepth(vWorldPos);
   float hasBed = step(0.001, uSeabedRange.y);
+  // For colour only, the depth is roughened off the beach: a reef's outer edge
+  // is spurs and grooves, not a contour line, and the roughening also hides
+  // the 6 m grid the depth comes from
+  float depthC = depthW + (fbm(vWorldPos.xz * 0.045, 3) - 0.5) * 7.0 * smoothstep(1.0, 12.0, depthW);
   // 1 in water up to ~1.5 m, 0 past ~9 m — a lagoon a few metres deep still
   // reads as turquoise, not only the last stretch against the sand
-  float shallow = mix(shelf, 1.0 - smoothstep(1.5, 9.0, depthW), hasBed);
+  float shallow = mix(shelf, 1.0 - smoothstep(1.5, 9.0, depthC), hasBed);
+  // Clear tropical water shows sand down to thirty metres or so: off the reef
+  // the turquoise gives way through teal to blue, not in one step
+  float reefFall = hasBed * (1.0 - smoothstep(6.0, 32.0, depthC)) * (1.0 - shallow);
   // Warmer turquoise over the sand — beach shallows, not pool chlorine. With
   // real depth the tint covers more water than the radial shelf did, and the
   // old pale mix read as milky grey; this one keeps its saturation.
   vec3 sandTint = mix(vec3(0.52, 0.8, 0.74), vec3(0.16, 0.6, 0.56), hasBed);
   vec3 beachShallow = mix(uShallowColor * 1.65, sandTint, 0.48);
   body = mix(body, beachShallow, shallow * 0.82);
+  body = mix(body, mix(uShallowColor * 1.2, vec3(0.06, 0.4, 0.47), 0.55), reefFall * 0.6);
 
   // Subsurface glow where the sun shines through a wave back
   float sss = pow(max(dot(-L, V) * 0.5 + 0.5, 0.0), 3.0) * (1.0 - facing);
@@ -305,7 +327,10 @@ void main() {
   // doesn't glitter like open ocean on ankle-deep water
   float rough = mix(0.05, 0.2, clamp(dist * 0.006, 0.0, 1.0));
   rough = mix(rough, 0.24, shallow);
-  color += uSunColor * ggx(N, V, L, rough) * mix(1.6, 0.55, shallow);
+  // From high up the broad far lobe spreads into a white sheet over half the
+  // sea, so the glare thins as the eye climbs
+  float altGlare = 1.0 - 0.65 * smoothstep(40.0, 220.0, uCameraPos.y);
+  color += uSunColor * ggx(N, V, L, rough) * mix(1.6, 0.55, shallow) * altGlare;
 
   // Whitecaps on crests + a little foam streaking in the chop
   float streak = fbm(vWorldPos.xz * 0.9 + vec2(uTime * 0.25, -uTime * 0.2), 3);
@@ -338,9 +363,13 @@ void main() {
     float wobble = fbm(vWorldPos.xz * 0.11 + vec2(uTime * 0.04, 0.0), 2);
     float band = pow(0.5 + 0.5 * sin(depthW * 6.0 + wobble * 3.5 + uTime * 1.15), 6.0);
     float broken = smoothstep(0.32, 0.7, laceNoise);
-    // The swash: a thin wet edge of white where the water runs out on the sand
-    float edge = (1.0 - smoothstep(0.0, 0.16, depthW)) * smoothstep(-0.03, 0.04, depthW);
-    surf = clamp(band * broken * zone * 0.6 + edge * (0.45 + 0.4 * laceNoise), 0.0, 1.0);
+    // The swash: a wet edge of white where the water runs out on the sand,
+    // and a lacy line of foam riding up and back with each wave
+    float edge = (1.0 - smoothstep(0.0, 0.28, depthW)) * smoothstep(-0.03, 0.04, depthW);
+    float wash = 0.5 + 0.5 * sin(uTime * 0.55 + wobble * 4.0);
+    float washLine = exp(-pow((depthW - (0.04 + wash * 0.3)) / 0.07, 2.0)) * smoothstep(-0.03, 0.04, depthW);
+    float lace = smoothstep(0.25, 0.6, laceNoise);
+    surf = clamp(band * broken * zone * 0.75 + edge * (0.5 + 0.4 * laceNoise) + washLine * lace * 0.9, 0.0, 1.0);
     color = mix(color, foamWhite, surf * 0.85);
   }
 
@@ -350,7 +379,10 @@ void main() {
   // The colour starts thickening toward the horizon well before the alpha
   // starts to fade, so the last stretch of sea hazes over a long run
   float far = smoothstep(uHalfExtent * 0.4, uHalfExtent * 0.96, planar);
-  color = mix(color, uHorizonColor * 0.85, far * 0.92);
+  // From height the far sea is a hazy blue a shade under the sky, not the
+  // sky's own white; the dome below the horizon is painted the same (sky.ts)
+  vec3 farSea = mix(uHorizonColor * 0.85, uHorizonColor * vec3(0.55, 0.68, 0.8), smoothstep(25.0, 220.0, uCameraPos.y));
+  color = mix(color, farSea, far * 0.92);
 
   // Soft edge: last metres over the beach go translucent so sand peeks through
   // with a wet sheen, without turning the whole shelf into grey mud. With real

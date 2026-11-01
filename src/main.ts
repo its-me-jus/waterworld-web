@@ -2,7 +2,7 @@ import './style.css'
 import * as THREE from 'three'
 import { createOceanAudio, type AudioGround } from './audio'
 import { createCaustics } from './caustics'
-import { createClimate } from './climate'
+import { createClimate, DAY_LENGTH } from './climate'
 import { createCreatures } from './creatures'
 import { createTouchControls } from './controls'
 import { createHud } from './hud'
@@ -21,6 +21,7 @@ import { createSparBuoy } from './spar'
 import { createSplashLayer } from './splash'
 import { createSwimmer } from './swimmer'
 import { createUnderwaterWorld } from './underwater'
+import { createLowClouds } from './lowclouds'
 import { applyStormToWaves, oceanState, sampleOcean, setShelter, shelterAt } from './waves'
 import { createWreck } from './wreck'
 
@@ -101,6 +102,8 @@ const underwaterWorld = createUnderwaterWorld(scene, {
   waterColor: new THREE.Color('#0c5c6b'),
   sunDir: skyRig.sunDir,
   lowPower,
+  // Circling the Wanderer's reef (the wreck sits at -38, -104)
+  reefSchool: { x: -46, y: -12, z: -110, r: 15 },
 })
 
 // Placed dead ahead of the spawn heading, far enough out that the mast is a
@@ -195,6 +198,61 @@ const sea = createSeaState({
 })
 if (params.has('calm')) sea.pinCalm()
 
+// ?film=1 is for shooting stills and fly-throughs of the real build (the
+// homepage uses them): no labels, no hands, no drop, and a handle on
+// window.__film to pin the time of day and put the camera anywhere from code.
+//   __film.hour(17.6)                    set the clock and hold it there
+//   __film.freeze(false)                 let the day run again
+//   __film.camera(x, y, z, yaw, pitch)   hold the camera at a pose (y is height;
+//                                        below the swell is underwater)
+//   __film.release()                     hand the camera back to the swimmer
+//   __film.hud(true)                     show the labels again
+//   __film.frames                        frames drawn so far, to wait on
+//   __film.ground(x, z)                  ground height there, for shots on land
+// The sea, fish and weather keep moving while the camera is held.
+const film = {
+  on: params.has('film'),
+  frozen: false,
+  pose: null as null | { x: number; y: number; z: number; yaw: number; pitch: number },
+  frames: 0,
+  /** Re-capture the sky reflection on the next frame (the camera jumped). */
+  freshEnv: false,
+}
+if (film.on) {
+  document.body.classList.add('film')
+  Object.assign(window, {
+    __film: {
+      camera(x: number, y: number, z: number, yaw = 0, pitch = 0) {
+        // A jump of more than a few metres leaves the water reflecting the
+        // sky as it was seen from the old spot until the next refresh
+        const was = film.pose
+        if (!was || Math.hypot(x - was.x, y - was.y, z - was.z) > 5) film.freshEnv = true
+        film.pose = { x, y, z, yaw, pitch }
+      },
+      release() {
+        film.pose = null
+      },
+      hour(h: number) {
+        climate.setElapsed((((h % 24) + 24) % 24 / 24) * DAY_LENGTH)
+        film.frozen = true
+      },
+      freeze(on = true) {
+        film.frozen = on
+      },
+      hud(show: boolean) {
+        document.body.classList.toggle('film', !show)
+      },
+      get frames() {
+        return film.frames
+      },
+      /** Height of the ground (island or the spire) at a point, for placing a camera on land. */
+      ground(x: number, z: number) {
+        return groundAt(x, z)
+      },
+    },
+  })
+}
+
 // Capture the sky (and clouds) into a cube map so the water reflects the real sky
 const envRT = new THREE.WebGLCubeRenderTarget(lowPower ? 128 : 256)
 envRT.texture.minFilter = THREE.LinearMipmapLinearFilter
@@ -242,7 +300,7 @@ const wantChute =
   params.get('chute') === '1' ||
   (params.get('chute') !== '0' &&
     !navigator.webdriver &&
-    !['x', 'z', 'yaw', 'pitch', 'depth'].some((k) => params.has(k)))
+    !['x', 'z', 'yaw', 'pitch', 'depth', 'film'].some((k) => params.has(k)))
 const chute = createParachute(scene)
 
 // Where the drop starts and where the skip lands you. The cove is the one
@@ -432,6 +490,8 @@ const timer = new THREE.Timer()
 timer.connect(document)
 let bubbleTimer = 0
 let envTimer = 0
+const SEA_FAR_TINT = new THREE.Color(0.55, 0.68, 0.8)
+const seaFarHigh = new THREE.Color()
 
 function spawnBubble() {
   const b = document.createElement('span')
@@ -519,6 +579,9 @@ markShadowCasters(scene)
 let shadowScanTimer = 0
 
 // Dancing sunlight on the seabed, the wreck and the island shelf
+// Cumulus under the parachute and the climb (fade in above ~60 m)
+const lowClouds = createLowClouds(scene, island.centre, lowPower)
+
 const caustics = createCaustics(skyRig.sunDir)
 caustics.apply(wreck.group)
 caustics.apply(reefWreck.group)
@@ -552,7 +615,7 @@ function frame() {
   const dt = Math.min(timer.getDelta(), 0.05)
   const t = timer.getElapsed()
 
-  const weather = climate.update(dt)
+  const weather = climate.update(film.frozen ? 0 : dt)
   applyStormToWaves(weather.storm)
   syncWaves()
   // The sea breathes under the squalls — glass-offs oil the chop down, and
@@ -594,6 +657,28 @@ function frame() {
   // ?fly=120 lifts the eye that many metres above the swimmer — a drone view
   // for judging the island's shape. Dev only; the swimmer stays below.
   if (flyLift) camera.position.y += flyLift
+  if (film.pose) {
+    // The swimmer goes where the camera is, so the sea, the island's detail
+    // and the sound all centre on the shot
+    const p = film.pose
+    player.x = p.x
+    player.z = p.z
+    camera.position.set(p.x, p.y, p.z)
+    camera.rotation.set(p.pitch, p.yaw, 0, 'YXZ')
+    const sy = sampleOcean(p.x, p.z, t).y
+    const under = p.y < sy
+    Object.assign(view, {
+      underwater: under,
+      surfaceY: sy,
+      depth: Math.max(0, sy - p.y),
+      submersion: under ? 1 : 0,
+      walking: false,
+      groundY: -Infinity,
+      fallLanded: 0,
+      moving: 0,
+      effort: 0,
+    })
+  }
   const { underwater, surfaceY, depth } = view
 
   // Ashore and on dry ground — wading the shallows still counts as in the sea
@@ -654,6 +739,7 @@ function frame() {
   if (document.pointerLockElement) void oceanAudio.unlock()
 
   swimmer.update(dt, t, view, player.pitch + player.viewPitch, player.roll)
+  if (film.on) swimmer.rig.visible = false
 
   skyRig.update(t, weather)
   // Keep every sky layer centred on the eye — an XZ-only follow left the
@@ -765,6 +851,17 @@ function frame() {
 
   airFog.color.copy(skyRig.horizonColor)
   airFog.density = 0.0045 + weather.storm * 0.0035 + (1 - weather.daylight) * 0.002
+  // Haze lies low over the sea. Looking down from the canopy or the climb, most
+  // of the air between you and the island is above it, and at sea-level
+  // density the whole drop was a white wash
+  const hazeThin = THREE.MathUtils.smoothstep(camera.position.y, 25, 220)
+  airFog.density *= 1 - 0.65 * hazeThin
+  island.setHaze(skyRig.horizonColor, 1 - 0.55 * hazeThin)
+  // Matches the ocean's own far colour at this height (ocean.ts)
+  skyRig.seaFar
+    .copy(skyRig.horizonColor)
+    .multiplyScalar(0.85)
+    .lerp(seaFarHigh.copy(skyRig.horizonColor).multiply(SEA_FAR_TINT), hazeThin)
 
   scene.fog = underwater ? underFog : airFog
   scene.background = underwater ? waterTint : skyRig.horizonColor
@@ -869,10 +966,15 @@ function frame() {
     biolum: weather.biolum,
     daylight: weather.daylight,
     effort: view.effort,
+    tint: waterTint,
   })
 
   wreck.update(t, camera)
   reefWreck.update(t, camera)
+  {
+    const deck = (skyRig.clouds.material as THREE.ShaderMaterial).uniforms
+    lowClouds.update(t, camera, skyRig.sunDir, deck.uTint.value, deck.uShadow.value, weather.daylight)
+  }
   island.update(camera, underwater, t)
   shore.update(t, camera, underwater)
   littoral.update(dt, player, { biolum: weather.biolum })
@@ -899,6 +1001,10 @@ function frame() {
 
   // Refresh reflections as the sky and clouds move — storms need it more often
   envTimer -= dt
+  if (film.freshEnv) {
+    envTimer = 0
+    film.freshEnv = false
+  }
   if (envTimer <= 0 && !underwater) {
     captureEnv()
     envTimer = lowPower ? 10 : weather.storm > 0.2 || weather.daylight < 0.35 ? 2 : 4
@@ -927,6 +1033,7 @@ function frame() {
   }
 
   post.render(scene, camera)
+  film.frames++
   requestAnimationFrame(frame)
 }
 

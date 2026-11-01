@@ -274,3 +274,11 @@ body.underwater #bubbles {
 #skip-chute[hidden] {
   display: none;
 }
+
+/* ?film=1: nothing on screen but the world */
+body.film #depth,
+body.film #whisper,
+body.film #skip-chute,
+body.film #touch-controls {
+  display: none !important;
+}

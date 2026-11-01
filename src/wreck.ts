@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { buildReefRock, paintRock, reefLife, reefRockMaterial } from './reefrock'
+import { addGrowth, PLANK_TILE_LENGTH, PLANKS_PER_TILE, plankTextures } from './woodtex'
 import { buildSpear } from './spear'
 import { fbm, sampleOcean } from './waves'
 
@@ -20,7 +21,19 @@ const UP = new THREE.Vector3(0, 1, 0)
 // —— materials ————————————————————————————————————————————————
 
 function materials() {
+  const planks = plankTextures()
   return {
+    // The hull and deck: painted planking, waterlogged, grown over
+    hull: addGrowth(
+      new THREE.MeshStandardMaterial({
+        map: planks.map,
+        bumpMap: planks.bump,
+        bumpScale: 2.2,
+        roughness: 0.93,
+        side: THREE.DoubleSide,
+      }),
+      'hull',
+    ),
     // Waterlogged oak. Read light in air, because the murk takes most of it back
     plank: new THREE.MeshStandardMaterial({
       color: 0x846a49,
@@ -28,8 +41,8 @@ function materials() {
       metalness: 0.02,
       side: THREE.DoubleSide,
     }),
-    timber: new THREE.MeshStandardMaterial({ color: 0x5e4c34, roughness: 0.96 }),
-    spar: new THREE.MeshStandardMaterial({ color: 0x94795a, roughness: 0.88 }),
+    timber: addGrowth(new THREE.MeshStandardMaterial({ color: 0x4f4231, roughness: 0.96 }), 'timber'),
+    spar: addGrowth(new THREE.MeshStandardMaterial({ color: 0x86705a, roughness: 0.88 }), 'spar'),
     // Double-sided so swimming into the reef reads as "inside a rock" rather
     // than a hole in the world. Colour is all in the paint (reefrock.ts).
     rock: reefRockMaterial({
@@ -375,37 +388,66 @@ function hullPoint(u: number, v: number, out: THREE.Vector3, swell = 1) {
   )
 }
 
+/** Outward normal of the hull surface, from its two tangents. */
+function hullNormal(u: number, v: number, out: THREE.Vector3, swell: number) {
+  const e = 0.002
+  const a = hullPoint(Math.min(1, u + e), v, new THREE.Vector3(), swell)
+  const b = hullPoint(Math.max(0, u - e), v, new THREE.Vector3(), swell)
+  const c = hullPoint(u, Math.min(1, v + e), new THREE.Vector3(), swell)
+  const d = hullPoint(u, Math.max(-1, v - e), new THREE.Vector3(), swell)
+  out.crossVectors(a.sub(b), c.sub(d)).normalize()
+  // Out from the keel line, whichever way the cross product came round
+  const p = hullPoint(u, v, new THREE.Vector3(), swell)
+  if (out.x * p.x + out.y * (p.y + station(u).depth * 0.5) < 0) out.negate()
+  return out
+}
+
 /**
- * Planking, quad by quad, skipping anything `keep` says has been torn away.
- * Pushed slightly proud of the frames so the ribs read as structure underneath
- * and the torn edges have some thickness to them.
+ * Planking, one strake per row of quads, skipping whatever `keep` says has
+ * been torn away. Each strake breaks at its own place — the test is shifted
+ * along the hull by a per-strake amount — so a torn edge is a ragged run of
+ * plank ends, not a clean cut. Built twice, the inner skin a hand's width in,
+ * so every torn edge shows the thickness of the wood.
  */
 function hullSkin(uFrom: number, uTo: number, keep: (u: number, v: number) => boolean, low: boolean) {
-  const NU = low ? 26 : 40
-  const NV = low ? 16 : 24
-  const verts: number[] = []
-  const corners = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
+  const NU = low ? 36 : 64
+  const NV = low ? 20 : 30
+  const pos: number[] = []
+  const nrm: number[] = []
+  const uv: number[] = []
+  const p = new THREE.Vector3()
+  const n = new THREE.Vector3()
 
-  for (let iu = 0; iu < NU; iu++) {
-    const u0 = uFrom + ((uTo - uFrom) * iu) / NU
-    const u1 = uFrom + ((uTo - uFrom) * (iu + 1)) / NU
-    for (let iv = 0; iv < NV; iv++) {
-      const v0 = -1 + (2 * iv) / NV
-      const v1 = -1 + (2 * (iv + 1)) / NV
-      if (!keep((u0 + u1) * 0.5, (v0 + v1) * 0.5)) continue
-      hullPoint(u0, v0, corners[0], 1.03)
-      hullPoint(u1, v0, corners[1], 1.03)
-      hullPoint(u1, v1, corners[2], 1.03)
-      hullPoint(u0, v1, corners[3], 1.03)
-      for (const i of [0, 1, 2, 0, 2, 3]) {
-        verts.push(corners[i].x, corners[i].y, corners[i].z)
+  const strakeShift = (iv: number) => (fbm(iv * 3.7 + 0.3, 1.9) - 0.5) * 0.12
+  const shell = (swell: number, flip: boolean) => {
+    for (let iu = 0; iu < NU; iu++) {
+      const u0 = uFrom + ((uTo - uFrom) * iu) / NU
+      const u1 = uFrom + ((uTo - uFrom) * (iu + 1)) / NU
+      for (let iv = 0; iv < NV; iv++) {
+        const v0 = -1 + (2 * iv) / NV
+        const v1 = -1 + (2 * (iv + 1)) / NV
+        if (!keep((u0 + u1) * 0.5 + strakeShift(iv), (v0 + v1) * 0.5)) continue
+        const quad: [number, number][] = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]
+        const order = flip ? [0, 2, 1, 0, 3, 2] : [0, 1, 2, 0, 2, 3]
+        for (const i of order) {
+          const [qu, qv] = quad[i]
+          hullPoint(qu, qv, p, swell)
+          hullNormal(qu, qv, n, swell)
+          if (flip) n.negate()
+          pos.push(p.x, p.y, p.z)
+          nrm.push(n.x, n.y, n.z)
+          uv.push((qu * HULL_LENGTH) / PLANK_TILE_LENGTH, (i === 2 || i === 3 ? iv + 1 : iv) / PLANKS_PER_TILE)
+        }
       }
     }
   }
+  shell(1.03, false)
+  shell(0.985, true)
 
   const geo = new THREE.BufferGeometry()
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3))
-  geo.computeVertexNormals()
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3))
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
   return geo
 }
 
@@ -416,8 +458,10 @@ function hullSkin(uFrom: number, uTo: number, keep: (u: number, v: number) => bo
  */
 function hullDeck(uFrom: number, uTo: number, low: boolean) {
   const NU = low ? 20 : 32
-  const NV = low ? 10 : 14
+  // One strip per deck plank, so the ones that rotted out go whole
+  const NV = low ? 14 : 22
   const verts: number[] = []
+  const uvs: number[] = []
   const corners = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
 
   const at = (u: number, v: number, out: THREE.Vector3) =>
@@ -426,7 +470,9 @@ function hullDeck(uFrom: number, uTo: number, low: boolean) {
   const keep = (u: number, v: number) => {
     if (u < 0.42) return false
     const hole = ((u - 0.56) * (u - 0.56)) / 0.02 + (v * v) / 0.55
-    return hole > 1 + (fbm(u * 12, v * 12) - 0.5) * 0.8
+    if (hole < 1 + (fbm(u * 12, v * 12) - 0.5) * 0.8) return false
+    const strip = Math.floor(((v + 1) / 2) * NV)
+    return fbm(strip * 5.3 + 0.7, u * 5.5) < 0.64
   }
 
   for (let iu = 0; iu < NU; iu++) {
@@ -442,12 +488,15 @@ function hullDeck(uFrom: number, uTo: number, low: boolean) {
       at(u0, v1, corners[3])
       for (const i of [0, 1, 2, 0, 2, 3]) {
         verts.push(corners[i].x, corners[i].y, corners[i].z)
+        // Deck planks run fore and aft, a little narrower than the strakes
+        uvs.push(corners[i].z / PLANK_TILE_LENGTH, (corners[i].x + 4) / (0.24 * PLANKS_PER_TILE))
       }
     }
   }
 
   const geo = new THREE.BufferGeometry()
   geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3))
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
   geo.computeVertexNormals()
   return geo
 }
@@ -674,7 +723,7 @@ function barnacleInstances(spec: BarnacleSurface, material: THREE.Material) {
 }
 
 /** Attach barnacle clusters across the wreck. */
-function addBarnacles(parent: THREE.Object3D, material: THREE.Material, low: boolean) {
+function addBarnacles(parent: THREE.Object3D, material: THREE.Material, low: boolean, bowMove: THREE.Matrix4) {
   const clusters: BarnacleSurface[] = [
     // Bow hull, both flanks and along the snapped rail
     { centre: new THREE.Vector3(-2.4, -12.2, 3.2), normal: new THREE.Vector3(-0.8, 0.45, 0.2).normalize(), radius: 1, scale: [1.6, 1.1, 1.4], count: low ? 14 : 30, seed: 1.7 },
@@ -690,6 +739,12 @@ function addBarnacles(parent: THREE.Object3D, material: THREE.Material, low: boo
     { centre: new THREE.Vector3(4.2, -22.2, -17.6), normal: new THREE.Vector3(0.4, 0.85, -0.3).normalize(), radius: 1, scale: [1.6, 0.9, 1.3], count: low ? 14 : 26, seed: 5.8 },
   ]
 
+  // The first three were placed on the bow before it settled into the reef
+  const turn = new THREE.Matrix3().setFromMatrix4(bowMove)
+  for (const c of clusters.slice(0, 3)) {
+    c.centre.applyMatrix4(bowMove)
+    c.normal.applyMatrix3(turn).normalize()
+  }
   for (const c of clusters) {
     const mesh = barnacleInstances(c, material)
     if (mesh) parent.add(mesh)
@@ -752,6 +807,45 @@ export function crateObject(mat: THREE.Material) {
 
 // —— assembly ————————————————————————————————————————————————
 
+/**
+ * Lower a piece of hull until its lowest planks are buried `bury` metres in
+ * rock or sand. Wreckage that has sat on a reef for years has settled into
+ * it; hung a hand's width above, it reads as a model on a stand.
+ */
+function settle(piece: THREE.Object3D, geo: THREE.BufferGeometry, floor: (x: number, y: number, z: number) => number, bury: number) {
+  const pos = geo.attributes.position
+  const step = Math.max(1, Math.floor(pos.count / 500))
+  const pts: THREE.Vector3[] = []
+  for (let i = 0; i < pos.count; i += step) pts.push(new THREE.Vector3().fromBufferAttribute(pos, i))
+  const v = new THREE.Vector3()
+  const base = piece.position.y
+  const lowest = (dy: number) => {
+    piece.position.y = base + dy
+    piece.updateMatrix()
+    const ds = pts.map((p) => {
+      v.copy(p).applyMatrix4(piece.matrix)
+      return floor(v.x, v.y, v.z)
+    })
+    ds.sort((a, b) => a - b)
+    return ds[Math.floor(ds.length * 0.04)]
+  }
+  let lo = -10
+  let hi = 6
+  for (let i = 0; i < 22; i++) {
+    const mid = (lo + hi) / 2
+    if (lowest(mid) > -bury) hi = mid
+    else lo = mid
+  }
+  piece.position.y = base + (lo + hi) / 2
+  piece.updateMatrix()
+}
+
+/** Where the bow sat before it was settled — the mast step and crusts were placed against it. */
+const BOW_WAS = new THREE.Object3D()
+BOW_WAS.position.set(-1.2, -13.6, 0.6)
+BOW_WAS.rotation.set(-0.17, 0.55, 0.44)
+BOW_WAS.updateMatrix()
+
 export type WreckOptions = {
   x: number
   z: number
@@ -788,10 +882,18 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   // —— bow section, canted on the reef shoulder ——
   const bow = new THREE.Group()
   bow.position.set(-1.2, -13.6, 0.6)
-  bow.rotation.set(-0.17, 0.55, 0.44)
+  // Nose down off the reef shoulder into the sand and heeled over: the pose
+  // (searched once) that lays the most hull on rock and sand, the way a wreck
+  // lies once the water has had it for a few winters
+  bow.rotation.set(0.6, 0.35, 0.5)
   group.add(bow)
-  bow.add(new THREE.Mesh(hullSkin(0.3, 1, bowKeep, low), mat.plank))
-  bow.add(new THREE.Mesh(hullDeck(0.3, 1, low), mat.spar))
+  const bowSkin = hullSkin(0.3, 1, bowKeep, low)
+  const floorAt = (x: number, y: number, z: number) => Math.min(rock.distance(x, y, z), y - sandHeight(x, z))
+  settle(bow, bowSkin, floorAt, 0.7)
+  /** Old group-space positions near the bow, carried onto where it now lies. */
+  const bowMove = new THREE.Matrix4().multiplyMatrices(bow.matrix, BOW_WAS.matrix.clone().invert())
+  bow.add(new THREE.Mesh(bowSkin, mat.hull))
+  bow.add(new THREE.Mesh(hullDeck(0.3, 1, low), mat.hull))
   bow.add(new THREE.Mesh(hullFrames(0.3, 1, low ? 8 : 13, low), mat.timber))
 
   const capstan = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, 0.75, 10), mat.spar)
@@ -806,13 +908,15 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   stern.position.set(4, -23, -18)
   stern.rotation.set(0.12, 2.2, 1.3)
   group.add(stern)
-  stern.add(new THREE.Mesh(hullSkin(0, 0.28, sternKeep, low), mat.plank))
+  const sternSkin = hullSkin(0, 0.28, sternKeep, low)
+  settle(stern, sternSkin, floorAt, 0.45)
+  stern.add(new THREE.Mesh(sternSkin, mat.hull))
   stern.add(new THREE.Mesh(hullFrames(0, 0.28, low ? 4 : 7, low), mat.timber))
 
   // —— mast: the beacon ——
   // Placed by explicit base and tip rather than parented to the canted deck, so
   // we know exactly how far out of the water the top stands.
-  const mastBase = new THREE.Vector3(0.4, -13.8, 2.4)
+  const mastBase = new THREE.Vector3(0.4, -13.8, 2.4).applyMatrix4(bowMove)
   const mastTip = new THREE.Vector3(7.2, 8.4, -1.6)
   const mastDir = mastTip.clone().sub(mastBase)
   const mastLength = mastDir.length()
@@ -880,10 +984,10 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
 
   // —— rigging, chain and anchor ——
   const lines: THREE.BufferGeometry[] = [
-    slackLine(mastBase.clone().addScaledVector(mastDir, mastLength * 0.92), new THREE.Vector3(-4.2, -13.2, 6.4), 1.4, 0.035),
+    slackLine(mastBase.clone().addScaledVector(mastDir, mastLength * 0.92), new THREE.Vector3(-4.2, -13.2, 6.4).applyMatrix4(bowMove), 1.4, 0.035),
     // Still snagged on the spire that opened her up
     slackLine(mastBase.clone().addScaledVector(mastDir, mastLength * 0.55), new THREE.Vector3(-13.6, -4.6, -12.6), 1.1, 0.03),
-    slackLine(yardAt.clone().addScaledVector(yardAxis, 4.1), new THREE.Vector3(2.4, -12.4, -3.6), 2.2, 0.028),
+    slackLine(yardAt.clone().addScaledVector(yardAxis, 4.1), new THREE.Vector3(2.4, -12.4, -3.6).applyMatrix4(bowMove), 2.2, 0.028),
   ]
   const rigging = new THREE.Mesh(mergeGeometries(lines, false) as THREE.BufferGeometry, mat.rope)
   group.add(rigging)
@@ -901,7 +1005,7 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
 
   // Barnacle crust over wood, spar and iron — what makes her read as sunken
   // for years rather than parked last week
-  addBarnacles(group, mat.barnacle, low)
+  addBarnacles(group, mat.barnacle, low, bowMove)
 
   // —— Phase B salvage: the knife and the sealed locker ————————————————
   // Two dives, two depths. The knife lies by the capstan on the bow deck —
@@ -1160,22 +1264,45 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     }
     // Talus: blocks that came off the walls and lie half-buried in the sand
     // round the foot, which is what ties a reef to the seabed
-    const talus = low ? 14 : 38
-    for (let i = 0, placed = 0; i < talus * 4 && placed < talus; i++) {
-      const a = i * 2.399 + 0.3
-      const r = 5 + Math.sqrt(i / (talus * 4)) * 22
-      const lx = -8 + Math.cos(a) * r
-      const lz = -6 + Math.sin(a) * r
-      const floor = sandHeight(lx, lz)
-      const gap = rock.distance(lx, floor + 0.4, lz)
-      if (gap < 0.2 || gap > 3.2) continue
-      const n = fbm(i * 3.7 + 1.1, i * 1.9)
-      const size = 0.3 + n * n * 1.6
-      matrix.makeRotationY(i * 1.37)
-      matrix.scale(new THREE.Vector3(1 + n * 0.3, 0.75 + n * 0.25, 0.85 + n * 0.3))
-      matrix.setPosition(lx, floor - size * 0.2, lz)
-      boulders.push(rockLump(size, low ? 1 : 2, i * 2.9 + 7.3).applyMatrix4(matrix))
-      placed++
+    // Falls come in heaps — one big block and its spray of fragments — and the
+    // sizes run from fist to car, mostly small. A uniform hash, not fbm, picks
+    // them: fbm crowds round its middle, which is what made every stone the
+    // same loaf.
+    const hash = (n: number) => {
+      const x = Math.sin(n * 127.1 + 311.7) * 43758.5453
+      return x - Math.floor(x)
+    }
+    const heaps = low ? 6 : 14
+    const tilt = new THREE.Euler()
+    const q = new THREE.Quaternion()
+    const scale = new THREE.Vector3()
+    const at = new THREE.Vector3()
+    for (let h = 0, made = 0; h < heaps * 6 && made < heaps; h++) {
+      const a = h * 2.399 + 0.3
+      const r = 6 + Math.sqrt(h / (heaps * 6)) * 20
+      const hx = -8 + Math.cos(a) * r
+      const hz = -6 + Math.sin(a) * r
+      const gap = rock.distance(hx, sandHeight(hx, hz) + 0.4, hz)
+      if (gap < 0.3 || gap > 4) continue
+      made++
+      const pieces = (low ? 2 : 3) + Math.floor(hash(h * 7.1) * (low ? 3 : 6))
+      for (let k = 0; k < pieces; k++) {
+        const seed = h * 31.7 + k * 5.3
+        // The first in each heap is the big one; the rest are its fragments
+        const size = k === 0 ? 0.6 + hash(seed) ** 1.5 * 1.7 : 0.15 + hash(seed) ** 2.4 * 0.7
+        const spread = k === 0 ? 0 : 0.8 + hash(seed + 1) * 2.6
+        const sa = hash(seed + 2) * Math.PI * 2
+        const lx = hx + Math.cos(sa) * spread
+        const lz = hz + Math.sin(sa) * spread
+        const floor = sandHeight(lx, lz)
+        tilt.set((hash(seed + 3) - 0.5) * 0.9, hash(seed + 4) * Math.PI * 2, (hash(seed + 5) - 0.5) * 0.9)
+        q.setFromEuler(tilt)
+        scale.set(0.7 + hash(seed + 6) * 0.7, 0.45 + hash(seed + 7) * 0.5, 0.65 + hash(seed + 8) * 0.6)
+        // Half-buried: the sand has drifted over them since they fell
+        at.set(lx, floor - size * scale.y * (0.25 + hash(seed + 9) * 0.35), lz)
+        matrix.compose(at, q, scale)
+        boulders.push(rockLump(size, low || size < 0.4 ? 1 : 2, seed * 0.37 + 7.3).applyMatrix4(matrix))
+      }
     }
     if (boulders.length) {
       // Painted as if the sand were lower, so the blocks show as stone rather

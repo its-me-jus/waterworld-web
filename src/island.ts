@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { bakePlant, createFoliage, plantTint, type PlantBake } from './foliage'
-import { barkTexture, barkUv, fernTexture, leafAtlas, leafCards, openUnderside, shrinkCore } from './leaftex'
+import { barkTexture, barkUv, fernTexture, leafAtlas, leafCards, openUnderside, palmBarkTexture, shrinkCore } from './leaftex'
 import { fbm, noise2 } from './waves'
 
 /**
@@ -46,7 +46,8 @@ export type Island = {
    */
   seabed: { texture: THREE.DataTexture; rect: THREE.Vector4; range: THREE.Vector2 }
   /** Keep aerial perspective matched to the live horizon. */
-  setHaze: (color: THREE.Color) => void
+  /** Horizon colour for the aerial perspective, and how thick it is (1 at sea level). */
+  setHaze: (color: THREE.Color, scale?: number) => void
   /**
    * Drive the wind and the key light the leaf backlight reads from. Both come
    * from the weather, which the island itself knows nothing about.
@@ -952,7 +953,7 @@ function driftwood(seed: number) {
  * them — the mass is what reads at fifty metres, the fringe is what stops it
  * looking like a boulder at five.
  */
-function scrubBush(seed: number) {
+function scrubBush(seed: number, low: boolean) {
   const rand = (n: number) => fbm(seed * 6.8 + n * 5.1, seed * 3.2 - n * 2.7)
   const parts: THREE.BufferGeometry[] = []
   const clumps = 3 + Math.floor(rand(1) * 3)
@@ -968,20 +969,13 @@ function scrubBush(seed: number) {
     // Unwelded for the merge — the blades below come out that way too.
     parts.push(leafMass(r, 0, seed * 7 + i, centre, middle, 0.72).toNonIndexed())
   }
-  const fringe = 8 + Math.floor(rand(2) * 5)
-  for (let i = 0; i < fringe; i++) {
-    const h = 0.85 + rand(i + 11) * 1.0
-    const leaf = leafBlade(0.19 + rand(i + 13) * 0.14, h, 0.45 + rand(i + 15) * 0.5)
-    leaf.rotateZ(0.25 + rand(i + 17) * 0.6)
-    leaf.rotateY(rand(i + 19) * Math.PI * 2)
-    leaf.translate((rand(i + 21) - 0.5) * 1.1, 0.1, (rand(i + 23) - 0.5) * 1.1)
-    // Same attributes as the masses, or the merge refuses the batch
-    leaf.deleteAttribute('uv')
-    const flat = leaf.toNonIndexed()
-    flat.setAttribute('aLeafShade', new THREE.BufferAttribute(new Float32Array(flat.attributes.position.count).fill(1), 1))
-    parts.push(flat)
-  }
-  return mergeGeometries(parts, false) as THREE.BufferGeometry
+  // The leaves are sprays off the same atlas as the trees, scattered over the
+  // masses. Flat blades were what made the dune scrub read as green paper
+  // cut-outs a few steps up the beach.
+  const mass = mergeGeometries(parts, false) as THREE.BufferGeometry
+  const cards = leafCards(mass, { count: low ? 16 : 34, length: 0.5, seed: seed * 13 + 5, fold: false, lean: 0.6, depth: 0.08 })
+  shrinkCore(mass, 0.88, middle)
+  return { mass, cards }
 }
 
 /**
@@ -1662,8 +1656,11 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
           )
         }
         if (motu > 0) {
-          const top = 1.7 + (noise2(lx * 0.05 - 3.1, lz * 0.05 + 8.2) - 0.5) * 1.2
-          h = THREE.MathUtils.lerp(h, top, THREE.MathUtils.smoothstep(motu, 0.05, 0.75))
+          // A sandbar just under the surface, flat-topped, the swell breaking on it. As
+          // islets two metres high on a six-metre grid they came out as sand
+          // pyramids, and from the sea they read as traffic cones.
+          const top = -0.45 + (noise2(lx * 0.05 - 3.1, lz * 0.05 + 8.2) - 0.5) * 0.3
+          h = THREE.MathUtils.lerp(h, top, THREE.MathUtils.smoothstep(motu, 0.05, 0.35))
         }
         heights[k] = h
         // Coral along the crest and its outer face, and on the lagoon heads
@@ -1957,6 +1954,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const rocks: THREE.BufferGeometry[] = []
   const wood: THREE.BufferGeometry[] = []
   const scrubParts: THREE.BufferGeometry[] = []
+  const scrubLeaves: THREE.BufferGeometry[] = []
   const broadTrunks: THREE.BufferGeometry[] = []
   const broadCanopy: THREE.BufferGeometry[] = []
   const grassParts: THREE.BufferGeometry[] = []
@@ -2154,7 +2152,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   /** Trunk, crown and nuts share one placement and one whole-plant height, so
    *  the crown rides the trunk's lean instead of drifting off the top of it. */
   const plantPalm = (tree: ReturnType<typeof palm>, seed: number, place: THREE.Matrix4) => {
-    trunks.push(bakeFor(tree.trunk, seed, SPECIES.palmTrunk).applyMatrix4(place))
+    trunks.push(bakeFor(barkUv(tree.trunk, tree.height), seed, SPECIES.palmTrunk).applyMatrix4(place))
     for (const blade of tree.leaves) {
       leaves.push(bakeFor(blade, seed, SPECIES.palmFrond, tree.height).applyMatrix4(place))
     }
@@ -2790,7 +2788,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     if (h < 2.2 || h > 62) continue
     const slope = Math.abs(surface(lx + 6, lz) - h) + Math.abs(surface(lx, lz + 6) - h)
     if (slope > 7.5) continue
-    plant(scrubParts, scrubBush(i + 120), i + 120, SPECIES.scrub, lx, h, lz, 0.05)
+    const bush = scrubBush(i + 120, low)
+    plant(scrubParts, bush.mass, i + 120, SPECIES.scrub, lx, h, lz, 0.05)
+    plant(scrubLeaves, bush.cards, i + 120, SPECIES.scrub, lx, h, lz, 0.05)
     // Flowers on some of the shrubs: thick on the landing cove, where the
     // eye lands first, and a scattering further round
     if (bloomParts.length < bloomWanted && h < 40 && scatter(i, 15.5) < (coveBias ? 0.5 : 0.08)) {
@@ -3235,6 +3235,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
    */
   const leafMap = leafAtlas()
   const bark = barkTexture()
+  const palmBark = palmBarkTexture()
   if (!low) foliage.setCanopy(canopyMap(roof), opts.x, opts.z, CANOPY_EXTENT)
   const layers: {
     parts: THREE.BufferGeometry[]
@@ -3268,7 +3269,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // at all from the sky probe, so backlit it goes to a flat black cutout —
     // exactly the silhouette the environment map was added to prevent. Enough
     // gloss to catch a rim off the sky is all it takes to give it a round side.
-    { parts: trunks, color: 0x8a6f4c, roughness: 0.74, wind: PALM_WIND },
+    // Doubled in linear like the broadleaf bark: the ring texture averages
+    // about half. Grey rather than brown — an old palm is silver-grey
+    { parts: trunks, color: 0xa39a8a, roughness: 0.74, wind: PALM_WIND, map: palmBark },
     {
       parts: leaves,
       // A shade deeper than the old ribbons: feathered fronds turn far more
@@ -3404,12 +3407,27 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     {
       parts: scrubParts,
       range: 450,
-      color: 0x547a38,
+      // The inside of the bush now, seen through its sprays
+      color: 0x456a2e,
       roughness: 0.92,
       wind: 0.11,
       translucency: 0.5,
       throughColor: '#c2d96c',
       doubleSided: true,
+      underRoof: true,
+    },
+    {
+      parts: scrubLeaves,
+      range: 320,
+      color: 0x5f9a3c,
+      roughness: 0.88,
+      wind: 0.11,
+      translucency: 0.85,
+      throughColor: '#c2d96c',
+      doubleSided: true,
+      map: leafMap,
+      alphaTest: 0.5,
+      transmit: 0.9,
       underRoof: true,
     },
     {
@@ -4137,8 +4155,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   }
 
   /** Keep aerial perspective matched to the live horizon as day and storms move. */
-  function setHaze(color: THREE.Color) {
+  function setHaze(color: THREE.Color, scale = 1) {
     haze.copy(color)
+    foliage.setHazeScale(scale)
   }
 
   function setWeather(

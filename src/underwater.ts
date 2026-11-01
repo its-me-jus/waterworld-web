@@ -52,6 +52,9 @@ function wrapAxis(value: number, centre: number, range: number) {
 
 const rayVertex = /* glsl */ `
 uniform float uHeight;
+/** Horizontal run per metre of fall, along the refracted sunlight. */
+uniform vec2 uSlant;
+uniform float uEyeY;
 
 varying vec3 vWorld;
 /** 0 at the bottom of the curtain, 1 where it meets the surface. */
@@ -59,6 +62,9 @@ varying float vRise;
 
 void main() {
   vec4 world = modelMatrix * vec4(position, 1.0);
+  // Leaned along the light, pivoting at eye level so the curtain still rings
+  // the swimmer: shafts climb toward the sun and fall away from it
+  world.xz += uSlant * (uEyeY - world.y);
   vWorld = world.xyz;
   vRise = clamp(position.y / uHeight + 0.5, 0.0, 1.0);
   gl_Position = projectionMatrix * viewMatrix * world;
@@ -88,7 +94,10 @@ void main() {
              + pow(smoothstep(0.42, 1.0, fine), 3.0) * 0.45;
 
   // Brightest where they leave the surface, gone by the time they reach the deep
-  float fall = pow(vRise, 1.8);
+  float fall = pow(vRise, 1.25);
+  // ...but the curtain's top edge is a circle round you at the surface, and it
+  // showed as a hard ring looking up — let the light start just under it
+  fall *= 1.0 - smoothstep(0.86, 0.99, vRise);
 
   // Biased toward the sun's side of the sky
   float sunFace = max(dot(dir, normalize(uSunXZ + vec2(0.0001))), 0.0);
@@ -117,6 +126,8 @@ function createLightShafts(sunDir: THREE.Vector3) {
         uSunXZ: { value: new THREE.Vector2(sunDir.x, sunDir.z) },
         uColor: { value: new THREE.Color('#a8e8ea') },
         uCentre: { value: new THREE.Vector3() },
+        uSlant: { value: new THREE.Vector2() },
+        uEyeY: { value: 0 },
       },
       vertexShader: rayVertex,
       fragmentShader: rayFragment,
@@ -142,7 +153,13 @@ function createLightShafts(sunDir: THREE.Vector3) {
   const inner = build(15, 46, 3.4, 0.9)
   const outer = build(46, 50, 2.2, 0.6)
 
+  const slant = new THREE.Vector2()
   function update(time: number, camera: THREE.Camera, surfaceY: number, fade: number) {
+    // Snell: the sun's angle off vertical shrinks by 1.33 going into the water
+    const sinAir = Math.min(0.999, Math.hypot(sunDir.x, sunDir.z))
+    const tanWater = Math.tan(Math.asin(sinAir / 1.33))
+    slant.set(-sunDir.x, -sunDir.z)
+    if (slant.lengthSq() > 1e-6) slant.normalize().multiplyScalar(tanWater)
     for (const mesh of [inner, outer]) {
       const h = mesh.userData.height as number
       mesh.position.set(camera.position.x, surfaceY - h * 0.5 + 1.5, camera.position.z)
@@ -154,7 +171,10 @@ function createLightShafts(sunDir: THREE.Vector3) {
       const mat = materials[i]
       mat.uniforms.uTime.value = time
       mat.uniforms.uCentre.value.copy(camera.position)
-      mat.uniforms.uStrength.value = (i === 0 ? 0.9 : 0.6) * fade
+      mat.uniforms.uSunXZ.value.set(sunDir.x, sunDir.z)
+      mat.uniforms.uSlant.value.copy(slant)
+      mat.uniforms.uEyeY.value = camera.position.y
+      mat.uniforms.uStrength.value = (i === 0 ? 1.35 : 0.85) * fade
     }
   }
 
@@ -814,10 +834,153 @@ function createJellyfish(count: number, waterColor: THREE.Color, low: boolean) {
 
 // —— assembly ————————————————————————————————————————————
 
+// —— the deep: what's behind everything ———————————————————————
+
+/**
+ * Open water isn't one colour. Up toward the surface it brightens, and most of
+ * all toward the sun; level it is the colour the fog fades things into; below
+ * it falls away to near black. A sphere riding with the camera, drawn first,
+ * so the flat teal wall becomes a sense of depth in every direction.
+ */
+function createDeepBackdrop() {
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uTint: { value: new THREE.Color('#0c5c6b') },
+      uSunDir: { value: new THREE.Vector3(0, 1, 0) },
+      uDay: { value: 1 },
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize((modelMatrix * vec4(position, 1.0)).xyz - cameraPosition);
+        gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uTint;
+      uniform vec3 uSunDir;
+      uniform float uDay;
+      varying vec3 vDir;
+      void main() {
+        vec3 d = normalize(vDir);
+        float e = d.y;
+        vec3 col = uTint;
+        // Down: the abyss
+        col = mix(col, uTint * vec3(0.12, 0.17, 0.2), smoothstep(0.0, -0.55, e));
+        // Up: brighter toward the surface, a soft glow round the sun's window
+        vec3 sun = normalize(vec3(uSunDir.x / 1.33, max(uSunDir.y, 0.2), uSunDir.z / 1.33));
+        float glow = pow(max(dot(d, sun), 0.0), 6.0) * uDay;
+        col = mix(col, uTint * 1.55 + vec3(0.02, 0.05, 0.05) * uDay, smoothstep(0.0, 0.7, e));
+        col += uTint * glow * 0.9;
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
+    side: THREE.BackSide,
+    depthWrite: false,
+    depthTest: false,
+    fog: false,
+  })
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(200, 32, 16), material)
+  mesh.renderOrder = -10
+  mesh.frustumCulled = false
+  return { mesh, material }
+}
+
+/**
+ * One big school that lives at the wreck: silver jacks circling the reef as a
+ * body, every fish on the same heading with its own small wander, so it reads
+ * as a school moving through rather than gnats round your head.
+ */
+function createReefSchool(count: number, home: { x: number; y: number; z: number; r: number }, waterColor: THREE.Color) {
+  const geometry = fishGeometry()
+  const phases = new Float32Array(count)
+  const tints = new Float32Array(count)
+  for (let i = 0; i < count; i++) {
+    phases[i] = Math.random()
+    tints[i] = 0
+  }
+  geometry.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phases, 1))
+  geometry.setAttribute('aTint', new THREE.InstancedBufferAttribute(tints, 1))
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uSunDir: { value: new THREE.Vector3(0, 1, 0) },
+      uWaterColor: { value: waterColor.clone() },
+      uBody: { value: new THREE.Color('#3d5f70') },
+      uBelly: { value: new THREE.Color('#d4e2e6') },
+      uFogDensity: { value: 0.04 },
+    },
+    vertexShader: fishVertex,
+    fragmentShader: fishFragment,
+    side: THREE.DoubleSide,
+    fog: false,
+  })
+  const mesh = new THREE.InstancedMesh(geometry, material, count)
+  mesh.frustumCulled = false
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+
+  // Each fish's place in the school, in the school's own frame
+  // (along the heading, out to the side, up), packed toward the middle
+  const slots = Array.from({ length: count }, () => {
+    const a = Math.random() * TAU
+    const r = Math.sqrt(Math.random())
+    return {
+      along: (Math.random() - 0.5) * 9,
+      side: Math.cos(a) * r * 3.2,
+      up: Math.sin(a) * r * 1.6,
+      wob: Math.random() * TAU,
+      scale: 0.42 + Math.random() * 0.22,
+    }
+  })
+  const dummy = new THREE.Object3D()
+  const centre = new THREE.Vector3()
+  const ahead = new THREE.Vector3()
+  const side = new THREE.Vector3()
+  const up = new THREE.Vector3(0, 1, 0)
+  const pos = new THREE.Vector3()
+
+  /** The school's path: a lazy loop round the reef that rises and dips. */
+  const path = (t: number, out: THREE.Vector3) =>
+    out.set(
+      home.x + Math.cos(t) * home.r,
+      home.y + Math.sin(t * 2) * 2.2,
+      home.z + Math.sin(t) * home.r * 0.75,
+    )
+
+  function update(time: number) {
+    material.uniforms.uTime.value = time
+    for (let i = 0; i < count; i++) {
+      const s = slots[i]
+      // Fish further back in the school are a beat behind on the loop
+      const t = time * 0.16 + s.along / home.r
+      path(t, centre)
+      path(t + 0.02, ahead).sub(centre).normalize()
+      side.crossVectors(ahead, up).normalize()
+      const wob = Math.sin(time * 1.3 + s.wob) * 0.35
+      pos
+        .copy(centre)
+        .addScaledVector(side, s.side + wob)
+        .addScaledVector(up, s.up + Math.cos(time * 1.1 + s.wob) * 0.2)
+      dummy.position.copy(pos)
+      dummy.lookAt(pos.x + ahead.x + side.x * wob * 0.15, pos.y + ahead.y, pos.z + ahead.z + side.z * wob * 0.15)
+      dummy.scale.setScalar(s.scale)
+      dummy.updateMatrix()
+      mesh.setMatrixAt(i, dummy.matrix)
+    }
+    mesh.instanceMatrix.needsUpdate = true
+  }
+
+  return { mesh, material, update }
+}
+
 export type UnderwaterOptions = {
   waterColor: THREE.Color
   sunDir: THREE.Vector3
   lowPower?: boolean
+  /** Where the reef school circles, world space. */
+  reefSchool?: { x: number; y: number; z: number; r: number }
 }
 
 export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOptions) {
@@ -827,6 +990,9 @@ export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOption
   group.name = 'Underwater'
   group.visible = false
   scene.add(group)
+
+  const backdrop = createDeepBackdrop()
+  group.add(backdrop.mesh)
 
   const shafts = createLightShafts(opts.sunDir)
   group.add(shafts.group)
@@ -865,6 +1031,12 @@ export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOption
   const jellies = createJellyfish(low ? 7 : 14, opts.waterColor, low)
   group.add(jellies.mesh)
 
+  const reefSchool = opts.reefSchool ? createReefSchool(low ? 70 : 170, opts.reefSchool, opts.waterColor) : null
+  if (reefSchool) {
+    reefSchool.material.uniforms.uSunDir.value.copy(opts.sunDir)
+    group.add(reefSchool.mesh)
+  }
+
   let fade = 0
 
   function update(ctx: {
@@ -880,6 +1052,8 @@ export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOption
     daylight?: number
     /** 0..1 how hard the swimmer is working — drives how skittish the fish are. */
     effort?: number
+    /** The water colour this frame — the backdrop and fog fade to it. */
+    tint?: THREE.Color
   }) {
     // Ease the whole layer in so surfacing doesn't pop
     const target = ctx.underwater ? 1 : 0
@@ -888,6 +1062,14 @@ export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOption
     if (!group.visible) return
 
     const day = ctx.daylight ?? 1
+    backdrop.mesh.position.copy(ctx.camera.position)
+    if (ctx.tint) backdrop.material.uniforms.uTint.value.copy(ctx.tint)
+    backdrop.material.uniforms.uSunDir.value.copy(opts.sunDir)
+    backdrop.material.uniforms.uDay.value = day
+    if (reefSchool) {
+      reefSchool.update(ctx.time)
+      if (ctx.tint) reefSchool.material.uniforms.uWaterColor.value.copy(ctx.tint)
+    }
     const shaftFade = fade * (0.12 + day * 0.88)
     shafts.update(ctx.time, ctx.camera, ctx.surfaceY, shaftFade)
     snow.update(ctx.time, ctx.camera, ctx.pixelRatio, fade)
