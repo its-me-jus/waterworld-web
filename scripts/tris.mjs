@@ -10,6 +10,7 @@ const VIEWS = {
   'island-near': '/?x=668&z=-463&yaw=-0.96&pitch=0.05',
   'beach-walk': '/?x=775&z=-532&yaw=-1.02&pitch=0.05',
   inland: '/?x=800&z=-550&yaw=-0.6&pitch=0.12',
+  reef: '/?x=-22&z=-93&yaw=0.95&pitch=-0.12&depth=15',
 }
 const low = process.argv[2] === 'low'
 

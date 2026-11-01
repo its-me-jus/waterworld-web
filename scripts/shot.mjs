@@ -115,6 +115,17 @@ const VIEWS = [
   { name: 'wreck-under', url: 'http://localhost:5173/?x=-30&z=-97&yaw=0.95&pitch=-0.25', dive: 3.6 },
   { name: 'wreck-deep', url: 'http://localhost:5173/?x=-31&z=-94&yaw=0.95&pitch=-0.1', dive: 6 },
   { name: 'seabed', url: 'http://localhost:5173/?x=-30&z=-118&yaw=1.9&pitch=-0.15', dive: 9 },
+  // Reef round: the Wanderer's reef from the sand on each side, the homepage's
+  // framing (bow across the reef shoulder), and the crest from above
+  { name: 'reefrock-hero', url: 'http://localhost:5173/?x=-22&z=-93&yaw=0.95&pitch=-0.12&depth=15' },
+  { name: 'reefrock-west', url: 'http://localhost:5173/?x=-66&z=-100&yaw=-1.62&pitch=-0.1&depth=16' },
+  { name: 'reefrock-north', url: 'http://localhost:5173/?x=-44&z=-134&yaw=-2.9&pitch=-0.12&depth=14' },
+  { name: 'reefrock-crest', url: 'http://localhost:5173/?x=-38&z=-104&yaw=0.6&pitch=-1.0&depth=4' },
+  { name: 'reefrock-close', url: 'http://localhost:5173/?x=-33&z=-101&yaw=1.4&pitch=-0.35&depth=12' },
+  // Swim straight at the rock for six seconds: the camera should end on the
+  // surface, not inside it
+  { name: 'reefrock-bump', url: 'http://localhost:5173/?x=-24&z=-95&yaw=0.95&pitch=-0.05&depth=12', fwd: 6 },
+  { name: 'reefrock-still', url: 'http://localhost:5173/?x=-27&z=-95&yaw=0.85&pitch=0.08&depth=19' },
   // `zoom` renders at 3x and crops, which is the only way to inspect small
   // detail given the FOV is locked wide for phones
   {

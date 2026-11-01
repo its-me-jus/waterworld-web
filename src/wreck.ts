@@ -1,5 +1,6 @@
 import * as THREE from 'three'
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
+import { buildReefRock, paintRock, reefLife, reefRockMaterial } from './reefrock'
 import { buildSpear } from './spear'
 import { fbm, sampleOcean } from './waves'
 
@@ -30,10 +31,16 @@ function materials() {
     timber: new THREE.MeshStandardMaterial({ color: 0x5e4c34, roughness: 0.96 }),
     spar: new THREE.MeshStandardMaterial({ color: 0x94795a, roughness: 0.88 }),
     // Double-sided so swimming into the reef reads as "inside a rock" rather
-    // than a hole in the world
-    rock: new THREE.MeshStandardMaterial({
-      color: 0x5c6b60,
-      roughness: 0.97,
+    // than a hole in the world. Colour is all in the paint (reefrock.ts).
+    rock: reefRockMaterial({
+      vertexColors: true,
+      roughness: 0.95,
+      side: THREE.DoubleSide,
+    }),
+    // Corals and sponges: thin parts seen from both sides
+    life: new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.85,
       side: THREE.DoubleSide,
     }),
     sand: new THREE.MeshStandardMaterial({ color: 0xa89e86, roughness: 1 }),
@@ -45,12 +52,17 @@ function materials() {
     // facing the sun crushes to a silhouette. Standing on the spire you are
     // *always* looking at one shaded face or another, so it carries a cool
     // skylight term of its own — the blue a real rock takes in open shade.
-    perchRock: new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 1,
-      emissive: 0x44525c,
-      emissiveIntensity: 0.9,
-    }),
+    // Under the surface that skylight is wrong — it made the drowned flank
+    // glow like a ghost through the murk — so it fades out below the waterline.
+    perchRock: reefRockMaterial(
+      {
+        vertexColors: true,
+        roughness: 1,
+        emissive: 0x44525c,
+        emissiveIntensity: 0.9,
+      },
+      true,
+    ),
     iron: new THREE.MeshStandardMaterial({
       color: 0x5a5048,
       roughness: 0.65,
@@ -104,16 +116,14 @@ function materials() {
 // —— reef ————————————————————————————————————————————————————
 
 /**
- * Lumpy rock from a subdivided icosahedron. Displacement is a function of
- * position only, so duplicated vertices move together and the shell stays
- * watertight. Left non-indexed and faceted, which suits rock.
- *
- * Most of the amplitude is in the high-frequency term on purpose: the collider
- * approximates each lump as a plain ellipsoid, so the bulk shape has to stay
- * close to one or you get stopped by rock that isn't there.
+ * Loose boulder from a subdivided icosahedron. Welded and smooth-shaded: the
+ * old faceted version read as a low-poly model, not worn stone.
  */
 function rockLump(radius: number, detail: number, seed: number) {
-  const geo = new THREE.IcosahedronGeometry(radius, detail)
+  const ico = new THREE.IcosahedronGeometry(radius, detail)
+  ico.deleteAttribute('normal')
+  ico.deleteAttribute('uv')
+  const geo = mergeVertices(ico)
   const pos = geo.attributes.position
   const v = new THREE.Vector3()
   for (let i = 0; i < pos.count; i++) {
@@ -136,35 +146,24 @@ function rockLump(radius: number, detail: number, seed: number) {
 
 type LumpSpec = {
   radius: number
-  seed: number
   at: [number, number, number]
   scale: [number, number, number]
 }
 
 /**
- * A compact seamount, deliberately pushed to -x/-z. You approach the wreck from
+ * The masses the reef rock is blended from (reefrock.ts turns them into one
+ * sculpted field). A compact seamount, deliberately pushed to -x/-z. You approach the wreck from
  * +x/+z, so that quadrant stays open water — swimming in shouldn't mean swimming
  * into a wall. Crest sits near -9, flanks run down to the sand at -25.
  */
 const REEF: LumpSpec[] = [
-  { radius: 10, seed: 1.3, at: [-9, -18, -8], scale: [1.0, 0.72, 0.93] },
-  { radius: 6, seed: 4.7, at: [-17, -20, -2], scale: [1.1, 0.6, 1.1] },
-  { radius: 5, seed: 8.1, at: [-3, -19.5, 1], scale: [1.3, 0.5, 0.9] },
-  { radius: 3, seed: 2.2, at: [-14, -12, -13], scale: [0.75, 2.2, 0.8] },
-  { radius: 2.6, seed: 6.4, at: [-4, -14.5, -15], scale: [0.8, 2.0, 0.85] },
-  { radius: 3.5, seed: 9.9, at: [2, -22, -12], scale: [1.0, 0.8, 1.0] },
+  { radius: 10, at: [-9, -18, -8], scale: [1.0, 0.72, 0.93] },
+  { radius: 6, at: [-17, -20, -2], scale: [1.1, 0.6, 1.1] },
+  { radius: 5, at: [-3, -19.5, 1], scale: [1.3, 0.5, 0.9] },
+  { radius: 3, at: [-14, -12, -13], scale: [0.75, 2.2, 0.8] },
+  { radius: 2.6, at: [-4, -14.5, -15], scale: [0.8, 2.0, 0.85] },
+  { radius: 3.5, at: [2, -22, -12], scale: [1.0, 0.8, 1.0] },
 ]
-
-function buildReef(low: boolean) {
-  const matrix = new THREE.Matrix4()
-  const parts = REEF.map((spec) => {
-    const geo = rockLump(spec.radius, low ? 2 : 3, spec.seed)
-    matrix.makeScale(...spec.scale)
-    matrix.setPosition(...spec.at)
-    return geo.applyMatrix4(matrix)
-  })
-  return mergeGeometries(parts, false) as THREE.BufferGeometry
-}
 
 const SAND_Y = -25
 
@@ -309,8 +308,8 @@ function buildPerch(low: boolean) {
     colors[i * 3 + 1] = shade.g
     colors[i * 3 + 2] = shade.b
   }
-  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-  return geo
+  // Below the swell the spire is reef rock like the rest: turf, crusts, sponges
+  return paintRock(geo, SAND_Y, -1.5, new THREE.BufferAttribute(colors, 3))
 }
 
 /** Height of the seabed at a point, shared by the mesh and the collider. */
@@ -769,7 +768,13 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   scene.add(group)
 
   // —— reef and seabed ——
-  const reef = new THREE.Mesh(buildReef(low), mat.rock)
+  const reefT0 = performance.now()
+  const rock = buildReefRock(REEF, SAND_Y, low)
+  if (import.meta.env.DEV) {
+    const tris = (rock.geometry.index?.count ?? 0) / 3
+    console.info(`reef rock: ${tris} tris in ${Math.round(performance.now() - reefT0)} ms`)
+  }
+  const reef = new THREE.Mesh(rock.geometry, mat.rock)
   group.add(reef)
 
   const sand = new THREE.Mesh(buildSand(), mat.sand)
@@ -1103,9 +1108,6 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   // —— growth and rubble, planted by dropping rays onto the rock ——
   const clumps: { pivot: THREE.Group; phase: number }[] = []
   {
-    const ray = new THREE.Raycaster()
-    const down = new THREE.Vector3(0, -1, 0)
-    const from = new THREE.Vector3()
     const matrix = new THREE.Matrix4()
     const boulders: THREE.BufferGeometry[] = []
     group.updateMatrixWorld(true)
@@ -1114,12 +1116,13 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
     const surfaceAt = (i: number, spots: number, spread: number, offset: number) => {
       const a = i * 2.399 + offset
       const r = 3 + (i / spots) * spread
-      from.set(opts.x + Math.cos(a) * r, 8, opts.z + Math.sin(a) * r)
-      ray.set(from, down)
-      return ray.intersectObject(reef, false)[0]
+      const lx = Math.cos(a) * r
+      const lz = Math.sin(a) * r
+      const hit = rock.surfaceDown(lx, lz)
+      return hit && { point: new THREE.Vector3(opts.x + lx, hit.y, opts.z + lz), normal: hit.normal }
     }
 
-    const growth = low ? 9 : 18
+    const growth = low ? 12 : 28
     for (let i = 0; i < growth; i++) {
       const hit = surfaceAt(i, growth, 17, 0)
       if (!hit || hit.point.y < -23 || hit.point.y > -4) continue
@@ -1139,26 +1142,57 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
       clumps.push({ pivot, phase: i * 0.9 })
     }
 
-    // Loose rock sitting on the reef. Breaking up the silhouette this way keeps
-    // the smooth ellipsoids the collider relies on, unlike displacing them more.
+    // Loose rock fallen onto the reef's ledges
     const rubble = low ? 8 : 16
     for (let i = 0; i < rubble; i++) {
       const hit = surfaceAt(i, rubble, 22, 1.1)
       if (!hit || hit.point.y < -25) continue
       const n = fbm(i * 4.1, i * 2.7)
-      const size = 0.7 + n * 2.4
+      const size = 0.35 + n * n * 1.5
       matrix.makeRotationY(i * 0.83)
-      matrix.scale(new THREE.Vector3(0.95 + n * 0.5, 0.5 + n * 0.5, 0.9 + n * 0.35))
+      matrix.scale(new THREE.Vector3(0.95 + n * 0.5, 0.6 + n * 0.3, 0.9 + n * 0.35))
       matrix.setPosition(
         hit.point.x - group.position.x,
-        hit.point.y - size * 0.3,
+        hit.point.y - size * 0.4,
         hit.point.z - group.position.z,
       )
       boulders.push(rockLump(size, 2, i * 3.3 + 0.5).applyMatrix4(matrix))
     }
-    if (boulders.length) {
-      group.add(new THREE.Mesh(mergeGeometries(boulders, false) as THREE.BufferGeometry, mat.rock))
+    // Talus: blocks that came off the walls and lie half-buried in the sand
+    // round the foot, which is what ties a reef to the seabed
+    const talus = low ? 14 : 38
+    for (let i = 0, placed = 0; i < talus * 4 && placed < talus; i++) {
+      const a = i * 2.399 + 0.3
+      const r = 5 + Math.sqrt(i / (talus * 4)) * 22
+      const lx = -8 + Math.cos(a) * r
+      const lz = -6 + Math.sin(a) * r
+      const floor = sandHeight(lx, lz)
+      const gap = rock.distance(lx, floor + 0.4, lz)
+      if (gap < 0.2 || gap > 3.2) continue
+      const n = fbm(i * 3.7 + 1.1, i * 1.9)
+      const size = 0.3 + n * n * 1.6
+      matrix.makeRotationY(i * 1.37)
+      matrix.scale(new THREE.Vector3(1 + n * 0.3, 0.75 + n * 0.25, 0.85 + n * 0.3))
+      matrix.setPosition(lx, floor - size * 0.2, lz)
+      boulders.push(rockLump(size, low ? 1 : 2, i * 2.9 + 7.3).applyMatrix4(matrix))
+      placed++
     }
+    if (boulders.length) {
+      // Painted as if the sand were lower, so the blocks show as stone rather
+      // than sand-dusted humps
+      const loose = paintRock(mergeGeometries(boulders, false) as THREE.BufferGeometry, SAND_Y - 2.5)
+      group.add(new THREE.Mesh(loose, mat.rock))
+    }
+
+    // Corals and sponges on the tops and ledges
+    const life = reefLife(rock, {
+      count: low ? 55 : 150,
+      reach: 22,
+      centre: [-8, -6],
+      minY: SAND_Y + 0.6,
+      maxY: -4,
+    })
+    if (life) group.add(new THREE.Mesh(life, mat.life))
   }
 
   // —— flotsam on the surface, riding the real swell ——
@@ -1195,26 +1229,17 @@ export function createWreck(scene: THREE.Scene, opts: WreckOptions) {
   }
 
   // —— collision ————————————————————————————————————————————
-  // The rock is only six lumps, so pushing a point out of the matching ellipsoids
-  // is far cheaper and much steadier than raycasting the merged mesh. Radii are
-  // taken a hair under the displaced surface, so you can clip a bump rather than
-  // hit an invisible wall standing off it.
-  const blockers = REEF.map((spec) => ({
-    centre: new THREE.Vector3(opts.x + spec.at[0], spec.at[1], opts.z + spec.at[2]),
-    axes: new THREE.Vector3(...spec.scale).multiplyScalar(spec.radius * 1.05),
-  }))
-
+  // The rock's own sampled distance field, so you touch the surface you see.
+  // A little clearance keeps the camera from looking through a face.
+  const local = { x: 0, y: 0, z: 0 }
   function resolve(p: { x: number; y: number; z: number }) {
-    for (const b of blockers) {
-      const dx = (p.x - b.centre.x) / b.axes.x
-      const dy = (p.y - b.centre.y) / b.axes.y
-      const dz = (p.z - b.centre.z) / b.axes.z
-      const d = Math.hypot(dx, dy, dz)
-      if (d >= 1 || d < 1e-4) continue
-      const push = 1.002 / d
-      p.x = b.centre.x + dx * push * b.axes.x
-      p.y = b.centre.y + dy * push * b.axes.y
-      p.z = b.centre.z + dz * push * b.axes.z
+    local.x = p.x - opts.x
+    local.y = p.y
+    local.z = p.z - opts.z
+    if (rock.pushOut(local, 0.35)) {
+      p.x = local.x + opts.x
+      p.y = local.y
+      p.z = local.z + opts.z
     }
 
     const lx = p.x - opts.x
