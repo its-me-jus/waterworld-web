@@ -42,7 +42,7 @@ FINGERS = [
     {"x": 0.010, "fan": 0.04, "len": 0.088, "r0": 0.0110, "r1": 0.0072},
     {"x": 0.028, "fan": 0.10, "len": 0.072, "r0": 0.0098, "r1": 0.0064},
 ]
-FINGER_CURL = 0.16
+FINGER_CURL = 0.12
 
 THUMB = {
     "root": Vector((-0.032, -0.036, 0.012)),
@@ -55,7 +55,7 @@ THUMB = {
 }
 
 VOXEL = 0.00115
-TARGET_TRIS = 8000
+TARGET_TRIS = 6000
 
 
 def clear_scene() -> None:
@@ -168,29 +168,15 @@ def join_all(objs: list[bpy.types.Object], name: str) -> bpy.types.Object:
 def build_parts() -> list[bpy.types.Object]:
     parts: list[bpy.types.Object] = []
 
-    # —— palm body ————————————————————————————————————————
-    # Extends toward wrist so remesh doesn't leave a thin neck
-    parts.append(
-        cube(
-            "Palm",
-            Vector((0.0, -PALM_LEN * 0.42, 0.004)),
-            Vector((PALM_W * 0.48, PALM_LEN * 0.52, PALM_D * 0.48)),
-        )
-    )
-    parts.append(
-        cube(
-            "Grip",
-            Vector((0.0, -PALM_LEN * 0.48, 0.018)),
-            Vector((PALM_W * 0.40, PALM_LEN * 0.40, 0.009)),
-        )
-    )
-    parts.append(
-        cube(
-            "KnuckleRidge",
-            Vector((0.0, -PALM_LEN + 0.010, -0.004)),
-            Vector((PALM_W * 0.44, 0.014, 0.012)),
-        )
-    )
+    # Organic palm volumes instead of rectangular pads and a rigid knuckle bar.
+    def pad(name, location, axes):
+        obj = sphere(name, Vector(location), 1.0, 24)
+        obj.scale = axes
+        apply_tr(obj)
+        return obj
+
+    parts.append(pad("Palm", (0, -0.047, 0.001), (0.039, 0.049, 0.016)))
+    parts.append(pad("PalmHeel", (0.002, -0.024, 0.005), (0.029, 0.03, 0.017)))
 
     # —— wrist flare (mates with in-game gauntlet) ——————————
     bpy.ops.mesh.primitive_cone_add(
@@ -209,23 +195,8 @@ def build_parts() -> list[bpy.types.Object]:
     # Extra weld between wrist and palm
     parts.append(sphere("WristWeld", Vector((0.0, -0.028, 0.002)), 0.026, 14))
 
-    # Thenar / hypothenar pads
-    parts.append(
-        cube(
-            "Thenar",
-            Vector((-0.022, -0.040, 0.012)),
-            Vector((0.018, 0.026, 0.013)),
-            Euler((0.12, 0.2, -0.45)),
-        )
-    )
-    parts.append(
-        cube(
-            "Hypo",
-            Vector((0.024, -0.050, 0.008)),
-            Vector((0.013, 0.022, 0.011)),
-            Euler((0.08, -0.1, 0.18)),
-        )
-    )
+    parts.append(pad("Thenar", (-0.023, -0.042, 0.009), (0.018, 0.027, 0.014)))
+    parts.append(pad("Hypothenar", (0.024, -0.051, 0.004), (0.014, 0.028, 0.013)))
 
     # —— fingers: one continuous padded tube each ——————————
     for i, f in enumerate(FINGERS):
@@ -236,8 +207,18 @@ def build_parts() -> list[bpy.types.Object]:
         parts.append(sphere(f"Knuckle_{i}", knuckle, f["r0"] * 1.12, 12))
 
         q = Quaternion((0, 0, 1), f["fan"]) @ Quaternion((1, 0, 0), -FINGER_CURL)
-        direction = q @ Vector((0, -1, 0))
-        parts.append(capsule(f"F{i}", knuckle, direction, f["len"], f["r0"], f["r1"]))
+        joint = knuckle.copy()
+        # Slightly flexed phalanges with continuous neoprene between them.
+        for bone, fraction in enumerate((0.46, 0.31, 0.23)):
+            q = q @ Quaternion((1, 0, 0), -(0.06 if bone else 0.0))
+            direction = q @ Vector((0, -1, 0))
+            length = f["len"] * fraction
+            near = f["r0"] + (f["r1"] - f["r0"]) * (0, 0.46, 0.77)[bone]
+            far = f["r0"] + (f["r1"] - f["r0"]) * (0.46, 0.77, 1)[bone]
+            parts.append(capsule(f"F{i}_{bone}", joint, direction, length, near, far))
+            joint += direction * length
+            if bone < 2:
+                parts.append(sphere(f"Flex_{i}_{bone}", joint, far * 1.02, 16))
 
     # —— thumb ————————————————————————————————————————————
     tq = (
@@ -289,11 +270,11 @@ def remesh_organic(obj: bpy.types.Object) -> bpy.types.Object:
     bpy.ops.object.modifier_apply(modifier=smooth.name)
 
     # Force poly budget (calc_loop_triangles can be stale right after remesh)
-    faces = len(keep.data.polygons)
-    est_tris = faces * 2
+    keep.data.calc_loop_triangles()
+    est_tris = len(keep.data.loop_triangles)
     if est_tris > TARGET_TRIS:
         dec = keep.modifiers.new(name="Decimate", type="DECIMATE")
-        dec.ratio = max(0.2, TARGET_TRIS / est_tris)
+        dec.ratio = max(0.01, TARGET_TRIS / est_tris)
         bpy.ops.object.modifier_apply(modifier=dec.name)
 
     bpy.ops.object.shade_smooth()
@@ -424,7 +405,9 @@ def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     BLEND_DIR.mkdir(parents=True, exist_ok=True)
     export_glb(hand, OUT_GLB)
-    render_preview(hand, PREVIEW)
+    import sys
+    if "--no-preview" not in sys.argv:
+        render_preview(hand, PREVIEW)
     bpy.ops.wm.save_as_mainfile(filepath=str(OUT_BLEND))
     print(f"[hand] wrote {OUT_GLB}")
     print(f"[hand] wrote {OUT_BLEND}")

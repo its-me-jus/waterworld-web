@@ -16,7 +16,7 @@ const MAX_DEPTH = 30
 /** Eye depth at which we treat the swimmer as fully submerged. */
 const SUBMERGE_DEPTH = 1.1
 
-const WALK_SPEED = 3.7
+const WALK_SPEED = 2.35
 /** Standing eye height — a touch taller than the swim ride height. */
 const WALK_EYE = 1.62
 /** Mean water depth you can still stand in, head clear of the swell. */
@@ -26,7 +26,7 @@ const STAND_EXIT = 1.25
 /** Steepest climbable ground (rise/run) — past it you slide along the contour. */
 const WALK_MAX_SLOPE = 1.15
 /** Metres per full arm/leg swing cycle at a walking pace. */
-const STRIDE = 1.55
+const STRIDE = 1.85
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 

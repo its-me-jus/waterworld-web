@@ -12,6 +12,7 @@
  */
 
 import { isLowPowerDevice } from './input'
+import { createMovementFoley, crossedPhase } from './foley'
 
 const damp = (current: number, target: number, lambda: number, dt: number) =>
   current + (target - current) * (1 - Math.exp(-lambda * dt))
@@ -46,6 +47,8 @@ export type AudioFrame = {
    * Climate daylight, 0 clear night … 1 noon. Only the quiet music bed reads
    * it; left out, the bed stays on its daytime pick.
    */
+  grounded?: boolean
+  waterDepth?: number
   daylight?: number
 }
 
@@ -103,7 +106,7 @@ function startNoise(ctx: AudioContext, buffer: AudioBuffer, dest: AudioNode) {
 
 async function tryLoadSample(ctx: AudioContext, url: string) {
   try {
-    const res = await fetch(url)
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
     if (!res.ok) return null
     // The dev server's SPA fallback answers missing files with index.html —
     // without this gate we try to decode markup and boot() rejects, which
@@ -160,6 +163,7 @@ export function createOceanAudio() {
   let ambientBus: GainNode | null = null
   let weatherBus: GainNode | null = null
   let foleyBus: GainNode | null = null
+  let movement: ReturnType<typeof createMovementFoley> | null = null
   let ready = false
   let unlocking: Promise<void> | null = null
 
@@ -207,6 +211,7 @@ export function createOceanAudio() {
   // Tab hidden → suspend the context so nothing runs in the background
   let hiddenSuspend = false
 
+  let headUnder = false
   let lastSub = 0
   let lastMode: 'swim' | 'walk' | null = null
   let splashCool = 0
@@ -238,9 +243,16 @@ export function createOceanAudio() {
       window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
     ctx = new AC()
+    void ctx.resume() // resume inside the initiating gesture, before any downloads
     master = ctx.createGain()
     master.gain.value = 0
-    master.connect(ctx.destination)
+    const limiter = ctx.createDynamicsCompressor()
+    limiter.threshold.value = -6
+    limiter.knee.value = 9
+    limiter.ratio.value = 8
+    limiter.attack.value = 0.003
+    limiter.release.value = 0.18
+    master.connect(limiter).connect(ctx.destination)
 
     ambientBus = ctx.createGain()
     ambientBus.gain.value = 1
@@ -257,6 +269,7 @@ export function createOceanAudio() {
     foleyBus = ctx.createGain()
     foleyBus.gain.value = 1
     foleyBus.connect(master)
+    movement = createMovementFoley(ctx, foleyBus)
 
     const noise = noiseBuffer(ctx, 4)
 
@@ -383,11 +396,10 @@ export function createOceanAudio() {
       ['dive', '/audio/dive.mp3'],
       ['breach', '/audio/breach.mp3'],
       ['thunder', '/audio/thunder.mp3'],
-      ['footSand', '/audio/foot-sand.mp3'],
-      ['footRock', '/audio/foot-rock.mp3'],
       ['bush', '/audio/bush-rustle.mp3'],
       ['shoreLap', '/audio/shore-lap.mp3'],
     ]
+    ready = true // optional downloads must never hold the live mix hostage
     const loaded = await Promise.all(urls.map(async ([key, url]) => [key, await tryLoadSample(ctx!, url)] as const))
     for (const [key, buf] of loaded) {
       if (!buf) continue
@@ -443,6 +455,7 @@ export function createOceanAudio() {
   }
 
   function unlock() {
+    if (ctx?.state === 'suspended') void ctx.resume()
     if (ready || unlocking) return unlocking ?? Promise.resolve()
     unlocking = boot()
       .then(async () => {
@@ -584,35 +597,6 @@ export function createOceanAudio() {
       g.connect(dest)
       src.start(at)
     }
-  }
-
-  /** Leaf / scrub brush as you push through the green band. */
-  function playBush(intensity: number) {
-    if (!ctx || !master) return
-    const dest = foleyBus ?? master
-    if (samples.bush) {
-      playBuffer(ctx, dest, samples.bush, {
-        gain: 0.22 * intensity,
-        playbackRate: 0.88 + Math.random() * 0.28,
-      })
-      return
-    }
-    noiseBurst(dest, {
-      duration: 0.16 + Math.random() * 0.1,
-      gain: 0.2 * intensity,
-      freq: 1800 + Math.random() * 900,
-      q: 0.55,
-      type: 'bandpass',
-      brown: 0.09,
-    })
-    noiseBurst(dest, {
-      duration: 0.1,
-      gain: 0.1 * intensity,
-      freq: 420,
-      q: 0.7,
-      type: 'lowpass',
-      brown: 0.06,
-    })
   }
 
   type WaterMoment = 'splash' | 'enter' | 'exit' | 'dive' | 'breach' | 'wade' | 'stroke'
@@ -758,96 +742,6 @@ export function createOceanAudio() {
     src.start(now)
   }
 
-  function playFoot(ground: AudioGround, intensity: number) {
-    if (!ctx || !master || ground === 'water') return
-    const dest = foleyBus ?? master
-
-    if (ground === 'scrub') {
-      // Soft earth underfoot + leaves brushing past
-      const sampleKey = samples.footSand ? 'footSand' : null
-      if (sampleKey) {
-        playBuffer(ctx, dest, samples[sampleKey]!, {
-          gain: 0.2 * intensity,
-          playbackRate: 0.85 + Math.random() * 0.15,
-        })
-      } else {
-        noiseBurst(dest, {
-          duration: 0.1,
-          gain: 0.22 * intensity,
-          freq: 140,
-          q: 0.8,
-          type: 'lowpass',
-          brown: 0.08,
-        })
-      }
-      playBush(intensity * (0.55 + Math.random() * 0.45))
-      return
-    }
-
-    const sampleKey =
-      ground === 'rock' ? 'footRock' : 'footSand'
-    if (samples[sampleKey]) {
-      playBuffer(ctx, dest, samples[sampleKey]!, {
-        gain: 0.32 * intensity * (ground === 'wet-sand' ? 0.7 : 1),
-        playbackRate: 0.9 + Math.random() * 0.22,
-      })
-      // Wet sand still gets a tiny water kiss — dry beach stays grit only
-      if (ground === 'wet-sand') {
-        noiseBurst(dest, {
-          duration: 0.12,
-          gain: 0.12 * intensity,
-          freq: 520,
-          q: 1.1,
-          brown: 0.05,
-        })
-      }
-      return
-    }
-
-    // Procedural footfall — short noise thump coloured by surface
-    const duration = ground === 'sand' || ground === 'wet-sand' ? 0.12 : 0.08
-    const length = Math.floor(ctx.sampleRate * duration)
-    const buffer = ctx.createBuffer(1, length, ctx.sampleRate)
-    const data = buffer.getChannelData(0)
-    let last = 0
-    for (let i = 0; i < length; i++) {
-      const t = i / length
-      const env = Math.exp(-t * (ground === 'rock' ? 28 : 18))
-      const white = Math.random() * 2 - 1
-      last = (last + 0.08 * white) / 1.08
-      data[i] = last * 3.2 * env
-    }
-    const src = ctx.createBufferSource()
-    src.buffer = buffer
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'bandpass'
-    filter.frequency.value =
-      ground === 'rock' ? 420 : ground === 'wet-sand' ? 190 : 150
-    filter.Q.value = ground === 'rock' ? 1.2 : 0.7
-    const gain = ctx.createGain()
-    gain.gain.value = 0.34 * intensity * (ground === 'wet-sand' ? 0.75 : 1)
-    src.connect(filter)
-    filter.connect(gain)
-    gain.connect(dest)
-    src.start(0)
-
-    if (ground === 'rock') {
-      const t0 = ctx.currentTime
-      const osc = ctx.createOscillator()
-      osc.type = 'sine'
-      osc.frequency.setValueAtTime(110, t0)
-      osc.frequency.exponentialRampToValueAtTime(40, t0 + 0.06)
-      const g = ctx.createGain()
-      g.gain.setValueAtTime(0.0001, t0)
-      g.gain.exponentialRampToValueAtTime(0.18 * intensity, t0 + 0.01)
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09)
-      osc.connect(g)
-      g.connect(dest)
-      osc.start(t0)
-      osc.stop(t0 + 0.12)
-    }
-  }
-
   /** 0 calm → 1 heavy: the surface wash wears the sea state. */
   function setSeaWeight(w: number) {
     seaWeight = w
@@ -949,59 +843,64 @@ export function createOceanAudio() {
       if (lastMode === 'swim' && mode === 'walk' && exitCool <= 0) {
         playWaterMoment('exit', 0.55 + shore * 0.25 + storm * 0.15, storm)
         exitCool = 1.1
+        headUnder = false
         breachCool = 0.5
       }
       // Head under / back to air while already swimming
       if (mode === 'swim') {
-        if (lastSub < 0.42 && submersion >= 0.58 && diveCool <= 0) {
+        if (!headUnder && submersion >= 0.58 && diveCool <= 0) {
           playWaterMoment(
             'dive',
             0.5 + Math.min(0.45, Math.abs(submersion - lastSub)) + storm * 0.2,
             storm,
           )
+          headUnder = true
           diveCool = 0.95
         }
-        if (lastSub > 0.55 && submersion <= 0.4 && breachCool <= 0) {
+        if (headUnder && submersion <= 0.4 && breachCool <= 0) {
           playWaterMoment(
             'breach',
             0.55 + Math.min(0.4, Math.abs(submersion - lastSub)) + storm * 0.25,
             storm,
           )
+          headUnder = false
           breachCool = 0.95
         }
-        // Surface stroke slap — arms finding the chop
-        if (
-          submersion < 0.45 &&
-          moving > 0.25 &&
-          speed > 0.8 &&
-          strokeSplashCool <= 0 &&
-          ((lastStroke < 0.5 && stroke >= 0.5) || stroke < lastStroke)
-        ) {
-          playWaterMoment('stroke', 0.3 + moving * 0.35 + storm * 0.2, storm)
-          strokeSplashCool = 0.28
+        // Contact follows the actual crawl entry and simultaneous breaststroke
+        // catch. Underwater pulls are muffled water displacement, never splash MP3s.
+        if (lastMode === mode && moving > 0.2 && speed > 0.45 && strokeSplashCool <= 0) {
+          const breast = submersion > 0.55
+          const right = crossedPhase(lastStroke, stroke, breast ? 0.2 : 0)
+          const left = !breast && crossedPhase(lastStroke, stroke, 0.5)
+          if (right || left) {
+            movement?.play(breast ? 'pull' : 'stroke', 0.35 + moving * 0.4,
+              breast ? 0 : right ? 1 : -1, submersion)
+            strokeSplashCool = 0.18
+          }
         }
       }
     }
     lastSub = submersion
-    lastMode = mode
 
     if (thunder > 0) playThunder(thunder)
 
-    // Footfalls: sand on the beach, scrub through the green, wade only in the wash
-    if (walking && moving > 0.15 && speed > 0.4 && footCool <= 0) {
-      const hitHalf = lastStroke < 0.5 && stroke >= 0.5
-      const hitWrap = stroke < lastStroke
-      if (hitHalf || hitWrap) {
-        const inten = clamp01(0.35 + speed / 4.5) * (0.7 + moving * 0.3)
-        if (ground === 'wet-sand') {
-          playWaterMoment('wade', inten * 0.65, storm)
-        } else {
-          playFoot(ground, inten)
+    // Two contacts per stride; transition/airborne frames cannot plant a foot.
+    if (ready && lastMode === 'walk' && walking && frame.grounded !== false && moving > 0.15 && speed > 0.3 && footCool <= 0) {
+      const right = crossedPhase(lastStroke, stroke, 0)
+      const left = crossedPhase(lastStroke, stroke, 0.5)
+      if (right || left) {
+        const intensity = clamp01(0.3 + speed / 5) * (0.88 + Math.random() * 0.12)
+        const side = right ? 1 : -1
+        if (ground !== 'water') movement?.play(ground, intensity, side)
+        // Wet sand is a compact footfall. Splash only with water above the foot.
+        if ((frame.waterDepth ?? 0) > 0.045) {
+          movement?.play('wade', intensity * clamp01((frame.waterDepth ?? 0) * 1.8), side)
         }
-        footCool = 0.16
+        footCool = 0.18
       }
     }
     lastStroke = stroke
+    lastMode = mode
 
     if (!ready || !ctx || !master || !surfaceNoise || !underNoise || !bobNoise) return
     // Recovery from a mid-session browser suspension — throttled: without a

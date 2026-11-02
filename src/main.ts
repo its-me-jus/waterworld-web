@@ -174,6 +174,7 @@ const collide = (p: { x: number; y: number; z: number }) => {
 
 // What you can stand on — the island shelf and the reef spire.
 const groundAt = (x: number, z: number) => Math.max(island.heightAt(x, z), wreck.standAt(x, z))
+swimmer.setGroundSampler(groundAt)
 /** True while the ground under you is the spire rather than the island. */
 const onPerchAt = (x: number, z: number) => wreck.standAt(x, z) > island.heightAt(x, z)
 
@@ -730,7 +731,7 @@ function frame() {
   let groundKind: AudioGround = 'water'
   if (view.walking) {
     if (onPerch) groundKind = 'rock'
-    else if (view.groundY < 0.55) groundKind = 'wet-sand'
+    else if (view.groundY < oceanState.tide + 0.55) groundKind = 'wet-sand'
     else if (view.groundY < 2.6) groundKind = 'sand'
     else if (view.groundY < 48) groundKind = 'scrub'
     else groundKind = 'rock'
@@ -751,6 +752,8 @@ function frame() {
     speed: view.speed,
     stroke: view.stroke,
     ground: groundKind,
+    grounded: player.fallFrom === null,
+    waterDepth: Math.max(0, view.surfaceY - view.groundY),
     lightning: weather.lightning,
     thunder: weather.thunder,
     daylight: weather.daylight,

@@ -1,0 +1,25 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Waterworld character study</title><link rel="icon" href="/favicon.svg">
+<style>body{margin:0;background:#19222a;color:#ccd5db;font:14px system-ui}canvas{display:block}nav{position:fixed;top:20px;left:24px}button{background:#293741;color:inherit;border:1px solid #53636d;border-radius:5px;padding:8px 14px;margin:4px;cursor:pointer}p{opacity:.7}</style></head>
+<body><nav>WATERWORLD · CHARACTER STUDY<br><button data-mode="walk">Standing</button><button data-mode="crawl">Crawl</button><button data-mode="breast">Underwater</button><button id="view">First person</button><p>Continuous sleeves and legs · fitted neoprene · owned gloves</p></nav>
+<script type="module">
+import * as THREE from '/node_modules/three/build/three.module.js'
+import {createSwimmer} from '/src/swimmer.ts'
+const scene=new THREE.Scene();scene.background=new THREE.Color('#19222a')
+const head=new THREE.PerspectiveCamera(66,innerWidth/innerHeight,.05,50);scene.add(head)
+const camera=new THREE.PerspectiveCamera(42,innerWidth/innerHeight,.05,50)
+camera.position.set(1.4,-.65,-2.5);camera.lookAt(0,-.8,.15)
+scene.add(new THREE.HemisphereLight(0xdce9f1,0x293542,2.1))
+const key=new THREE.DirectionalLight(0xffe5ce,2.6);key.position.set(-2,2,-2);scene.add(key)
+const rim=new THREE.DirectionalLight(0x91bad9,1.7);rim.position.set(2,0,2);scene.add(rim)
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(1);renderer.toneMapping=THREE.ACESFilmicToneMapping;document.body.append(renderer.domElement)
+const swimmer=createSwimmer(head)
+swimmer.setGroundSampler((x,z)=>-1.62+.08*x+.04*z)
+let mode='walk',phase=.15,first=false,playing=false
+function frame(){return {submersion:mode==='breast'?1:0,moving:mode==='walk'?0:1,speed:mode==='walk'?0:3.5,stroke:phase,walking:mode==='walk',underwater:mode==='breast',surfaceY:0,depth:mode==='breast'?4:0,effort:1,surfaceVel:0,groundY:-1.62,fallLanded:0}}
+function pose(next='walk',stroke=.15,pitch=0){mode=next;phase=stroke;head.rotation.x=pitch;for(let n=0;n<180;n++)swimmer.update(1/60,2,frame(),pitch,0);scene.updateMatrixWorld(true);renderer.render(scene,first?head:camera)}
+for(const button of document.querySelectorAll('[data-mode]'))button.onclick=()=>pose(button.dataset.mode)
+document.querySelector('#view').onclick=()=>{first=!first;pose(mode,phase,first?-1.3:0)}
+window.studio={scene,head,camera,swimmer,renderer,pose,first(value,pitch=-1.3){first=value;pose(mode,phase,pitch)},play(value=true){playing=value}}
+pose()
+let last=performance.now();function loop(now){const dt=Math.min(.04,(now-last)/1000);last=now;if(playing){phase=(phase+dt*.6)%1;swimmer.update(dt,now/1000,frame(),head.rotation.x,0)}renderer.render(scene,first?head:camera);requestAnimationFrame(loop)}requestAnimationFrame(loop)
+</script></body></html>
