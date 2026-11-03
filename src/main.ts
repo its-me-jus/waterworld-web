@@ -5,6 +5,8 @@ import { createArrival } from './arrival'
 import { createCaustics } from './caustics'
 import { createClimate, DAY_LENGTH } from './climate'
 import { createCreatures } from './creatures'
+import { createIslandLife } from './islandlife'
+import { createPelagicLife } from './pelagic'
 import { createTouchControls } from './controls'
 import { createHud } from './hud'
 import { createInputState, isLowPowerDevice, preferTouchUI } from './input'
@@ -274,7 +276,10 @@ oceanMat.uniforms.uEnvMap.value = envRT.texture
 scene.environment = envRT.texture
 scene.environmentIntensity = 0.42
 
+let glowProbeHide: THREE.Object3D | null = null
+
 function captureEnv() {
+  if (glowProbeHide) glowProbeHide.visible = false
   ocean.visible = false
   swimmer.rig.visible = false
   // Feeding the cube map back into the shading of the objects being captured
@@ -292,6 +297,7 @@ function captureEnv() {
   renderer.shadowMap.autoUpdate = true
   scene.environmentIntensity = wasEnv
   envRT.texture.needsPMREMUpdate = true
+  if (glowProbeHide) glowProbeHide.visible = true
   ocean.visible = true
   swimmer.rig.visible = true
 }
@@ -434,19 +440,49 @@ const littoral = createLittoral(scene, {
   heightAt: island.heightAt,
   origin: { x: island.centre.x, z: island.centre.z },
   cove: { x: beach.x, z: beach.z },
+
   reefResolve: wreck.resolve,
   wreckOrigin: { x: wreck.group.position.x, z: wreck.group.position.z },
   lowPower,
 })
 
+const islandLife = createIslandLife(scene, {
+  hud,
+  island: { centre: island.centre, heightAt: island.heightAt, pools: island.pools },
+  cove: beach,
+  lowPower,
+  pixelRatio: renderer.getPixelRatio(),
+  onSeabirdCry: oceanAudio.playSeabirdCry,
+})
+glowProbeHide = islandLife.glowGroup
+
 // Dolphins, turtles and rays — larger life to stop and watch
 const creatures = createCreatures(scene, {
+  onSurfaceDisturb: islandLife.disturbWater,
   wreckCentre: wreck.group.position,
   wreckResolve: wreck.resolve,
   island: { centre: island.centre, heightAt: island.heightAt, resolve: island.resolve },
   cove: { x: beach.x, z: beach.z },
+
   lowPower,
   pixelRatio: renderer.getPixelRatio(),
+})
+
+// Humpback whale & calf, spotted eagle-ray squadron, blacktip reef sharks, and flying fish
+const pelagic = createPelagicLife(scene, {
+  onSurfaceDisturb: islandLife.disturbWater,
+  hud,
+  wreckCentre: wreck.group.position,
+  wreckResolve: wreck.resolve,
+  reefWreckPos: reefWreck.position,
+  reefWreckResolve: reefWreck.resolve,
+  island: { centre: island.centre, heightAt: island.heightAt, resolve: island.resolve },
+  cove: beach,
+  lowPower,
+  pixelRatio: renderer.getPixelRatio(),
+  onWhaleBlow: oceanAudio.playWhaleBlow,
+  onWhaleSong: oceanAudio.playWhaleSong,
+
 })
 
 const desktop = bindKeyboardMouse(renderer.domElement, player, {
@@ -475,6 +511,8 @@ if (import.meta.env.DEV) {
       shore,
       littoral,
       creatures,
+      pelagic,
+      islandLife,
       lagoon,
       sky: skyRig,
       underwater: underwaterWorld,
@@ -520,6 +558,7 @@ function onResize() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap))
   renderer.setSize(window.innerWidth, window.innerHeight)
   post.setSize(window.innerWidth, window.innerHeight, renderer.getPixelRatio())
+  islandLife.setPixelRatio(renderer.getPixelRatio())
 }
 window.addEventListener('resize', onResize)
 applyView()
@@ -585,6 +624,8 @@ const caustics = createCaustics(skyRig.sunDir)
 caustics.apply(wreck.group)
 caustics.apply(reefWreck.group)
 caustics.apply(island.terrain)
+caustics.apply(creatures.group)
+caustics.apply(pelagic.group)
 
 const keyLight = new THREE.Color()
 // Clear tropical water: bright aqua in the shallows, deepening to ink-blue
@@ -1009,6 +1050,23 @@ function frame() {
     storm: weather.storm,
   })
   spar.update(t)
+  pelagic.update(dt, t, camera, {
+    underwater,
+    daylight: weather.daylight,
+    storm: weather.storm,
+  })
+  islandLife.update(dt, t, camera, {
+    daylight: weather.daylight,
+    storm: weather.storm,
+    biolum: weather.biolum,
+    underwater,
+    walking: onLand,
+    playerX: player.x,
+    playerY: player.y,
+    playerZ: player.z,
+    moving: view.moving,
+    inSea: !onLand && (!chute.active || view.submersion > 0.05),
+  })
   hud.update(dt)
 
   splash.update(dt, camera.position.y, surfaceY, view.moving, view.submersion)

@@ -191,8 +191,8 @@ function buildManta() {
         const b = a + 1
         const c = a + (nV + 1)
         const d = c + 1
-        if (sign > 0) idx.push(a, b, c, b, d, c)
-        else idx.push(a, c, b, b, c, d)
+        if (sign > 0) idx.push(a, c, b, b, c, d)
+        else idx.push(a, b, c, b, d, c)
       }
     }
     const g = new THREE.BufferGeometry()
@@ -209,7 +209,22 @@ function buildManta() {
   tail.translate(-0.42 - 0.8, 0, 0)
   const tailGeo = tail.toNonIndexed()
 
-  const parts = [top, bottom, tailGeo]
+  // Cephalic fins — the two forward-curling horn lobes framing the wide mouth
+  const hornShape = new THREE.Shape()
+  hornShape.moveTo(-0.08, -0.05)
+  hornShape.quadraticCurveTo(0.18, -0.06, 0.34, 0.02)
+  hornShape.quadraticCurveTo(0.24, 0.09, -0.06, 0.05)
+  hornShape.closePath()
+  const makeHorn = (side: number) => {
+    const h = new THREE.ExtrudeGeometry(hornShape, { depth: 0.032, bevelEnabled: false, curveSegments: 6 })
+    h.translate(0, 0, -0.016)
+    h.rotateY(side * -0.18)
+    h.rotateX(side * 0.35)
+    h.translate(0.52, -0.02, side * 0.23)
+    return h.index ? h.toNonIndexed() : h
+  }
+
+  const parts = [top, bottom, tailGeo, makeHorn(1), makeHorn(-1)]
   for (const g of parts) {
     g.deleteAttribute('uv')
     g.computeVertexNormals()
@@ -223,7 +238,14 @@ function buildManta() {
   const tmp = new THREE.Color()
   paint(merged, (x, _y, z, ny) => {
     if (ny < -0.1) return tmp.copy(light).lerp(patch, smooth(1.0, 1.9, Math.abs(z)) * 0.5)
-    return tmp.copy(dark).lerp(patch, smooth(0.2, 0.55, -x) * 0.18)
+    // Iconic oceanic manta pale shoulder chevrons sweeping back behind the head
+    const az = Math.abs(z)
+    const chevronBand = 1 - Math.abs(x - (0.34 - az * 0.36)) / 0.14
+    const chevron = clamp(chevronBand, 0, 1) * smooth(0.14, 0.28, az) * (1 - smooth(0.65, 1.05, az))
+    return tmp
+      .copy(dark)
+      .lerp(patch, smooth(0.2, 0.55, -x) * 0.18)
+      .lerp(light, chevron * 0.72)
   })
   return merged
 }
@@ -251,17 +273,34 @@ type Turtle = {
 
 function buildTurtle(): Omit<Turtle, 'home' | 'radius' | 'heading' | 'turn' | 'depth' | 'phase' | 'x' | 'z' | 'y' | 'pitch'> {
   const group = new THREE.Group()
-  const shellMat = new THREE.MeshStandardMaterial({ color: '#6f6a3c', roughness: 0.6, flatShading: true })
+  const shellMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.52, flatShading: true })
   const skinMat = new THREE.MeshStandardMaterial({ color: '#7e8a58', roughness: 0.7 })
   const bellyMat = new THREE.MeshStandardMaterial({ color: '#d9ca94', roughness: 0.8 })
 
-  const shell = new THREE.Mesh(new THREE.SphereGeometry(0.5, 14, 9), shellMat)
+  const paintScute = (geo: THREE.BufferGeometry) => {
+    const g = geo.index ? geo.toNonIndexed() : geo
+    g.computeVertexNormals()
+    const mahogany = new THREE.Color('#4a311d')
+    const amber = new THREE.Color('#9c6e34')
+    const rim = new THREE.Color('#c8b278')
+    const c = new THREE.Color()
+    paint(g, (x, y, z) => {
+      const radial = Math.hypot(x * 0.95, z * 1.15)
+      const scute = Math.abs(Math.sin(x * 13.5) * Math.cos(z * 11.5))
+      c.copy(mahogany).lerp(amber, smooth(0.18, 0.78, scute))
+      c.lerp(rim, smooth(0.38, 0.5, radial) * 0.65)
+      if (y < -0.02) c.lerp(rim, 0.5)
+      return c
+    })
+    return g
+  }
+  const shell = new THREE.Mesh(paintScute(new THREE.SphereGeometry(0.5, 16, 11)), shellMat)
   shell.scale.set(1.0, 0.36, 0.82)
   shell.position.y = 0.04
   group.add(shell)
   // Ridged scutes along the carapace
   for (let i = 0; i < 3; i++) {
-    const ridge = new THREE.Mesh(new THREE.SphereGeometry(0.17, 7, 5), shellMat)
+    const ridge = new THREE.Mesh(paintScute(new THREE.SphereGeometry(0.17, 7, 5)), shellMat)
     ridge.scale.set(1.1, 0.5, 0.9)
     ridge.position.set(0.27 - i * 0.27, 0.2, 0)
     group.add(ridge)
@@ -297,6 +336,13 @@ function buildTurtle(): Omit<Turtle, 'home' | 'radius' | 'heading' | 'turn' | 'd
   const frontR = flipper(0.42, 0.13, 0.28, 0.36, -1, -0.45)
   const rearL = flipper(0.2, 0.09, -0.4, 0.22, 1, 0.5)
   const rearR = flipper(0.2, 0.09, -0.4, 0.22, -1, 0.5)
+
+  const eyeMat = new THREE.MeshStandardMaterial({ color: '#141816', roughness: 0.18 })
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.026, 6, 5), eyeMat)
+    eye.position.set(0.64, 0.065, side * 0.095)
+    group.add(eye)
+  }
 
   return { group, frontL, frontR, rearL, rearR, head }
 }
@@ -450,6 +496,8 @@ export type CreatureDeps = {
   cove: { x: number; z: number }
   lowPower: boolean
   pixelRatio: number
+  /** Optional hook so surface breaches can stir bioluminescence after dark. */
+  onSurfaceDisturb?: (x: number, z: number, power: number) => void
 }
 
 type Dolphin = {
@@ -597,9 +645,11 @@ export function createCreatures(scene: THREE.Scene, deps: CreatureDeps) {
       if (d.lastS >= airborne && s < d.lastS && s < 0.2 && edge > 0.8) {
         // came up through the surface
         splashes.burst(wx, surface, wz, 0.8, 1)
+        deps.onSurfaceDisturb?.(wx, wz, 0.9)
       }
       if (d.lastS < airborne && s >= airborne && edge > 0.8) {
         splashes.burst(wx - hx * 0.6, surface, wz - hz * 0.6, 1.0, 1)
+        deps.onSurfaceDisturb?.(wx - hx * 0.6, wz - hz * 0.6, 1.1)
       }
       d.lastS = s
       d.y = y

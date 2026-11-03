@@ -1041,5 +1041,155 @@ export function createOceanAudio() {
 
   bindUnlock()
 
-  return { unlock, update, setSeaWeight, setWindRush }
+  /**
+   * Pressurised surface spout when a whale exhales nearby — hollow low breath
+   * under an airy spray plume, softened with distance and muffled underwater.
+   */
+  function playWhaleBlow(distance: number) {
+    if (!ctx || !master || !ambientBus || !ready) return
+    const atten = 1 / (1 + Math.max(0, distance) / 55)
+    if (atten < 0.04) return
+    const airW = Math.max(0.15, 1 - lastSub * 0.85)
+    const level = 0.34 * atten * airW
+    const now = ctx.currentTime
+    const dur = 1.15 + Math.random() * 0.25
+
+    const osc = ctx.createOscillator()
+    osc.type = 'triangle'
+    osc.frequency.setValueAtTime(76 + Math.random() * 10, now)
+    osc.frequency.exponentialRampToValueAtTime(42, now + dur * 0.85)
+    const oscFilter = ctx.createBiquadFilter()
+    oscFilter.type = 'lowpass'
+    oscFilter.frequency.value = 180
+    const og = ctx.createGain()
+    og.gain.setValueAtTime(0.0001, now)
+    og.gain.linearRampToValueAtTime(level * 0.38, now + 0.06)
+    og.gain.exponentialRampToValueAtTime(0.0001, now + dur * 0.9)
+    osc.connect(oscFilter)
+    oscFilter.connect(og)
+    og.connect(ambientBus)
+    osc.start(now)
+    osc.stop(now + dur)
+
+    const len = Math.floor(ctx.sampleRate * dur)
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate)
+    const data = buf.getChannelData(0)
+    let last = 0
+    for (let i = 0; i < len; i++) {
+      const u = i / len
+      const env = u < 0.14 ? Math.sin((u / 0.14) * Math.PI * 0.5) : Math.exp(-(u - 0.14) * 2.8)
+      const w = Math.random() * 2 - 1
+      last = (last + 0.08 * w) / 1.08
+      data[i] = (last * 2.4 + w * 0.22) * env * 0.85
+    }
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    const bp = ctx.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.setValueAtTime(920, now)
+    bp.frequency.exponentialRampToValueAtTime(360, now + dur)
+    bp.Q.value = 0.85
+    const ng = ctx.createGain()
+    ng.gain.value = level
+    src.connect(bp)
+    bp.connect(ng)
+    ng.connect(ambientBus)
+    src.start(now)
+  }
+
+  /**
+   * Distant humpback call — carries far through the water column when submerged
+   * and arrives as a faint muffled resonance from the surface.
+   */
+  function playWhaleSong(distance: number) {
+    if (!ctx || !master || !ambientBus || !ready) return
+    const underBoost = 0.18 + clamp01(lastSub) * 0.82
+    const atten = 1 / (1 + Math.max(0, distance) / 110)
+    const level = 0.22 * atten * underBoost
+    if (level < 0.015) return
+
+    const now = ctx.currentTime
+    const highCall = Math.random() > 0.55
+    const dur = highCall ? 2.4 + Math.random() * 0.7 : 3.1 + Math.random() * 0.9
+    const fStart = highCall ? 310 + Math.random() * 70 : 108 + Math.random() * 24
+    const fPeak = highCall ? fStart * 1.28 : fStart * 1.55
+    const fEnd = highCall ? fStart * 0.68 : fStart * 0.78
+
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.value = lastSub > 0.45 ? 950 : 340
+    filter.Q.value = 1.4
+    const out = ctx.createGain()
+    out.gain.setValueAtTime(0.0001, now)
+    out.gain.linearRampToValueAtTime(level, now + dur * 0.24)
+    out.gain.setValueAtTime(level * 0.85, now + dur * 0.58)
+    out.gain.exponentialRampToValueAtTime(0.0001, now + dur)
+    filter.connect(out)
+    out.connect(ambientBus)
+
+    const partials: [number, number][] = [
+      [1, 0.65],
+      [2, 0.24],
+      [3, 0.1],
+    ]
+    for (const [mult, amp] of partials) {
+      const osc = ctx.createOscillator()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(fStart * mult, now)
+      osc.frequency.exponentialRampToValueAtTime(fPeak * mult, now + dur * 0.38)
+      osc.frequency.exponentialRampToValueAtTime(fEnd * mult, now + dur)
+      const pg = ctx.createGain()
+      pg.gain.value = amp
+      osc.connect(pg)
+      pg.connect(filter)
+      osc.start(now)
+      osc.stop(now + dur + 0.05)
+    }
+  }
+
+  /**
+   * Bright cliff-bird / tropicbird call overhead — short arched harmonic cry,
+   * only audible above water and softened by range.
+   */
+  function playSeabirdCry(distance: number) {
+    if (!ctx || !master || !ambientBus || !ready || lastSub > 0.35) return
+    const atten = 1 / (1 + Math.max(0, distance) / 48)
+    if (atten < 0.06) return
+    const now = ctx.currentTime
+    const notes = Math.random() > 0.45 ? 2 : 1
+    for (let n = 0; n < notes; n++) {
+      const t0 = now + n * 0.19
+      const dur = 0.13 + Math.random() * 0.05
+      const len = Math.floor(ctx.sampleRate * dur)
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate)
+      const data = buf.getChannelData(0)
+      const base = (2050 + Math.random() * 380) * (n === 1 ? 0.92 : 1)
+      for (let i = 0; i < len; i++) {
+        const t = i / ctx.sampleRate
+        const u = i / len
+        const env = Math.sin(Math.PI * u) ** 1.35
+        const vibrato = 1 + Math.sin(2 * Math.PI * 34 * t) * 0.018
+        const f = base * (1.06 - u * 0.24) * vibrato
+        data[i] =
+          (Math.sin(2 * Math.PI * f * t) * 0.58 +
+            Math.sin(2 * Math.PI * f * 2 * t) * 0.22 +
+            Math.sin(2 * Math.PI * f * 3 * t) * 0.08) *
+          env
+      }
+      const src = ctx.createBufferSource()
+      src.buffer = buf
+      const bp = ctx.createBiquadFilter()
+      bp.type = 'bandpass'
+      bp.frequency.value = base
+      bp.Q.value = 3.2
+      const g = ctx.createGain()
+      g.gain.value = (0.042 + Math.random() * 0.02) * atten * (n === 1 ? 0.8 : 1)
+      src.connect(bp)
+      bp.connect(g)
+      g.connect(ambientBus)
+      src.start(t0)
+    }
+  }
+
+  return { unlock, update, setSeaWeight, setWindRush, playWhaleBlow, playWhaleSong, playSeabirdCry }
 }

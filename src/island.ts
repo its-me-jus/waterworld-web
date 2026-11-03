@@ -39,6 +39,8 @@ export type Island = {
   readonly rockColliders: number
   /** Beach-level world positions, for anything that wants to sit on the sand. */
   shore: THREE.Vector3[]
+  /** World positions of the inland freshwater rain pools. */
+  pools: THREE.Vector3[]
   update: (camera: THREE.Camera, underwater: boolean, time?: number) => void
   /**
    * The terrain height grid as a texture, so the sea can shade by real water
@@ -4174,6 +4176,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     heightAt,
     resolve,
     shore,
+    pools,
     seabed: seabedGrid,
     update,
     setHaze,

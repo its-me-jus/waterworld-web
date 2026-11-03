@@ -18,8 +18,10 @@ dist-ssr
 .env.*
 !.env.example
 
-# Screenshots from scripts/shot.mjs
+# Screenshots
+# from scripts/shot.mjs
 shots
+review
 
 # Editor directories and files
 .vscode/*

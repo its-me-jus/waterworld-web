@@ -30,6 +30,12 @@ menus — just somewhere to move around.
   palm grove, scrub, cliffs and a worn path inland. Wade up the beach and you
   climb out of the swim into a walk. Gulls, lizards, crabs and butterflies keep
   it alive.
+- **The wildlife.** A humpback and her calf cross the deep channel, rising now
+  and then to blow a tall mist into the wind before they sound. Spotted eagle
+  rays glide in formation over the lagoon sand, blacktip reef sharks patrol both
+  wrecks, and flying fish break from the swell. White-tailed tropicbirds wheel
+  over the cove; dragonflies dip the inland rain pools. After dark, fireflies
+  drift under the palms and every stroke stirs blue sparks in the water.
 - **Nothing is signposted.** The wreck, the spar buoy partway across, and the
   island are all found by looking.
 
