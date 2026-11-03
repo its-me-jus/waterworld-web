@@ -4,8 +4,8 @@ A calm first-person ocean to drift and wander in. Gerstner swell, a sky that
 takes its time, a wreck on a reef, and an island on the horizon. Built with
 Vite + Three.js.
 
-There is nothing to survive and nothing to collect. No meters, no score, no
-menus — just somewhere to move around.
+There is nothing to survive and nothing to collect. You can follow the coast
+at your own pace or choose a place and time from the World button.
 
 ## The world
 
@@ -51,6 +51,9 @@ already doing ("The tide is turning."). That is the whole interface.
 - **Help:** tap **?** or press **H** to recover the controls for where you are.
   Touch controls change with flight, walking and swimming; resizing or rotating
   the screen updates the interface.
+- **World:** tap **World** beside Help or press **G** during mouse-look. Choose
+  dawn, noon, dusk or night, or set the clock with the slider. Pick a destination
+  to arrive there on foot or swimming. Time continues from the hour you choose.
 - **Motion:** the system's reduced-motion preference removes extra head bob,
   sway and camera banking while retaining the physical sea.
 

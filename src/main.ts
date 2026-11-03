@@ -28,6 +28,7 @@ import { createUnderwaterWorld } from './underwater'
 import { createLowClouds } from './lowclouds'
 import { applyStormToWaves, oceanState, sampleOcean, setShelter, shelterAt } from './waves'
 import { createWreck } from './wreck'
+import { createWorldControls, type Destination } from './world-controls'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('#app missing')
@@ -382,9 +383,7 @@ skipChute.hidden = !wantChute
 app.appendChild(skipChute)
 
 /** Where you stand when the drop is skipped: the first dry sand seaward along the cove's axis. */
-function cutAwayToBeach() {
-  if (!chute.active) return
-  chute.cut()
+function landOnBeach() {
   let x = coveBeach.x
   let z = coveBeach.z
   for (let d = -30; d < 90; d += 1) {
@@ -406,6 +405,11 @@ function cutAwayToBeach() {
   player.pitch = 0.02
   saidShore = true
   hud.whisper('You step onto the sand. A ship lies broken on the reef, just offshore.', true)
+}
+function cutAwayToBeach() {
+  if (!chute.active) return
+  chute.cut()
+  landOnBeach()
 }
 skipChute.addEventListener('click', cutAwayToBeach)
 // Dev hook for scripts/chute-flight.mjs — fly the whole drop without rendering it
@@ -534,6 +538,42 @@ const timer = new THREE.Timer()
 timer.connect(document)
 let bubbleTimer = 0
 let envTimer = 0
+function travelTo(place: Destination) {
+  chute.cut()
+  Object.assign(player, createPlayer(), { unlocked: document.pointerLockElement === renderer.domElement })
+  prevSurfaceForAudio = Number.NaN
+  heave = 0
+  envTimer = 0
+  if (place === 'beach') {
+    landOnBeach()
+    return
+  }
+  // Looking into the rainforest, over the barrier reef, or down the bow of the Wanderer.
+  const spots = {
+    forest: { x: 860, z: -600, yaw: -0.6, pitch: 0.14 },
+    lagoon: { x: 804, z: -437, yaw: -0.63, pitch: -0.16 },
+    wreck: { x: wreck.group.position.x + 14, z: wreck.group.position.z + 16, yaw: 0.72, pitch: -0.3 },
+  }
+  Object.assign(player, spots[place])
+  const seaY = sampleOcean(player.x, player.z, timer.getElapsed()).y
+  if (place === 'forest') {
+    player.mode = 'walk'
+    player.y = groundAt(player.x, player.z) + 1.62
+  } else {
+    player.y = Math.max(groundAt(player.x, player.z) + 1.62, seaY + (place === 'wreck' ? -6 : 1.5))
+  }
+}
+
+const worldControls = film.on ? null : createWorldControls(app, {
+  getMinutes: () => Math.floor(climate.state.dayPhase * 1440),
+  setMinutes: (minutes) => {
+    const day = Math.floor(climate.getElapsed() / DAY_LENGTH)
+    climate.setElapsed((day + minutes / 1440) * DAY_LENGTH)
+    envTimer = 0
+  },
+  travelTo,
+})
+const idleInput = createInputState()
 const SEA_FAR_TINT = new THREE.Color(0.55, 0.68, 0.8)
 const seaFarHigh = new THREE.Color()
 
@@ -683,6 +723,7 @@ function frame() {
 
   touch.apply(input)
   desktop.mergeKeys(input)
+  if (worldControls?.open) Object.assign(input, idleInput)
   // Any keyboard use unlocks the audio context (WASD before click)
   if (
     input.moveForward ||

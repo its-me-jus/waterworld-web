@@ -314,25 +314,35 @@ export function palmBarkTexture() {
   if (palmBarkCache) return palmBarkCache
   const W = 128
   const H = 512
-  const RINGS = 30
+  const RINGS = 20
   const data = new Uint8ClampedArray(W * H * 4)
   const r = rng(91)
-  const jitter = Array.from({ length: RINGS }, () => ({ tilt: (r() - 0.5) * 0.25, depth: 0.6 + r() * 0.4, tone: 0.85 + r() * 0.3 }))
-  const fibre = Array.from({ length: W }, () => 0.85 + r() * 0.3)
+  // Tile in both directions. Broad, sun-bleached patches cross several
+  // scars, while the vertical fibres are finer than a single leaf base.
+  const mottling = Array.from({ length: 8 * 18 }, () => r())
+  const patchAt = (u: number, v: number) => {
+    const x = u * 8
+    const y = v * 18
+    const ix = Math.floor(x)
+    const iy = Math.floor(y)
+    const at = (dx: number, dy: number) => mottling[((iy + dy) % 18) * 8 + (ix + dx) % 8]
+    const fx = THREE.MathUtils.smoothstep(x - ix, 0, 1)
+    const fy = THREE.MathUtils.smoothstep(y - iy, 0, 1)
+    return THREE.MathUtils.lerp(THREE.MathUtils.lerp(at(0, 0), at(1, 0), fx), THREE.MathUtils.lerp(at(0, 1), at(1, 1), fx), fy)
+  }
+  const fibre = Array.from({ length: W }, () => r() - 0.5)
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const u = x / W
-      // Each ring tilts a little and wanders round the trunk
-      const ringPos = (y / H) * RINGS
-      const k = Math.floor(ringPos) % RINGS
-      const j = jitter[k]
-      const f = ringPos - Math.floor(ringPos) + j.tilt * Math.sin(u * Math.PI * 2 + k)
-      const t = f - Math.floor(f)
-      // The scar: a dark groove at the bottom of each ring, a pale lip above it
-      const groove = Math.exp(-((t - 0.06) ** 2) / 0.003) * j.depth
-      const lip = Math.exp(-((t - 0.16) ** 2) / 0.004) * 0.5
-      let tone = (0.62 + lip * 0.25 - groove * 0.45) * j.tone
-      tone *= fibre[x] * (0.92 + 0.08 * Math.sin(y * 0.9 + x))
+      const v = y / H
+      const patch = patchAt(u, v)
+      const scarPhase = v * RINGS + 0.22 * Math.sin(2 * Math.PI * (u + v * 3)) + (patch - 0.5) * 0.55
+      const t = scarPhase - Math.round(scarPhase)
+      const groove = Math.exp(-(t * t) / 0.004)
+      const lip = Math.exp(-((t - 0.12) ** 2) / 0.007)
+      const grain = fibre[(x + W + Math.round(4 * (patch - 0.5))) % W]
+      const wear = 0.30 + 0.70 * patch
+      const tone = 0.67 + (patch - 0.5) * 0.36 + grain * 0.12 + (r() - 0.5) * 0.09 + (lip * 0.11 - groove * 0.24) * wear
       const i = (y * W + x) * 4
       data[i] = Math.min(255, tone * 226)
       data[i + 1] = Math.min(255, tone * 216)

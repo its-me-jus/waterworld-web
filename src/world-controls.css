@@ -1,0 +1,57 @@
+#world-toggle, #world-panel button {
+  font: inherit;
+  cursor: pointer;
+  color: inherit;
+}
+#world-toggle {
+  position: fixed;
+  z-index: 7;
+  top: max(1.1rem, env(safe-area-inset-top));
+  right: calc(max(1.1rem, env(safe-area-inset-right)) + 52px);
+  height: 44px;
+  padding: 0 1rem;
+  border: 1px solid #eaf5ec55;
+  border-radius: 2rem;
+  color: #f2f6ea;
+  background: #08252b99;
+  font-size: 0.82rem;
+}
+#world-toggle:hover { background: #103f45df; }
+#world-panel {
+  --edge: max(0.85rem, env(safe-area-inset-right));
+  position: fixed;
+  inset: max(1.1rem, env(safe-area-inset-top)) var(--edge) auto auto;
+  margin: 0;
+  width: min(19rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - max(1.1rem, env(safe-area-inset-top)) - max(1rem, env(safe-area-inset-bottom)));
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  padding: 1.15rem;
+  border: 1px solid #b5d1c966;
+  border-radius: 1rem;
+  color: #eff3e7;
+  background: linear-gradient(150deg, #173e43fa, #0b252dfc);
+  box-shadow: 0 10px 40px #031b254d;
+}
+#world-panel::backdrop { background: #08232c25; }
+#world-panel header, .world-clock { display: flex; justify-content: space-between; align-items: center; }
+#world-panel small { color: #adcfc8; letter-spacing: 0.2em; font-size: 0.59rem; }
+#world-heading { margin: 0.24rem 0 0; font: 1.65rem/1.1 Georgia, serif; }
+#world-panel button {
+  min-height: 44px;
+  background: #a6d6c80d;
+  border: 1px solid #b5d1c93d;
+  border-radius: 0.55rem;
+  font-size: 0.79rem;
+}
+#world-panel button:hover, #world-panel button:focus-visible { background: #a6d6c82e; }
+#world-panel :focus-visible { outline: 2px solid #e9d6a4; outline-offset: 2px; }
+#world-panel .world-close { width: 44px; border-radius: 50%; font-size: 1.25rem; }
+#world-panel section { border-top: 1px solid #aecdc32e; margin-top: 1rem; padding-top: 0.9rem; }
+#world-panel h3, .world-clock label { font: 600 0.83rem/1.4 system-ui, sans-serif; margin: 0; }
+.world-clock output { color: #e9d6a4; font-variant-numeric: tabular-nums; font-size: 0.87rem; }
+#world-hour { width: 100%; height: 32px; margin: 0.25rem 0; accent-color: #ddcca4; touch-action: none; }
+.world-times, .world-places { display: grid; gap: 0.35rem; }
+.world-times { grid-template-columns: repeat(4, 1fr); }
+.world-places { grid-template-columns: repeat(2, 1fr); margin-top: 0.65rem; }

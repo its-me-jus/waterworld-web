@@ -483,6 +483,9 @@ function palmFrond(
   const positions: number[] = []
   const normals: number[] = []
   const reach: number[] = []
+  const shades: number[] = []
+  const bladeTone = 0.83 + rand(70) * 0.3
+  let shade = 1
   const n = new THREE.Vector3()
   const e1 = new THREE.Vector3()
   const e2 = new THREE.Vector3()
@@ -497,6 +500,7 @@ function palmFrond(
     for (const p of [a, b, c]) {
       positions.push(p.x, p.y, p.z)
       normals.push(n.x, n.y, n.z)
+      shades.push(shade)
     }
     reach.push(ra, rb, rc)
   }
@@ -519,10 +523,11 @@ function palmFrond(
     const T = along[i]
 
     // The midrib — a thin strip, so the frond has a spine seen from below
-    b0.set(-ribW, 0, 0).add(p0)
-    b1.set(ribW, 0, 0).add(p0)
-    m0.set(-ribW * 0.6, 0, 0).add(p1)
-    m1.set(ribW * 0.6, 0, 0).add(p1)
+    shade = bladeTone * 1.18
+    b0.set(-ribW * (1 - t0 * 0.85), 0, 0).add(p0)
+    b1.set(ribW * (1 - t0 * 0.85), 0, 0).add(p0)
+    m0.set(-ribW * (1 - t1 * 0.85), 0, 0).add(p1)
+    m1.set(ribW * (1 - t1 * 0.85), 0, 0).add(p1)
     tri(b0, m0, b1, t0, t1, t0)
     tri(b1, m0, m1, t0, t1, t1)
 
@@ -535,23 +540,28 @@ function palmFrond(
     // Below the midrib, square to it
     down.set(0, -T.z, T.y)
     // Leaflets fold down harder toward the tip, where the frond hangs
-    const fold = 0.32 + out * 0.42
     for (const s of [-1, 1]) {
+      // Leaflets emerge alternately. A few have lost their tips to the wind.
+      const k = 100 + i * 12 + (s > 0 ? 6 : 0)
+      const start = (s > 0 ? 0.02 : 0.23) + rand(k) * 0.1
+      const fold = 0.18 + out * 0.5 + rand(k + 1) * 0.42
+      const span = len * (0.85 + 0.25 * rand(k + 2)) * (rand(k + 3) < 0.08 ? 0.57 : 1)
+      shade = bladeTone * (0.76 + rand(k + 4) * 0.32)
       side.set(s, 0, 0)
       dir
         .copy(side)
         .multiplyScalar(Math.cos(fold))
         .addScaledVector(down, Math.sin(fold))
-        .addScaledVector(T, 0.42)
+        .addScaledVector(T, 0.24 + rand(k + 5) * 0.46)
         .normalize()
       // A narrow blade: wide at the rib, two segments out, bending down
-      b0.lerpVectors(p0, p1, 0.05)
-      b1.lerpVectors(p0, p1, 0.75)
-      m0.copy(b0).addScaledVector(dir, len * 0.5)
-      m1.copy(b1).addScaledVector(dir, len * 0.5).addScaledVector(T, -seg * 0.2)
-      m0.addScaledVector(down, len * 0.06)
-      m1.addScaledVector(down, len * 0.06)
-      tip.lerpVectors(m0, m1, 0.5).addScaledVector(dir, len * 0.5).addScaledVector(down, len * 0.14)
+      b0.lerpVectors(p0, p1, start)
+      b1.lerpVectors(p0, p1, start + 0.62)
+      m0.copy(b0).addScaledVector(dir, span * 0.5)
+      m1.copy(b1).addScaledVector(dir, span * 0.5).addScaledVector(T, -seg * 0.12)
+      m0.addScaledVector(down, span * 0.04)
+      m1.addScaledVector(down, span * 0.10)
+      tip.lerpVectors(m0, m1, 0.5).addScaledVector(dir, span * 0.46).addScaledVector(down, span * 0.2)
       const rt = Math.min(1, tm + 0.05)
       tri(b0, b1, m0, t0, t0, rt)
       tri(b1, m1, m0, t0, rt, rt)
@@ -563,6 +573,7 @@ function palmFrond(
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
   geo.setAttribute('aReach', new THREE.Float32BufferAttribute(reach, 1))
+  geo.setAttribute('aLeafShade', new THREE.Float32BufferAttribute(shades, 1))
   return geo
 }
 
@@ -575,7 +586,7 @@ function palmFrond(
 function palm(seed: number, fronds = 15) {
   const rand = (n: number) => fbm(seed * 13.7 + n * 4.3, seed * 7.1 - n * 2.9)
   const height = 6.5 + rand(1) * 5
-  const lean = (rand(2) - 0.5) * 3.4
+  const lean = (scatter(seed, 8.4) - 0.5) * height * 0.46
   const facing = rand(3) * Math.PI * 2
 
   // A row of vertices every thirty-odd centimetres, alternately proud and
@@ -588,8 +599,9 @@ function palm(seed: number, fronds = 15) {
     // negative base below is NaN
     const t = THREE.MathUtils.clamp((pos.getY(i) + height / 2) / height, 0, 1)
     const row = Math.round(t * rows)
-    const ring = row % 2 === 0 ? 1.07 : 0.97
-    const foot = 1 + 0.6 * (1 - THREE.MathUtils.smoothstep(t, 0, 0.09))
+    const ring = 1 + (scatter(seed + row, 14.1) - 0.5) * 0.065
+    const angle = Math.atan2(pos.getZ(i), pos.getX(i))
+    const foot = 1 + (0.65 + 0.23 * Math.cos(angle * 3 + facing)) * (1 - THREE.MathUtils.smoothstep(t, 0, 0.12))
     const r = ring * foot
     // Leans hardest low down, straightens toward the crown
     const bow = 1 - Math.pow(1 - t, 1.7)
