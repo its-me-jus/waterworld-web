@@ -41,6 +41,7 @@ export type Island = {
   shore: THREE.Vector3[]
   /** World positions of the inland freshwater rain pools. */
   pools: THREE.Vector3[]
+  crabs?: { mesh: THREE.Group; homeX: number; homeZ: number; x: number; z: number; heading: number }[]
   update: (camera: THREE.Camera, underwater: boolean, time?: number) => void
   /**
    * The terrain height grid as a texture, so the sea can shade by real water
@@ -1367,33 +1368,112 @@ function sapling(seed: number) {
   return { trunk, canopy, height }
 }
 
-/** A shore crab — flat body, sidling legs, two claws. Small enough to miss. */
+/** A Sally Lightfoot shore crab — vivid scarlet carapace, jointed legs, periscope eyes and ivory pincers. */
 function crabMesh(seed: number) {
   const rand = (n: number) => fbm(seed * 9.4 + n * 2.1, seed * 5.8 - n * 3.3)
-  const scale = 0.75 + rand(1) * 0.55
+  const scale = 0.85 + rand(1) * 0.45
   const group = new THREE.Group()
-  const shell = new THREE.Mesh(
-    new THREE.SphereGeometry(0.11, 6, 4),
-    new THREE.MeshStandardMaterial({ color: 0x8a4a32, roughness: 0.85 }),
-  )
-  shell.scale.set(1.35 * scale, 0.45 * scale, 1.1 * scale)
-  shell.position.y = 0.05 * scale
+
+  const shellMat = new THREE.MeshStandardMaterial({
+    color: 0xc8321c, // vivid scarlet
+    roughness: 0.52,
+    metalness: 0.08,
+  })
+  const bellyMat = new THREE.MeshStandardMaterial({
+    color: 0x189ea8, // electric turquoise
+    roughness: 0.65,
+  })
+  const legMat = new THREE.MeshStandardMaterial({
+    color: 0xd64822, // sunset vermilion
+    roughness: 0.6,
+  })
+  const clawMat = new THREE.MeshStandardMaterial({
+    color: 0xf5eedc, // ivory pincer tips
+    roughness: 0.45,
+  })
+  const eyeMat = new THREE.MeshStandardMaterial({
+    color: 0x111315,
+    roughness: 0.2,
+  })
+
+  // Flattish disc carapace
+  const shell = new THREE.Mesh(new THREE.SphereGeometry(0.12 * scale, 8, 5), shellMat)
+  shell.scale.set(1.25, 0.38, 1.05)
+  shell.position.y = 0.045 * scale
   group.add(shell)
 
-  const legMat = new THREE.MeshStandardMaterial({ color: 0x6e3a28, roughness: 0.9 })
-  for (let side = -1; side <= 1; side += 2) {
-    for (let i = 0; i < 3; i++) {
-      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.01, 0.16 * scale, 3), legMat)
-      leg.position.set(side * (0.1 + i * 0.02) * scale, 0.04 * scale, (i - 1) * 0.06 * scale)
-      leg.rotation.z = side * (0.85 + i * 0.08)
-      leg.rotation.x = (i - 1) * 0.25
-      group.add(leg)
-    }
-    const claw = new THREE.Mesh(new THREE.BoxGeometry(0.05 * scale, 0.03 * scale, 0.07 * scale), legMat)
-    claw.position.set(side * 0.14 * scale, 0.05 * scale, 0.1 * scale)
-    claw.rotation.y = side * -0.4
-    group.add(claw)
+  const belly = new THREE.Mesh(new THREE.SphereGeometry(0.1 * scale, 6, 4), bellyMat)
+  belly.scale.set(1.15, 0.24, 0.95)
+  belly.position.y = 0.028 * scale
+  group.add(belly)
+
+  // Periscope stalk eyes
+  for (const s of [-1, 1]) {
+    const stalk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.006 * scale, 0.007 * scale, 0.035 * scale, 4),
+      legMat,
+    )
+    stalk.position.set(s * 0.038 * scale, 0.075 * scale, 0.088 * scale)
+    stalk.rotation.x = -0.2
+    stalk.rotation.z = s * 0.15
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.01 * scale, 5, 4), eyeMat)
+    eye.position.set(0, 0.018 * scale, 0)
+    stalk.add(eye)
+    group.add(stalk)
   }
+
+  // 4 Jointed walking legs on each side (8 total)
+  const legPivots: THREE.Group[] = []
+  for (let side = -1; side <= 1; side += 2) {
+    for (let i = 0; i < 4; i++) {
+      const legPivot = new THREE.Group()
+      const zOff = (i - 1.5) * 0.052 * scale
+      legPivot.position.set(side * 0.1 * scale, 0.035 * scale, zOff)
+      const upper = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.011 * scale, 0.009 * scale, 0.11 * scale, 4),
+        legMat,
+      )
+      upper.rotation.z = side * 1.15
+      upper.position.set(side * 0.045 * scale, 0.02 * scale, 0)
+      legPivot.add(upper)
+      const lower = new THREE.Mesh(
+        new THREE.ConeGeometry(0.008 * scale, 0.1 * scale, 4),
+        legMat,
+      )
+      lower.rotation.z = side * 0.45
+      lower.position.set(side * 0.085 * scale, -0.025 * scale, 0)
+      legPivot.add(lower)
+      group.add(legPivot)
+      legPivots.push(legPivot)
+    }
+  }
+
+  // Two prominent chelipeds (claws) held forward
+  const claws: THREE.Group[] = []
+  for (let side = -1; side <= 1; side += 2) {
+    const arm = new THREE.Group()
+    arm.position.set(side * 0.09 * scale, 0.045 * scale, 0.095 * scale)
+    const upper = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.014 * scale, 0.016 * scale, 0.09 * scale, 4),
+      legMat,
+    )
+    upper.rotation.z = side * -0.65
+    upper.rotation.y = side * 0.55
+    arm.add(upper)
+    const pincer = new THREE.Mesh(
+      new THREE.ConeGeometry(0.022 * scale, 0.075 * scale, 4),
+      clawMat,
+    )
+    pincer.rotation.x = -Math.PI / 2
+    pincer.rotation.y = side * 0.35
+    pincer.position.set(side * 0.045 * scale, 0.015 * scale, 0.065 * scale)
+    arm.add(pincer)
+    group.add(arm)
+    claws.push(arm)
+  }
+
+  group.userData.legs = legPivots
+  group.userData.claws = claws
   return group
 }
 
@@ -4045,8 +4125,21 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       }
       c.mesh.position.set(c.x, surface(c.x, c.z) + 0.02, c.z)
       c.mesh.rotation.y = c.heading
-      // Tiny bob while moving
+      // Tiny bob while moving + leg scuttle & claw threat
       c.mesh.position.y += Math.abs(Math.sin(time * 14 + c.phase)) * 0.015 * (0.3 + c.spook)
+      const legCycle = time * (8 + c.spook * 16) + c.phase
+      if (c.mesh.userData.legs) {
+        const legs = c.mesh.userData.legs as THREE.Group[]
+        for (let j = 0; j < legs.length; j++) {
+          legs[j].rotation.y = Math.sin(legCycle + j * 0.78) * (0.08 + c.spook * 0.18)
+        }
+      }
+      if (c.mesh.userData.claws) {
+        const claws = c.mesh.userData.claws as THREE.Group[]
+        const clawThreat = c.spook > 0.4 ? -0.45 : Math.sin(time * 1.5 + c.phase) * 0.08
+        claws[0].rotation.x = THREE.MathUtils.damp(claws[0].rotation.x, clawThreat, 6, dt)
+        claws[1].rotation.x = THREE.MathUtils.damp(claws[1].rotation.x, clawThreat, 6, dt)
+      }
     }
 
     // —— lizards ————————————————————————————————————————————
@@ -4177,6 +4270,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     resolve,
     shore,
     pools,
+    crabs,
     seabed: seabedGrid,
     update,
     setHaze,

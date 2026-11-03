@@ -257,6 +257,16 @@ if (film.on) {
       ground(x: number, z: number) {
         return groundAt(x, z)
       },
+      /** Where the land animals are now, for framing them in a shot. */
+      animals() {
+        const at = (o: THREE.Object3D) => o.getWorldPosition(new THREE.Vector3()).toArray()
+        return {
+          tortoises: islandLife.tortoises.map((a) => at(a.built.root)),
+          iguanas: islandLife.iguanas.map((a) => at(a.built.root)),
+          flyingFoxes: islandLife.flyingFoxes.map((a) => at(a.built.root)),
+          crabs: (island.crabs ?? []).map((a) => at(a.mesh)),
+        }
+      },
     },
   })
 }

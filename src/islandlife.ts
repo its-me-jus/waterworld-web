@@ -8,6 +8,10 @@ import { sampleOcean } from './waves'
  *
  *  - White-tailed tropicbirds (Phaethon lepturus) banking along the cove cliffs
  *    and palm crowns with long streaming tail ribbons.
+ *  - Ancient giant tortoises (Aldabrachelys / Chelonoidis) grazing in the
+ *    shady fern clearings and around the freshwater rain pools.
+ *  - Spiny volcanic iguanas (Amblyrhynchus) basking on warm basalt boulders.
+ *  - Twilight flying foxes (fruit bats - Pteropus) soaring across the volcanic peak.
  *  - Metallic emerald and sapphire dragonflies hovering, darting, and dipping
  *    concentric ripples onto the inland basalt rain pools.
  *  - Canopy fireflies waking under the palms and around the pools at dusk.
@@ -210,6 +214,316 @@ function buildDragonfly(hue: 'emerald' | 'sapphire', bodyMat: THREE.Material, wi
 
   root.userData.noShadow = true
   return { root, fore, hind }
+}
+
+// —— 3. Ancient giant tortoise (Aldabrachelys / Chelonoidis) ——————
+
+function buildTortoise(mat: THREE.Material) {
+  const root = new THREE.Group()
+
+  // High domed carapace (+X is forward)
+  const shellGeo = stripBasic(new THREE.SphereGeometry(0.55, 16, 12, 0, TAU, 0, Math.PI * 0.54))
+  shellGeo.scale(1.15, 0.72, 0.88)
+  shellGeo.translate(0, 0.16, 0)
+
+  // Raised vertebral scute domes along the dorsal ridge
+  const scutes: THREE.BufferGeometry[] = [shellGeo]
+  for (let i = 0; i < 4; i++) {
+    const sc = stripBasic(new THREE.SphereGeometry(0.16, 8, 6, 0, TAU, 0, Math.PI * 0.45))
+    sc.scale(1.05, 0.55, 0.95)
+    sc.translate(0.32 - i * 0.22, 0.44 + (i === 1 || i === 2 ? 0.04 : 0), 0)
+    scutes.push(sc)
+  }
+
+  // Flared marginal skirt rim around the bottom perimeter
+  const skirt = stripBasic(new THREE.TorusGeometry(0.52, 0.055, 6, 20))
+  skirt.scale(1.16, 0.5, 0.88)
+  skirt.rotateX(Math.PI / 2)
+  skirt.translate(0, 0.16, 0)
+  scutes.push(skirt)
+
+  // Plastron (flat bottom shell plate)
+  const plastron = stripBasic(new THREE.CylinderGeometry(0.48, 0.52, 0.08, 12))
+  plastron.scale(1.1, 1.0, 0.82)
+  plastron.translate(0, 0.14, 0)
+  scutes.push(plastron)
+
+  // Stubby tail
+  const tail = stripBasic(new THREE.ConeGeometry(0.04, 0.18, 5))
+  tail.rotateZ(Math.PI / 2)
+  tail.translate(-0.62, 0.16, 0)
+  scutes.push(tail)
+
+  const mergedShell = mergeGeometries(scutes, false) as THREE.BufferGeometry
+  mergedShell.computeVertexNormals()
+
+  const hornDark = new THREE.Color('#24201b')
+  const amberScute = new THREE.Color('#86572b')
+  const ringLight = new THREE.Color('#c29a62')
+  const plastronCol = new THREE.Color('#8a7b64')
+  const tmp = new THREE.Color()
+
+  paint(mergedShell, (x, y, z, ny) => {
+    if (y < 0.15 && ny < -0.2) return tmp.copy(plastronCol)
+    const rad = Math.hypot(x * 0.9, z * 1.1)
+    const ring = Math.sin(rad * 28.0) * 0.5 + 0.5
+    const scuteCenter = Math.sin(x * 12.0) * Math.cos(z * 10.0)
+    tmp.copy(hornDark).lerp(amberScute, smooth(0.15, 0.75, scuteCenter))
+    tmp.lerp(ringLight, smooth(0.65, 0.95, ring) * 0.45)
+    if (rad > 0.46) tmp.lerp(ringLight, smooth(0.46, 0.58, rad) * 0.35)
+    return tmp
+  })
+
+  const shellMesh = new THREE.Mesh(mergedShell, mat)
+  root.add(shellMesh)
+
+  // Head and neck group (hinged / retractable at front shell aperture)
+  const neckPivot = new THREE.Group()
+  neckPivot.position.set(0.42, 0.24, 0)
+
+  const neckGeo = stripBasic(new THREE.CylinderGeometry(0.09, 0.12, 0.28, 8))
+  neckGeo.rotateZ(-Math.PI / 2)
+  neckGeo.translate(0.14, 0.04, 0)
+
+  const headGeo = stripBasic(new THREE.SphereGeometry(0.11, 10, 7))
+  headGeo.scale(1.3, 0.95, 0.9)
+  headGeo.translate(0.32, 0.08, 0)
+
+  const beakGeo = stripBasic(new THREE.ConeGeometry(0.045, 0.12, 5))
+  beakGeo.rotateZ(-Math.PI / 2)
+  beakGeo.translate(0.44, 0.04, 0)
+
+  const mergedHead = mergeGeometries([neckGeo, headGeo, beakGeo], false) as THREE.BufferGeometry
+  mergedHead.computeVertexNormals()
+
+  const skinDark = new THREE.Color('#38342e')
+  const skinLight = new THREE.Color('#62584a')
+  const beakHorn = new THREE.Color('#b58e5a')
+  const eyeDark = new THREE.Color('#141210')
+
+  paint(mergedHead, (x, y, z) => {
+    if (x > 0.38) return tmp.copy(beakHorn)
+    if (x > 0.28 && x < 0.35 && y > 0.08 && Math.abs(z) > 0.065) return tmp.copy(eyeDark)
+    const wrinkle = Math.sin(x * 42.0) * 0.5 + 0.5
+    return tmp.copy(skinDark).lerp(skinLight, wrinkle * 0.35)
+  })
+
+  const headMesh = new THREE.Mesh(mergedHead, mat)
+  neckPivot.add(headMesh)
+  root.add(neckPivot)
+
+  // Four columnar elephantine legs
+  const buildLeg = (isFront: boolean, side: number) => {
+    const pivot = new THREE.Group()
+    const legGeo = stripBasic(new THREE.CylinderGeometry(0.088, 0.105, 0.28, 8))
+    legGeo.translate(0, -0.14, 0)
+
+    const footParts: THREE.BufferGeometry[] = [legGeo]
+    const clawCount = isFront ? 5 : 4
+    for (let c = 0; c < clawCount; c++) {
+      const a = ((c - (clawCount - 1) * 0.5) / clawCount) * 1.5 + (side > 0 ? 0.3 : -0.3)
+      const claw = stripBasic(new THREE.ConeGeometry(0.02, 0.065, 4))
+      claw.rotateX(Math.PI / 2)
+      claw.rotateY(-a)
+      claw.translate(Math.cos(a) * 0.1, -0.26, Math.sin(a) * 0.1)
+      footParts.push(claw)
+    }
+    const mergedLeg = mergeGeometries(footParts, false) as THREE.BufferGeometry
+    mergedLeg.computeVertexNormals()
+
+    paint(mergedLeg, (x, y) => {
+      if (y < -0.24 && x > 0.02) return tmp.copy(beakHorn)
+      return tmp.copy(skinDark).lerp(skinLight, (Math.sin(y * 36.0) * 0.5 + 0.5) * 0.3)
+    })
+
+    const m = new THREE.Mesh(mergedLeg, mat)
+    pivot.add(m)
+    root.add(pivot)
+    return pivot
+  }
+
+  const legFL = buildLeg(true, 1)
+  legFL.position.set(0.36, 0.22, 0.34)
+  const legFR = buildLeg(true, -1)
+  legFR.position.set(0.36, 0.22, -0.34)
+  const legBL = buildLeg(false, 1)
+  legBL.position.set(-0.32, 0.22, 0.35)
+  const legBR = buildLeg(false, -1)
+  legBR.position.set(-0.32, 0.22, -0.35)
+
+  return { root, neckPivot, legFL, legFR, legBL, legBR }
+}
+
+// —— 4. Spiny volcanic iguana (Amblyrhynchus) —————————————————————
+
+function buildIguana(mat: THREE.Material) {
+  const root = new THREE.Group()
+
+  // Torso (+X forward)
+  const bodyGeo = stripBasic(new THREE.SphereGeometry(1, 10, 7))
+  bodyGeo.scale(0.24, 0.075, 0.09)
+  bodyGeo.translate(0, 0.07, 0)
+
+  // Triangular robust iguana head
+  const headGeo = stripBasic(new THREE.ConeGeometry(0.065, 0.17, 6))
+  headGeo.scale(1.1, 0.85, 1.25)
+  headGeo.rotateZ(-Math.PI / 2)
+  headGeo.translate(0.29, 0.095, 0)
+
+  // Serrated dorsal crest of spines from nape to mid-tail
+  const spineParts: THREE.BufferGeometry[] = []
+  for (let i = 0; i < 14; i++) {
+    const u = i / 13
+    const sp = stripBasic(new THREE.ConeGeometry(0.012, 0.038 * (1 - u * 0.4), 3))
+    sp.translate(0.22 - i * 0.042, 0.13 - i * 0.003, 0)
+    spineParts.push(sp)
+  }
+
+  // Throat dewlap fan
+  const dewlapGeo = stripBasic(new THREE.CylinderGeometry(0.045, 0.015, 0.012, 6))
+  dewlapGeo.scale(1.3, 0.6, 1.0)
+  dewlapGeo.rotateX(Math.PI / 2)
+  dewlapGeo.translate(0.24, 0.045, 0)
+
+  // Long muscular tail tapering back
+  const tailGeo = stripBasic(new THREE.ConeGeometry(0.045, 0.54, 7))
+  tailGeo.rotateZ(Math.PI / 2)
+  tailGeo.translate(-0.46, 0.065, 0)
+
+  // Splayed clawed limbs
+  const limbParts: THREE.BufferGeometry[] = []
+  for (const fwd of [0.16, -0.16]) {
+    for (const side of [-1, 1]) {
+      const upper = stripBasic(new THREE.CylinderGeometry(0.018, 0.016, 0.09, 5))
+      upper.rotateX(side * 1.1)
+      upper.translate(fwd, 0.065, side * 0.1)
+      const lower = stripBasic(new THREE.CylinderGeometry(0.014, 0.011, 0.08, 4))
+      lower.translate(fwd + 0.02, 0.025, side * 0.15)
+      const foot = stripBasic(new THREE.BoxGeometry(0.05, 0.008, 0.045))
+      foot.translate(fwd + 0.03, 0.005, side * 0.155)
+      limbParts.push(upper, lower, foot)
+    }
+  }
+
+  const mergedBody = mergeGeometries(
+    [bodyGeo, headGeo, dewlapGeo, tailGeo, ...spineParts, ...limbParts],
+    false,
+  ) as THREE.BufferGeometry
+  mergedBody.computeVertexNormals()
+
+  const slate = new THREE.Color('#242b2e')
+  const moss = new THREE.Color('#4d6644')
+  const ochre = new THREE.Color('#b2883e')
+  const eye = new THREE.Color('#121517')
+  const belly = new THREE.Color('#7a8876')
+  const tmp = new THREE.Color()
+
+  paint(mergedBody, (x, y, z, ny) => {
+    if (x > 0.18 && x < 0.28 && y < 0.06 && Math.abs(z) < 0.03) return tmp.copy(ochre)
+    if (x > 0.24 && x < 0.31 && y > 0.09 && Math.abs(z) > 0.04) return tmp.copy(eye)
+    if (ny < -0.3) return tmp.copy(belly)
+    const band = Math.sin(x * 38.0 + Math.abs(z) * 12.0) * 0.5 + 0.5
+    return tmp.copy(slate).lerp(moss, smooth(0.35, 0.85, band) * 0.65)
+  })
+
+  const bodyMesh = new THREE.Mesh(mergedBody, mat)
+  root.add(bodyMesh)
+
+  // Tongue for darting flick
+  const tongueGeo = stripBasic(new THREE.CylinderGeometry(0.004, 0.006, 0.07, 4))
+  tongueGeo.rotateZ(-Math.PI / 2)
+  tongueGeo.translate(0.4, 0.08, 0)
+  tongueGeo.computeVertexNormals()
+  const tongueMat = new THREE.MeshBasicMaterial({ color: '#e6587a' })
+  const tongue = new THREE.Mesh(tongueGeo, tongueMat)
+  tongue.scale.set(0, 1, 1)
+  root.add(tongue)
+
+  return { root, bodyMesh, tongue }
+}
+
+// —— 5. Twilight flying fox (Pteropus) ————————————————————————————
+
+function buildFlyingFox(mat: THREE.Material) {
+  const root = new THREE.Group()
+
+  // Furry spindle torso (+X forward)
+  const body = stripBasic(new THREE.SphereGeometry(1, 10, 7))
+  body.scale(0.22, 0.075, 0.07)
+  body.translate(0, 0, 0)
+
+  // Head with fox-like snout and upright ears
+  const head = stripBasic(new THREE.ConeGeometry(0.05, 0.14, 6))
+  head.rotateZ(-Math.PI / 2)
+  head.translate(0.24, 0.02, 0)
+
+  const earL = stripBasic(new THREE.ConeGeometry(0.02, 0.06, 4))
+  earL.rotateZ(-0.4)
+  earL.rotateX(0.3)
+  earL.translate(0.21, 0.065, 0.035)
+
+  const earR = stripBasic(new THREE.ConeGeometry(0.02, 0.06, 4))
+  earR.rotateZ(-0.4)
+  earR.rotateX(-0.3)
+  earR.translate(0.21, 0.065, -0.035)
+
+  const bodyParts = [body, head, earL, earR]
+  const mergedBody = mergeGeometries(bodyParts, false) as THREE.BufferGeometry
+  mergedBody.computeVertexNormals()
+
+  const furDark = new THREE.Color('#382016')
+  const mantleOchre = new THREE.Color('#825624')
+  const earDark = new THREE.Color('#22140d')
+  const tmp = new THREE.Color()
+
+  paint(mergedBody, (x, y) => {
+    if (y > 0.05) return tmp.copy(earDark)
+    if (x > 0.08 && x < 0.22) return tmp.copy(mantleOchre)
+    return tmp.copy(furDark)
+  })
+
+  const bodyMesh = new THREE.Mesh(mergedBody, mat)
+  root.add(bodyMesh)
+
+  // Pair of broad scalloped leathery wings (~1.45 m wingspan)
+  const makeWing = (side: number) => {
+    const pivot = new THREE.Group()
+    pivot.position.set(0.04, 0.015, side * 0.05)
+
+    const s = new THREE.Shape()
+    s.moveTo(0.06, 0)
+    s.quadraticCurveTo(0.08, side * 0.22, 0.03, side * 0.45)
+    s.quadraticCurveTo(0.02, side * 0.62, -0.12, side * 0.72)
+    s.quadraticCurveTo(-0.16, side * 0.54, -0.12, side * 0.44)
+    s.quadraticCurveTo(-0.18, side * 0.32, -0.11, side * 0.22)
+    s.quadraticCurveTo(-0.16, side * 0.11, -0.08, 0)
+    s.closePath()
+
+    const g = stripBasic(
+      new THREE.ExtrudeGeometry(s, { depth: 0.008, bevelEnabled: false, curveSegments: 5 }),
+    )
+    g.translate(0, 0, -0.004)
+    g.rotateX(-Math.PI / 2)
+    g.computeVertexNormals()
+
+    const wingLeather = new THREE.Color('#1d1816')
+    const wingRim = new THREE.Color('#4a3828')
+    paint(g, (x, _y, z) => {
+      const span = Math.abs(z) / 0.72
+      if (span > 0.85 || x > 0.03) return tmp.copy(wingRim)
+      return tmp.copy(wingLeather).lerp(wingRim, smooth(0.5, 0.9, span) * 0.4)
+    })
+
+    const m = new THREE.Mesh(g, mat)
+    pivot.add(m)
+    root.add(pivot)
+    return pivot
+  }
+
+  const wingL = makeWing(1)
+  const wingR = makeWing(-1)
+
+  return { root, wingL, wingR }
 }
 
 // —— 3 & 4. Glow shaders (Fireflies & Noctiluca sea-sparkle) —————————
@@ -783,6 +1097,479 @@ export function createIslandLife(scene: THREE.Scene, deps: IslandLifeDeps) {
     }
   }
 
+  // —— E. Ancient giant tortoises (Aldabrachelys / Chelonoidis) ——————
+  const tortoiseMat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.64,
+    metalness: 0.04,
+  })
+
+  type Tortoise = {
+    built: ReturnType<typeof buildTortoise>
+    x: number
+    y: number
+    z: number
+    yaw: number
+    pitch: number
+    roll: number
+    baseX: number
+    baseZ: number
+    targetX: number
+    targetZ: number
+    wanderRadius: number
+    speed: number
+    state: 'graze' | 'walk'
+    timer: number
+    gaitPhase: number
+    retract: number
+    scale: number
+  }
+
+  const tortoiseCount = deps.lowPower ? 2 : 3
+  const tortoises: Tortoise[] = []
+  let whisperedTortoise = false
+
+  for (let i = 0; i < tortoiseCount; i++) {
+    const built = buildTortoise(tortoiseMat)
+    const scale = 1.18 + (i % 2) * 0.16
+    built.root.scale.setScalar(scale)
+    group.add(built.root)
+
+    let bx: number
+    let bz: number
+    if (i === 0 && deps.island.pools.length > 0) {
+      // By the first inland freshwater pool, browsing lush ferns
+      const p = deps.island.pools[0]
+      bx = p.x + 3.8
+      bz = p.z + 2.2
+    } else if (i === 1 && deps.island.pools.length > 1) {
+      // By the second inland rain pool
+      const p = deps.island.pools[1]
+      bx = p.x - 3.4
+      bz = p.z + 2.6
+    } else {
+      // Shady inland fern glade along the rising valley
+      bx = deps.cove.x + inDir.x * 24 + sideDir.x * 12
+      bz = deps.cove.z + inDir.y * 24 + sideDir.y * 12
+    }
+
+    const by = deps.island.heightAt(bx, bz)
+    const startYaw = rand(0, TAU)
+    built.root.position.set(bx, by, bz)
+    dummy.rotation.set(0, startYaw + Math.PI / 2, 0)
+    built.root.quaternion.copy(dummy.quaternion)
+
+    tortoises.push({
+      built,
+      x: bx,
+      y: by,
+      z: bz,
+      yaw: startYaw,
+      pitch: 0,
+      roll: 0,
+      baseX: bx,
+      baseZ: bz,
+      targetX: bx + Math.cos(startYaw) * 1.5,
+      targetZ: bz + Math.sin(startYaw) * 1.5,
+      wanderRadius: 4.8,
+      speed: 0.12 + (i % 2) * 0.04,
+      state: i === 0 ? 'graze' : 'walk',
+      timer: rand(4, 10),
+      gaitPhase: rand(0, TAU),
+      retract: 0,
+      scale,
+    })
+  }
+
+  function updateTortoises(
+    dt: number,
+    t: number,
+    cam: THREE.Camera,
+    playerX: number,
+    playerZ: number,
+    moving: number,
+    walking: boolean,
+  ) {
+    for (const tort of tortoises) {
+      const dCamSq = (tort.x - cam.position.x) ** 2 + (tort.z - cam.position.z) ** 2
+      const visible = dCamSq < 130 * 130
+      tort.built.root.visible = visible
+      if (!visible) continue
+
+      const dPlayer = Math.hypot(tort.x - playerX, tort.z - playerZ)
+      const alarmed = dPlayer < (moving > 0.4 ? 4.8 : 3.6)
+      const targetRetract = alarmed ? 1.0 : 0.0
+      tort.retract = damp(tort.retract, targetRetract, alarmed ? 4.5 : 1.6, dt)
+
+      if (!whisperedTortoise && walking && dPlayer < 4.8) {
+        whisperedTortoise = true
+        deps.hud.whisper('An ancient tortoise grazes quietly in the shade.')
+      }
+
+      // Smooth shell retraction: neck pulls in, scale shrinks, legs tuck against shell
+      tort.built.neckPivot.position.x = 0.52 - tort.retract * 0.34
+      const neckS = 1.0 - tort.retract * 0.45
+      tort.built.neckPivot.scale.set(neckS, neckS, neckS)
+      const tuck = tort.retract * 0.07
+      tort.built.legFL.position.x = 0.36 - tuck
+      tort.built.legFR.position.x = 0.36 - tuck
+      tort.built.legBL.position.x = -0.32 + tuck
+      tort.built.legBR.position.x = -0.32 + tuck
+
+      if (tort.retract <= 0.4) {
+        tort.timer -= dt
+        if (tort.state === 'graze') {
+          // Subtle grazing bobbing
+          const chew = Math.sin(t * 1.5 + tort.gaitPhase)
+          tort.built.neckPivot.rotation.z = -0.06 + chew * 0.08
+          tort.built.neckPivot.rotation.y = Math.sin(t * 0.7 + tort.gaitPhase) * 0.12
+          if (tort.timer <= 0) {
+            const a = Math.random() * TAU
+            const r = rand(1.2, tort.wanderRadius)
+            tort.targetX = tort.baseX + Math.cos(a) * r
+            tort.targetZ = tort.baseZ + Math.sin(a) * r
+            tort.state = 'walk'
+            tort.timer = rand(8, 18)
+          }
+        } else {
+          // Ambling
+          const dx = tort.targetX - tort.x
+          const dz = tort.targetZ - tort.z
+          const distTarget = Math.hypot(dx, dz)
+          if (distTarget < 0.4 || tort.timer <= 0) {
+            tort.state = 'graze'
+            tort.timer = rand(6, 15)
+          } else {
+            const wantYaw = Math.atan2(-dx, -dz)
+            tort.yaw += angleDelta(tort.yaw, wantYaw) * Math.min(1, dt * 1.1)
+            const fwd = tort.speed * dt * (1 - tort.retract)
+            tort.x += -Math.sin(tort.yaw) * fwd
+            tort.z += -Math.cos(tort.yaw) * fwd
+            tort.gaitPhase += dt * (tort.speed * 8.5)
+
+            const s1 = Math.sin(tort.gaitPhase)
+            tort.built.legFL.rotation.z = s1 * 0.26
+            tort.built.legBR.rotation.z = s1 * 0.24
+            tort.built.legFR.rotation.z = -s1 * 0.26
+            tort.built.legBL.rotation.z = -s1 * 0.24
+            tort.built.neckPivot.rotation.z = -0.05 + Math.sin(tort.gaitPhase * 2) * 0.04
+            tort.built.neckPivot.rotation.y = Math.sin(tort.gaitPhase) * 0.06
+          }
+        }
+      }
+
+      // Terrain slope matching
+      const hC = deps.island.heightAt(tort.x, tort.z)
+      const fX = -Math.sin(tort.yaw) * 0.45
+      const fZ = -Math.cos(tort.yaw) * 0.45
+      const rX = Math.cos(tort.yaw) * 0.4
+      const rZ = -Math.sin(tort.yaw) * 0.4
+      const hF = deps.island.heightAt(tort.x + fX, tort.z + fZ)
+      const hB = deps.island.heightAt(tort.x - fX, tort.z - fZ)
+      const hR = deps.island.heightAt(tort.x + rX, tort.z + rZ)
+      const hL = deps.island.heightAt(tort.x - rX, tort.z - rZ)
+      const wantPitch = Math.atan2(hF - hB, 0.9)
+      const wantRoll = Math.atan2(hR - hL, 0.8)
+      tort.pitch = damp(tort.pitch, wantPitch, 4.0, dt)
+      tort.roll = damp(tort.roll, wantRoll, 4.0, dt)
+      tort.y = damp(tort.y, hC, 8.0, dt)
+
+      tort.built.root.position.set(tort.x, tort.y, tort.z)
+      dummy.rotation.set(0, 0, 0)
+      dummy.rotateY(tort.yaw + Math.PI / 2)
+      dummy.rotateZ(tort.pitch)
+      dummy.rotateX(tort.roll)
+      tort.built.root.quaternion.copy(dummy.quaternion)
+    }
+  }
+
+  // —— F. Spiny volcanic iguanas (Amblyrhynchus) —————————————————————
+  const iguanaMat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.68,
+    metalness: 0.08,
+  })
+
+  type Iguana = {
+    built: ReturnType<typeof buildIguana>
+    x: number
+    y: number
+    z: number
+    baseX: number
+    baseZ: number
+    yaw: number
+    pitch: number
+    roll: number
+    bobTimer: number
+    bobPhase: number
+    flickTimer: number
+    flicking: boolean
+    scurryTimer: number
+    scale: number
+  }
+
+  const iguanaCount = deps.lowPower ? 2 : 4
+  const iguanas: Iguana[] = []
+  let whisperedIguana = false
+
+  // Warm sunny basalt perches around the cove and volcanic ridges
+  const iguanaOffsets = [
+    { along: 6, across: 22 },   // North cliff ledge over the bay
+    { along: 12, across: -26 }, // South headland rocks
+    { along: 38, across: 10 },  // Lower basalt trail
+    { along: -8, across: -16 }, // Rocks by the sand edge
+  ]
+
+  for (let i = 0; i < iguanaCount; i++) {
+    const built = buildIguana(iguanaMat)
+    const scale = 1.05 + (i % 2) * 0.15
+    built.root.scale.setScalar(scale)
+    group.add(built.root)
+
+    const off = iguanaOffsets[i % iguanaOffsets.length]
+    const bx = deps.cove.x + inDir.x * off.along + sideDir.x * off.across
+    const bz = deps.cove.z + inDir.y * off.along + sideDir.y * off.across
+    const by = deps.island.heightAt(bx, bz)
+    const yaw = rand(0, TAU)
+    built.root.position.set(bx, by, bz)
+    dummy.rotation.set(0, yaw + Math.PI / 2, 0)
+    built.root.quaternion.copy(dummy.quaternion)
+
+    iguanas.push({
+      built,
+      x: bx,
+      y: by,
+      z: bz,
+      baseX: bx,
+      baseZ: bz,
+      yaw,
+      pitch: 0,
+      roll: 0,
+      bobTimer: rand(2, 6),
+      bobPhase: rand(0, TAU),
+      flickTimer: rand(3, 8),
+      flicking: false,
+      scurryTimer: 0,
+      scale,
+    })
+  }
+
+  function updateIguanas(
+    dt: number,
+    t: number,
+    cam: THREE.Camera,
+    playerX: number,
+    playerZ: number,
+    moving: number,
+    walking: boolean,
+  ) {
+    for (const ig of iguanas) {
+      const dCamSq = (ig.x - cam.position.x) ** 2 + (ig.z - cam.position.z) ** 2
+      const visible = dCamSq < 95 * 95
+      ig.built.root.visible = visible
+      if (!visible) continue
+
+      const dPlayer = Math.hypot(ig.x - playerX, ig.z - playerZ)
+
+      if (!whisperedIguana && walking && dPlayer < 4.2) {
+        whisperedIguana = true
+        deps.hud.whisper('A spiny iguana watches motionless from the basalt.')
+      }
+
+      // If player rushes in too close, scurry a few feet away
+      if (dPlayer < (moving > 0.4 ? 2.8 : 1.8) && ig.scurryTimer <= 0) {
+        ig.scurryTimer = rand(1.2, 2.0)
+        // Run away from player
+        const fleeAngle = Math.atan2(ig.x - playerX, ig.z - playerZ) + rand(-0.4, 0.4)
+        ig.yaw = fleeAngle
+      }
+
+      let bobY = 0
+      if (ig.scurryTimer > 0) {
+        ig.scurryTimer -= dt
+        const spd = 2.4 * dt
+        const nx = ig.x - Math.sin(ig.yaw) * spd
+        const nz = ig.z - Math.cos(ig.yaw) * spd
+        // Stay near its perch and out of the sea, however often it is chased
+        if (Math.hypot(nx - ig.baseX, nz - ig.baseZ) < 7 && deps.island.heightAt(nx, nz) > 0.5) {
+          ig.x = nx
+          ig.z = nz
+        } else {
+          ig.scurryTimer = 0
+        }
+        // Fast scurrying wiggle
+        const scurryWiggle = Math.sin(t * 26) * 0.12
+        ig.built.bodyMesh.rotation.y = scurryWiggle
+      } else {
+        ig.built.bodyMesh.rotation.y = 0
+        // Periodic head bobs
+        ig.bobTimer -= dt
+        if (ig.bobTimer <= 0) {
+          const u = -ig.bobTimer // 0 to 1.2
+          if (u < 1.1) {
+            bobY = Math.max(0, Math.sin(u * 16.0)) * 0.035
+          } else {
+            ig.bobTimer = rand(4, 9)
+          }
+        }
+
+        // Periodic tongue flick
+        ig.flickTimer -= dt
+        if (ig.flickTimer <= 0) {
+          const fu = -ig.flickTimer
+          if (fu < 0.26) {
+            ig.flicking = true
+          } else {
+            ig.flicking = false
+            ig.flickTimer = rand(3.8, 8.0)
+          }
+        }
+      }
+
+      ig.built.tongue.scale.x = damp(ig.built.tongue.scale.x, ig.flicking ? 1.0 : 0.0, 24.0, dt)
+
+      // Rock terrain alignment
+      const hC = deps.island.heightAt(ig.x, ig.z)
+      const fX = -Math.sin(ig.yaw) * 0.25
+      const fZ = -Math.cos(ig.yaw) * 0.25
+      const rX = Math.cos(ig.yaw) * 0.2
+      const rZ = -Math.sin(ig.yaw) * 0.2
+      const hF = deps.island.heightAt(ig.x + fX, ig.z + fZ)
+      const hB = deps.island.heightAt(ig.x - fX, ig.z - fZ)
+      const hR = deps.island.heightAt(ig.x + rX, ig.z + rZ)
+      const hL = deps.island.heightAt(ig.x - rX, ig.z - rZ)
+      const wantPitch = Math.atan2(hF - hB, 0.5)
+      const wantRoll = Math.atan2(hR - hL, 0.4)
+      ig.pitch = damp(ig.pitch, wantPitch, 6.0, dt)
+      ig.roll = damp(ig.roll, wantRoll, 6.0, dt)
+      ig.y = damp(ig.y, hC, 10.0, dt)
+
+      ig.built.root.position.set(ig.x, ig.y + bobY, ig.z)
+      dummy.rotation.set(0, 0, 0)
+      dummy.rotateY(ig.yaw + Math.PI / 2)
+      dummy.rotateZ(ig.pitch)
+      dummy.rotateX(ig.roll)
+      ig.built.root.quaternion.copy(dummy.quaternion)
+    }
+  }
+
+  // —— G. Twilight flying foxes (Pteropus) ————————————————————————
+  const foxMat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.58,
+    metalness: 0.02,
+    side: THREE.DoubleSide,
+  })
+
+  type FlyingFox = {
+    built: ReturnType<typeof buildFlyingFox>
+    cx: number
+    cz: number
+    rx: number
+    rz: number
+    altAbove: number
+    speed: number
+    phase: number
+    yaw: number
+    pitch: number
+    roll: number
+    y: number
+  }
+
+  const foxCount = deps.lowPower ? 2 : 4
+  let whisperedFox = false
+
+  const flyingFoxes: FlyingFox[] = Array.from({ length: foxCount }, (_, i) => {
+    const built = buildFlyingFox(foxMat)
+    built.root.scale.setScalar(1.22 + (i % 2) * 0.18)
+    group.add(built.root)
+
+    const along = 55 + i * 28
+    const across = (i % 2 === 0 ? 1 : -1) * (34 + (i % 2) * 16)
+    const cx = deps.cove.x + inDir.x * along + sideDir.x * across
+    const cz = deps.cove.z + inDir.y * along + sideDir.y * across
+    const altAbove = 24 + (i % 3) * 7
+    const initialY = Math.max(12, deps.island.heightAt(cx, cz)) + altAbove
+    built.root.position.set(cx, initialY, cz)
+
+    return {
+      built,
+      cx,
+      cz,
+      rx: 42 + (i % 2) * 16,
+      rz: 30 + ((i + 1) % 2) * 14,
+      altAbove,
+      speed: (0.16 + (i % 2) * 0.032) * (i % 2 === 0 ? 1 : -1),
+      phase: (i / foxCount) * TAU,
+      yaw: 0,
+      pitch: 0,
+      roll: 0,
+      y: altAbove + 30,
+    }
+  })
+
+  function updateFlyingFoxes(
+    dt: number,
+    t: number,
+    cam: THREE.Camera,
+    daylight: number,
+    walking: boolean,
+  ) {
+    const dIsland = Math.hypot(cam.position.x - deps.cove.x, cam.position.z - deps.cove.z)
+    // Active during twilight, dusk, night, and early dawn; roost high during harsh midday
+    const activeTime = daylight < 0.68
+    const show = dIsland < 520 && activeTime
+
+    for (const fox of flyingFoxes) {
+      fox.built.root.visible = show
+    }
+    if (!show) return
+
+    for (let i = 0; i < flyingFoxes.length; i++) {
+      const fox = flyingFoxes[i]
+      const a = t * fox.speed + fox.phase
+      const x = fox.cx + Math.cos(a) * fox.rx
+      const z = fox.cz + Math.sin(a) * fox.rz + Math.sin(a * 2) * 6
+      const vx = -Math.sin(a) * fox.rx * fox.speed
+      const vz = (Math.cos(a) * fox.rz + Math.cos(a * 2) * 12) * fox.speed
+
+      const ground = Math.max(0, deps.island.heightAt(x, z))
+      const wantY = ground + fox.altAbove + Math.sin(a * 1.5 + fox.phase) * 3.2
+      const prevY = fox.y
+      fox.y = damp(fox.y, wantY, 1.6, dt)
+
+      const heading = Math.atan2(-vx, -vz)
+      const dYaw = angleDelta(fox.yaw, heading)
+      fox.yaw += dYaw
+      const bankTarget = clamp((-dYaw / Math.max(dt, 1e-3)) * 0.38, -0.65, 0.65)
+      fox.roll = damp(fox.roll, bankTarget, 3.0, dt)
+      fox.pitch = damp(fox.pitch, clamp((fox.y - prevY) / Math.max(dt * 7, 1e-3), -0.28, 0.28), 3.0, dt)
+
+      // Slow deep rhythmic bat wingbeat alternating with banked glides
+      const cycle = (t * 0.22 + fox.phase) % 1
+      const flapping = smooth(0.0, 0.12, cycle) * (1 - smooth(0.55, 0.68, cycle))
+      const beat = Math.sin(t * 13.5 + fox.phase * 3) * 0.68 * flapping
+      const twist = Math.cos(t * 13.5 + fox.phase * 3) * 0.12 * flapping
+      fox.built.wingL.rotation.x = beat
+      fox.built.wingL.rotation.z = twist
+      fox.built.wingR.rotation.x = -beat
+      fox.built.wingR.rotation.z = twist
+
+      fox.built.root.position.set(x, fox.y, z)
+      dummy.rotation.set(0, 0, 0)
+      dummy.rotateY(fox.yaw + Math.PI / 2)
+      dummy.rotateZ(fox.pitch)
+      dummy.rotateX(fox.roll)
+      fox.built.root.quaternion.copy(dummy.quaternion)
+
+      const dCam = Math.hypot(x - cam.position.x, z - cam.position.z)
+      if (!whisperedFox && walking && daylight < 0.45 && dCam < 85) {
+        whisperedFox = true
+        deps.hud.whisper('Dark wings wheel against the evening sky.')
+      }
+    }
+  }
+
   function update(
     dt: number,
     t: number,
@@ -810,6 +1597,9 @@ export function createIslandLife(scene: THREE.Scene, deps: IslandLifeDeps) {
       moving: state.moving,
       inSea: state.inSea,
     })
+    updateTortoises(dt, t, camera, state.playerX, state.playerZ, state.moving, state.walking)
+    updateIguanas(dt, t, camera, state.playerX, state.playerZ, state.moving, state.walking)
+    updateFlyingFoxes(dt, t, camera, state.daylight, state.walking)
   }
 
   function setPixelRatio(pr: number) {
@@ -825,6 +1615,9 @@ export function createIslandLife(scene: THREE.Scene, deps: IslandLifeDeps) {
     setPixelRatio,
     tropicbirds,
     dragonflies,
+    tortoises,
+    iguanas,
+    flyingFoxes,
   }
 }
 
