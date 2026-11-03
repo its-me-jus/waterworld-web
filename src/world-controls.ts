@@ -7,6 +7,7 @@ export function createWorldControls(app: HTMLElement, actions: {
   getMinutes: () => number
   setMinutes: (minutes: number) => void
   travelTo: (place: Destination) => void
+  setTracking: (on: boolean) => void
 }) {
   const toggle = document.createElement('button')
   toggle.id = 'world-toggle'
@@ -26,7 +27,10 @@ export function createWorldControls(app: HTMLElement, actions: {
     <section><div class="world-clock"><label for="world-hour">Time of day</label><output for="world-hour"></output></div>
       <input id="world-hour" type="range" min="0" max="1439" step="1">
       <div class="world-times"></div></section>
-    <section><h3>Travel to</h3><div class="world-places"></div></section>`
+    <section><h3>Travel to</h3><div class="world-places"></div></section>
+    <section><h3>Camera</h3><div class="world-places">
+      <button type="button" id="track-diver" aria-pressed="false">Track diver</button>
+    </div></section>`
   app.append(toggle, panel)
   const slider = panel.querySelector('input')!
   const readout = panel.querySelector('output')!
@@ -56,6 +60,14 @@ export function createWorldControls(app: HTMLElement, actions: {
     addButton(times, label, () => setTime(minutes))
   }
   const places = panel.querySelector('.world-places')!
+  const track = panel.querySelector<HTMLButtonElement>('#track-diver')!
+  track.onclick = () => {
+    const on = track.getAttribute('aria-pressed') !== 'true'
+    track.setAttribute('aria-pressed', String(on))
+    track.textContent = on ? 'First person' : 'Track diver'
+    actions.setTracking(on)
+    panel.close()
+  }
   for (const place of Object.keys(destinations) as Destination[]) {
     addButton(places, destinations[place], () => { actions.travelTo(place); panel.close() })
   }

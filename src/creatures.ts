@@ -1,3 +1,4 @@
+import { buildTurtle } from './sea-turtle'
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { sampleOcean } from './waves'
@@ -258,7 +259,7 @@ type Turtle = {
   frontR: THREE.Group
   rearL: THREE.Group
   rearR: THREE.Group
-  head: THREE.Mesh
+  head: THREE.Group
   home: THREE.Vector2
   radius: number
   heading: number
@@ -269,82 +270,6 @@ type Turtle = {
   z: number
   y: number
   pitch: number
-}
-
-function buildTurtle(): Omit<Turtle, 'home' | 'radius' | 'heading' | 'turn' | 'depth' | 'phase' | 'x' | 'z' | 'y' | 'pitch'> {
-  const group = new THREE.Group()
-  const shellMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.52, flatShading: true })
-  const skinMat = new THREE.MeshStandardMaterial({ color: '#7e8a58', roughness: 0.7 })
-  const bellyMat = new THREE.MeshStandardMaterial({ color: '#d9ca94', roughness: 0.8 })
-
-  const paintScute = (geo: THREE.BufferGeometry) => {
-    const g = geo.index ? geo.toNonIndexed() : geo
-    g.computeVertexNormals()
-    const mahogany = new THREE.Color('#4a311d')
-    const amber = new THREE.Color('#9c6e34')
-    const rim = new THREE.Color('#c8b278')
-    const c = new THREE.Color()
-    paint(g, (x, y, z) => {
-      const radial = Math.hypot(x * 0.95, z * 1.15)
-      const scute = Math.abs(Math.sin(x * 13.5) * Math.cos(z * 11.5))
-      c.copy(mahogany).lerp(amber, smooth(0.18, 0.78, scute))
-      c.lerp(rim, smooth(0.38, 0.5, radial) * 0.65)
-      if (y < -0.02) c.lerp(rim, 0.5)
-      return c
-    })
-    return g
-  }
-  const shell = new THREE.Mesh(paintScute(new THREE.SphereGeometry(0.5, 16, 11)), shellMat)
-  shell.scale.set(1.0, 0.36, 0.82)
-  shell.position.y = 0.04
-  group.add(shell)
-  // Ridged scutes along the carapace
-  for (let i = 0; i < 3; i++) {
-    const ridge = new THREE.Mesh(paintScute(new THREE.SphereGeometry(0.17, 7, 5)), shellMat)
-    ridge.scale.set(1.1, 0.5, 0.9)
-    ridge.position.set(0.27 - i * 0.27, 0.2, 0)
-    group.add(ridge)
-  }
-  const plastron = new THREE.Mesh(new THREE.SphereGeometry(0.46, 12, 6, 0, TAU, Math.PI / 2, Math.PI / 2), bellyMat)
-  plastron.scale.set(1.0, 0.3, 0.78)
-  plastron.position.y = 0.02
-  group.add(plastron)
-
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 9, 7), skinMat)
-  head.scale.set(1.3, 0.9, 0.95)
-  head.position.set(0.58, 0.04, 0)
-  group.add(head)
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 0.22, 7), skinMat)
-  neck.rotation.z = Math.PI / 2
-  neck.position.set(0.47, 0.04, 0)
-  group.add(neck)
-
-  const flipper = (len: number, wid: number, x: number, z: number, side: number, yaw: number) => {
-    const pivot = new THREE.Group()
-    pivot.position.set(x, 0.0, z * side)
-    const blade = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 5), skinMat)
-    // Sphere scaled into a paddle, hinged at its root
-    const half = len * 0.5
-    blade.scale.set(wid, 0.045, half)
-    blade.position.z = half * side * 0.9
-    pivot.add(blade)
-    pivot.rotation.y = yaw * side
-    group.add(pivot)
-    return pivot
-  }
-  const frontL = flipper(0.42, 0.13, 0.28, 0.36, 1, -0.45)
-  const frontR = flipper(0.42, 0.13, 0.28, 0.36, -1, -0.45)
-  const rearL = flipper(0.2, 0.09, -0.4, 0.22, 1, 0.5)
-  const rearR = flipper(0.2, 0.09, -0.4, 0.22, -1, 0.5)
-
-  const eyeMat = new THREE.MeshStandardMaterial({ color: '#141816', roughness: 0.18 })
-  for (const side of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.026, 6, 5), eyeMat)
-    eye.position.set(0.64, 0.065, side * 0.095)
-    group.add(eye)
-  }
-
-  return { group, frontL, frontR, rearL, rearR, head }
 }
 
 // —— splashes ————————————————————————————————————————————————————
@@ -725,7 +650,12 @@ export function createCreatures(scene: THREE.Scene, deps: CreatureDeps) {
     const ahead = deps.island.heightAt(tu.x - Math.sin(tu.heading) * 5, tu.z - Math.cos(tu.heading) * 5)
     if (ahead > -2.2) steer += 1.4
     tu.heading += steer * dt
-    const speed = 0.9 + Math.sin(t * 0.4 + tu.phase) * 0.15
+    // Recover slowly, drive both foreflippers down, then coast with them spread.
+    const cycle = (t * .28 + tu.phase / TAU) % 1
+    const recovery = smooth(0, .36, cycle)
+    const drive = smooth(.36, .56, cycle)
+    const glide = smooth(.56, .82, cycle)
+    const speed = .78 + .32 * (drive - glide)
     tu.x -= Math.sin(tu.heading) * speed * dt
     tu.z -= Math.cos(tu.heading) * speed * dt
 
@@ -753,14 +683,15 @@ export function createCreatures(scene: THREE.Scene, deps: CreatureDeps) {
     dummy.rotateX(Math.sin(t * 0.7 + tu.phase) * 0.06)
     tu.group.quaternion.copy(dummy.quaternion)
 
-    // Slow, heavy rowing strokes — the front pair together, the rear ones lagging
-    const stroke = t * 1.15 + tu.phase
-    const flap = Math.sin(stroke)
-    tu.frontL.rotation.x = flap * 0.55
-    tu.frontR.rotation.x = -flap * 0.55
-    tu.rearL.rotation.x = Math.sin(stroke - 0.9) * 0.3
-    tu.rearR.rotation.x = -Math.sin(stroke - 0.9) * 0.3
-    tu.head.position.y = 0.04 + Math.sin(stroke * 0.5) * 0.015
+    const flap = -.12 - .53 * recovery + 1.40 * drive - .87 * glide
+    const sweep = -.16 + .34 * recovery - .46 * drive + .12 * glide
+    tu.frontL.rotation.set(flap, sweep, .12 * (drive - glide))
+    tu.frontR.rotation.set(-flap, -sweep, .12 * (drive - glide))
+    const rudder = clamp(steer, -.6, .6)
+    tu.rearL.rotation.x = .12 + rudder * .50
+    tu.rearR.rotation.x = -.12 + rudder * .50
+    tu.head.rotation.y = rudder * .28
+    tu.head.rotation.z = .055 * Math.cos(cycle * TAU)
   }
 
   // —— manta rays ——

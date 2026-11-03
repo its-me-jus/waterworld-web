@@ -25,7 +25,13 @@ function surface(sections: readonly Section[], rings: number, sides = 32) {
       const panel = THREE.MathUtils.smoothstep(side, 0.72, 0.9)
       const seam = Math.exp(-(((side - 0.73) / 0.025) ** 2))
       const value = 1 - panel * 0.2 + seam * 0.1
-      colors.push(value, value, value)
+      // Curved ochre shoulder and thigh inserts with a narrow sea-glass seam.
+      const band = side + 0.24 * Math.sin(row / rings * Math.PI * 1.55)
+      const insert = THREE.MathUtils.smoothstep(band, 0.87, 0.94)
+      const piping = Math.exp(-(((band - 0.83) / 0.045) ** 2))
+      colors.push(value * (0.17 + insert * 0.78 + piping * 0.35),
+        value * (0.29 + insert * 0.19 + piping * 0.53),
+        value * (0.34 - insert * 0.23 + piping * 0.39))
       if (row < rings && col < sides) {
         const n = row * (sides + 1) + col
         indices.push(n, n + 1, n + sides + 1, n + 1, n + sides + 2, n + sides + 1)
@@ -61,7 +67,8 @@ export function createArticulatedLimb(material: THREE.Material, leg = false) {
     [upper + 0.11, 0.06, 0.055, 0.008], [length - 0.09, 0.034, 0.035, 0],
     [length, 0.03, 0.031, 0],
   ] : [
-    [-0.045, 0.001, 0.001, 0], [0, 0.052, 0.052, 0], [0.065, 0.06, 0.053, -0.003],
+    [-0.040, 0.011, 0.013, 0], [-0.034, 0.029, 0.032, 0],
+    [-0.019, 0.045, 0.046, 0], [0, 0.052, 0.052, 0], [0.065, 0.06, 0.053, -0.003],
     [0.17, 0.054, 0.047, -0.004], [upper, 0.036, 0.036, 0],
     [upper + 0.065, 0.047, 0.038, -0.002], [length - 0.07, 0.031, 0.026, 0],
     [length, 0.026, 0.023, 0],
@@ -103,7 +110,8 @@ export function createTorso(material: THREE.Material) {
     [0, 0.075, 0.064, 0.018], [0.065, 0.165, 0.085, 0.01],
     [0.15, 0.185, 0.105, 0], [0.28, 0.16, 0.1, 0.004],
     [0.42, 0.126, 0.085, 0.006], [0.55, 0.145, 0.095, 0.008],
-    [0.59, 0.142, 0.09, 0.006],
+    [0.59, 0.142, 0.09, 0.006], [0.63, 0.118, 0.07, 0.01],
+    [0.665, 0.06, 0.043, 0.012], [0.68, 0.008, 0.012, 0.012],
   ], 48, 48)
   const mesh = new THREE.Mesh(geometry, material)
   mesh.name = 'FittedTorso'

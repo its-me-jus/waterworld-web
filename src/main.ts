@@ -564,7 +564,11 @@ function travelTo(place: Destination) {
   }
 }
 
+let tracking = false
+const trackingCamera = new THREE.PerspectiveCamera(41, camera.aspect, 0.05, camera.far)
+const cameraTarget = new THREE.Vector3()
 const worldControls = film.on ? null : createWorldControls(app, {
+  setTracking: on => { tracking = on },
   getMinutes: () => Math.floor(climate.state.dayPhase * 1440),
   setMinutes: (minutes) => {
     const day = Math.floor(climate.getElapsed() / DAY_LENGTH)
@@ -853,7 +857,8 @@ function frame() {
   // Pointer-lock / first click also unlocks audio in case the global listeners missed it
   if (document.pointerLockElement) void oceanAudio.unlock()
 
-  swimmer.update(dt, t, view, player.pitch + player.viewPitch, player.roll)
+  const showDiver = tracking && !chute.active
+  swimmer.update(dt, t, view, player.pitch + player.viewPitch, player.roll, showDiver)
   if (film.on) swimmer.rig.visible = false
 
   skyRig.update(t, weather)
@@ -1150,14 +1155,36 @@ function frame() {
   }
   skyRig.focusShadow(camera.position.x, Math.max(view.groundY, 0), camera.position.z)
 
+  let renderCamera = camera
+  if (showDiver) {
+    if (trackingCamera.aspect !== camera.aspect) {
+      trackingCamera.aspect = camera.aspect
+      trackingCamera.updateProjectionMatrix()
+    }
+    const heading = player.yaw + 1.16
+    const distance = Math.max(3.1, 2.6 / camera.aspect)
+    const x = player.x - Math.sin(heading) * distance
+    const z = player.z - Math.cos(heading) * distance
+    const eye = view.walking ? player.y : Math.min(player.y, surfaceY + 0.12)
+    cameraTarget.set(player.x, eye - (view.walking ? 0.78 : 0.27), player.z)
+    let y = Math.max(groundAt(x, z) + 0.35, eye + (view.walking ? -0.38 : 0.47))
+    const water = sampleOcean(x, z, t).y
+    if (!underwater) y = Math.max(y, water + 0.42)
+    else y = Math.max(groundAt(x, z) + 0.13, Math.min(y, water - 0.15))
+    trackingCamera.position.set(x, y, z)
+    trackingCamera.lookAt(cameraTarget)
+    renderCamera = trackingCamera
+    oceanMat.uniforms.uCameraPos.value.copy(renderCamera.position)
+  }
+
   // Sun shafts: only worth drawing with the sun in the air and in front of
   // you, and they die away as it slides off the edge of the frame, since the
   // bright pass they smear has nothing to start from once the disc is gone
   {
-    camera.updateMatrixWorld()
-    camera.getWorldDirection(sunForward)
+    renderCamera.updateMatrixWorld()
+    renderCamera.getWorldDirection(sunForward)
     const ahead = THREE.MathUtils.smoothstep(sunForward.dot(skyRig.sunDir), 0.05, 0.4)
-    sunNdc.copy(camera.position).addScaledVector(skyRig.sunDir, 1000).project(camera)
+    sunNdc.copy(renderCamera.position).addScaledVector(skyRig.sunDir, 1000).project(renderCamera)
     post.sun.uv.set(sunNdc.x * 0.5 + 0.5, sunNdc.y * 0.5 + 0.5)
     const onScreen =
       1 - THREE.MathUtils.smoothstep(Math.max(Math.abs(sunNdc.x), Math.abs(sunNdc.y)), 1.0, 1.7)
@@ -1165,7 +1192,7 @@ function frame() {
     post.sun.strength = underwater ? 0 : ahead * onScreen * sunUp * (1 - weather.storm * 0.85)
   }
 
-  post.render(scene, camera)
+  post.render(scene, renderCamera)
   film.frames++
   requestAnimationFrame(frame)
 }

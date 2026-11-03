@@ -318,6 +318,7 @@ uniform float uTime;
 attribute float aPhase;
 attribute float aTint;
 
+varying vec2 vFlank;
 varying vec3 vNormalW;
 varying float vDist;
 varying float vTint;
@@ -326,7 +327,8 @@ void main() {
   vec3 p = position;
 
   // Tail-heavy sinusoid — the body barely moves, the fin sweeps
-  float tail = smoothstep(0.3, -0.9, p.z);
+  vFlank = p.zy;
+  float tail = 1.0 - smoothstep(-0.84, 0.12, p.z);
   float wig = sin(uTime * (5.0 + aPhase * 3.0) + aPhase * 6.28318 + p.z * 3.0);
   p.x += wig * 0.17 * tail;
   p.y += wig * 0.02 * tail;
@@ -348,6 +350,7 @@ uniform vec3 uBody;
 uniform vec3 uBelly;
 uniform float uFogDensity;
 
+varying vec2 vFlank;
 varying vec3 vNormalW;
 varying float vDist;
 varying float vTint;
@@ -364,6 +367,13 @@ void main() {
   vec3 col = mix(uBelly, uBody, smoothstep(-0.55, 0.45, clamp(N.y, -1.0, 1.0)));
   col *= 0.55 + 0.8 * ndl;
   col = mix(col, col * vec3(1.2, 1.04, 0.78), vTint);
+  float stripe = 1.0 - smoothstep(0.0, 0.035, abs(vFlank.y - 0.023 - 0.055 * vFlank.x));
+  col = mix(col, vec3(0.43, 0.60, 0.57), stripe * smoothstep(-0.5, -0.27, vFlank.x) * (1.0 - smoothstep(0.18, 0.26, vFlank.x)) * 0.65);
+  vec2 eye = (vFlank - vec2(0.31, 0.047)) / vec2(0.037, 0.038);
+  float gill = abs(vFlank.x - (0.16 + vFlank.y * vFlank.y * 3.2));
+  col *= 1.0 - 0.32 * (1.0 - smoothstep(0.003, 0.014, gill)) * (1.0 - smoothstep(0.065, 0.133, abs(vFlank.y)));
+  col = mix(col, vec3(0.67, 0.67, 0.44), (1.0 - smoothstep(0.9, 1.18, length(eye))) * 0.85);
+  col = mix(col, vec3(0.012, 0.025, 0.028), 1.0 - smoothstep(0.65, 1.0, length(eye)));
 
   // Flank flash as they roll through the light
   float flash = pow(max(dot(N, L), 0.0), 30.0);
@@ -379,15 +389,28 @@ void main() {
 
 function fishGeometry() {
   const body = new THREE.SphereGeometry(0.5, 9, 7)
-  body.scale(0.34, 0.5, 1.0)
-  const tail = new THREE.PlaneGeometry(0.46, 0.42)
-  tail.rotateY(Math.PI / 2)
-  tail.translate(0, 0, -0.62)
-  const dorsal = new THREE.PlaneGeometry(0.34, 0.18)
-  dorsal.rotateY(Math.PI / 2)
-  dorsal.translate(0, 0.2, 0.03)
-  const merged = mergeGeometries([body, tail, dorsal])
-  return merged ?? body
+  body.scale(0.29, 0.40, 1.0)
+  const pos = body.attributes.position
+  for (let i = 0; i < pos.count; i++) {
+    const taper = 0.45 + 0.55 * THREE.MathUtils.smoothstep(pos.getZ(i), -.48, .02)
+    pos.setXYZ(i, pos.getX(i) * taper, pos.getY(i) * taper, pos.getZ(i))
+  }
+  body.computeVertexNormals()
+  // A narrow tail wrist and two swept lobes leave blue water in the fork.
+  const fins = new THREE.BufferGeometry()
+  fins.setAttribute('position', new THREE.Float32BufferAttribute([
+    0,.046,-.38, 0,.22,-.78, 0,.015,-.61,
+    0,.046,-.38, 0,.015,-.61, 0,-.046,-.38,
+    0,-.046,-.38, 0,.015,-.61, 0,-.22,-.80,
+    0,.14,.12, 0,.306,-.05, 0,.12,-.22,
+    0,-.12,-.12, 0,-.21,-.26, 0,-.09,-.31,
+    .125,.014,.12, .18,-.094,-.055, .131,-.032,.068,
+    -.125,.014,.12, -.131,-.032,.068, -.18,-.094,-.055,
+  ], 3))
+  fins.computeVertexNormals()
+  fins.setIndex(Array.from({ length: fins.attributes.position.count }, (_, i) => i))
+  body.deleteAttribute('uv')
+  return mergeGeometries([body, fins])!
 }
 
 type Fish = {
