@@ -434,7 +434,7 @@ type School = {
   centre: THREE.Vector3
 }
 
-function createFishSchools(count: number, schoolCount: number, waterColor: THREE.Color) {
+export function createShoalMesh(count: number, waterColor: THREE.Color) {
   const geometry = fishGeometry()
   const phases = new Float32Array(count)
   const tints = new Float32Array(count)
@@ -463,7 +463,12 @@ function createFishSchools(count: number, schoolCount: number, waterColor: THREE
   const mesh = new THREE.InstancedMesh(geometry, material, count)
   mesh.frustumCulled = false
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+  return mesh
+}
 
+function createFishSchools(count: number, schoolCount: number, waterColor: THREE.Color) {
+  const mesh = createShoalMesh(count, waterColor)
+  const material = mesh.material
   const schools: School[] = []
   for (let s = 0; s < schoolCount; s++) {
     schools.push({
@@ -1070,6 +1075,7 @@ export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOption
     submersion: number
     underwater: boolean
     pixelRatio: number
+    underRock?: boolean
     biolum?: number
     /** 0..1 sun — shafts fade at night so the lantern and biolum are honest. */
     daylight?: number
@@ -1093,12 +1099,15 @@ export function createUnderwaterWorld(scene: THREE.Scene, opts: UnderwaterOption
       reefSchool.update(ctx.time)
       if (ctx.tint) reefSchool.material.uniforms.uWaterColor.value.copy(ctx.tint)
     }
-    const shaftFade = fade * (0.12 + day * 0.88)
+    const shaftFade = ctx.underRock ? 0 : fade * (0.12 + day * 0.88)
     shafts.update(ctx.time, ctx.camera, ctx.surfaceY, shaftFade)
     snow.update(ctx.time, ctx.camera, ctx.pixelRatio, fade)
     plume.update(ctx.time, ctx.camera, ctx.pixelRatio, fade * 0.85)
-    fish.update(ctx.dt, ctx.time, ctx.camera, ctx.surfaceY, ctx.effort ?? 0)
-    jellies.update(ctx.dt, ctx.time, ctx.camera, ctx.surfaceY, fade, ctx.biolum ?? 0)
+    fish.mesh.visible = jellies.mesh.visible = !ctx.underRock
+    if (!ctx.underRock) {
+      fish.update(ctx.dt, ctx.time, ctx.camera, ctx.surfaceY, ctx.effort ?? 0)
+      jellies.update(ctx.dt, ctx.time, ctx.camera, ctx.surfaceY, fade, ctx.biolum ?? 0)
+    }
   }
 
   return { group, update, fish }

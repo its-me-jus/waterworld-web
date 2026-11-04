@@ -1,7 +1,11 @@
 import './world-controls.css'
 
-const destinations = { beach: 'Landing cove', forest: 'Rainforest', lagoon: 'Lagoon', wreck: 'Wanderer wreck' }
+const destinations = { beach: 'Landing cove', forest: 'Rainforest', lagoon: 'Lagoon', wreck: 'Wanderer wreck', caves: 'Tidal caves' }
 export type Destination = keyof typeof destinations
+
+export function readDestination(name: string | null): Destination | undefined {
+  return name && Object.hasOwn(destinations, name) ? name as Destination : undefined
+}
 
 export function createWorldControls(app: HTMLElement, actions: {
   getMinutes: () => number

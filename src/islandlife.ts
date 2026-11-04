@@ -1005,20 +1005,22 @@ export function createIslandLife(scene: THREE.Scene, deps: IslandLifeDeps) {
   // surface is opaque to depth), and just beneath it when seen from below
   let bioLift = 0.06
 
-  function disturbWater(x: number, z: number, power = 1) {
+  function disturbWater(x: number, z: number, power = 1, handY?: number) {
     if (currentBiolum < 0.04) return
     const n = Math.min(48, Math.max(4, Math.round(power * (deps.lowPower ? 14 : 26))))
     for (let k = 0; k < n; k++) {
       const i = bioCursor
       bioCursor = (bioCursor + 1) % bioMax
       const a = Math.random() * TAU
-      const r = rand(0.06, 1.35 * Math.sqrt(power))
+      const r = rand(0.06, (handY === undefined ? 1.35 : 0.53) * Math.sqrt(power))
       bioPos[i * 3] = x + Math.cos(a) * r
       bioPos[i * 3 + 2] = z + Math.sin(a) * r
-      bioPos[i * 3 + 1] = sampleOcean(bioPos[i * 3], bioPos[i * 3 + 2], currentTime).y + bioLift
+      bioPos[i * 3 + 1] = handY === undefined
+        ? sampleOcean(bioPos[i * 3], bioPos[i * 3 + 2], currentTime).y + bioLift
+        : handY + rand(-0.13, 0.13)
       const spd = rand(0.22, 0.95) * Math.sqrt(power)
       bioVel[i * 3] = Math.cos(a) * spd
-      bioVel[i * 3 + 1] = 0
+      bioVel[i * 3 + 1] = handY === undefined ? 0 : rand(0.03, 0.11)
       bioVel[i * 3 + 2] = Math.sin(a) * spd
       bioAge[i] = 0
       bioLife[i] = rand(1.2, 2.5)
@@ -1037,7 +1039,7 @@ export function createIslandLife(scene: THREE.Scene, deps: IslandLifeDeps) {
     cam: THREE.Camera,
     biolum: number,
     underwater: boolean,
-    playerActivity: { x: number; y: number; z: number; moving: number; inSea: boolean },
+    playerActivity: { x: number; y: number; z: number; moving: number; inSea: boolean; stroke: number },
   ) {
     currentBiolum = biolum
     currentTime = t
@@ -1049,16 +1051,20 @@ export function createIslandLife(scene: THREE.Scene, deps: IslandLifeDeps) {
 
     // Swimmer's own strokes / wading stir glowing plankton trails around them
     if (playerActivity.inSea && playerActivity.moving > 0.12) {
-      strokeSpawnAcc += dt * playerActivity.moving * (deps.lowPower ? 16 : 30)
+      const deep = underwater && playerActivity.y < sampleOcean(playerActivity.x, playerActivity.z, t).y - 0.8
+      const sweep = (1 - Math.cos(playerActivity.stroke * TAU)) * 0.5
+      strokeSpawnAcc += dt * playerActivity.moving * (deps.lowPower ? 16 : 30) * (deep ? 0.25 + sweep : 1)
       while (strokeSpawnAcc >= 1) {
         strokeSpawnAcc -= 1
-        const a = Math.random() * TAU
-        const rad = rand(0.28, 1.35)
-        disturbWater(
-          playerActivity.x + Math.cos(a) * rad,
-          playerActivity.z + Math.sin(a) * rad,
-          0.22,
-        )
+        if (deep) {
+          const side = (Math.random() < 0.5 ? -1 : 1) * (0.30 + 0.30 * sweep)
+          const reach = 0.90 - 0.40 * sweep, yaw = cam.rotation.y
+          disturbWater(playerActivity.x - Math.sin(yaw) * reach + Math.cos(yaw) * side,
+            playerActivity.z - Math.cos(yaw) * reach - Math.sin(yaw) * side, 0.18, playerActivity.y - 0.41)
+        } else {
+          const a = Math.random() * TAU, rad = rand(0.28, 1.35)
+          disturbWater(playerActivity.x + Math.cos(a) * rad, playerActivity.z + Math.sin(a) * rad, 0.22)
+        }
       }
       if (!whisperedBio && biolum > 0.45 && playerActivity.moving > 0.45) {
         whisperedBio = true
@@ -1074,15 +1080,16 @@ export function createIslandLife(scene: THREE.Scene, deps: IslandLifeDeps) {
       }
       anyLive = true
       bioAge[i] += dt
-      const u = bioAge[i] / bioLife[i]
+      const u = Math.min(1, bioAge[i] / bioLife[i])
       const drag = Math.exp(-1.9 * dt)
       bioVel[i * 3] *= drag
       bioVel[i * 3 + 2] *= drag
       bioPos[i * 3] += bioVel[i * 3] * dt
       bioPos[i * 3 + 2] += bioVel[i * 3 + 2] * dt
-      // Ride the live swell surface
-      const surf = sampleOcean(bioPos[i * 3], bioPos[i * 3 + 2], t).y
-      bioPos[i * 3 + 1] = surf + bioLift
+      // Hand wakes drift at the depth of the stroke. Splashes still ride the swell.
+      const rise = bioVel[i * 3 + 1]
+      if (rise > 0) bioPos[i * 3 + 1] += rise * dt
+      else bioPos[i * 3 + 1] = sampleOcean(bioPos[i * 3], bioPos[i * 3 + 2], t).y + bioLift
       const dSq = (bioPos[i * 3] - cam.position.x) ** 2 + (bioPos[i * 3 + 2] - cam.position.z) ** 2
       const rangeFade = 1 - smooth(65 * 65, 130 * 130, dSq)
       bioAlpha[i] = smooth(0, 0.1, u) * Math.pow(1 - u, 1.6) * biolum * rangeFade
@@ -1584,6 +1591,7 @@ export function createIslandLife(scene: THREE.Scene, deps: IslandLifeDeps) {
       playerY: number
       playerZ: number
       moving: number
+      stroke: number
       inSea: boolean
     },
   ) {
@@ -1595,6 +1603,7 @@ export function createIslandLife(scene: THREE.Scene, deps: IslandLifeDeps) {
       y: state.playerY,
       z: state.playerZ,
       moving: state.moving,
+      stroke: state.stroke,
       inSea: state.inSea,
     })
     updateTortoises(dt, t, camera, state.playerX, state.playerZ, state.moving, state.walking)

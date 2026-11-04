@@ -119,6 +119,7 @@ uniform vec3 uSunColor;
 uniform vec3 uSunDir;
 uniform vec3 uCameraPos;
 uniform vec3 uHorizonColor;
+uniform vec4 uCavePool;
 uniform float uUnderwater;
 uniform float uTime;
 uniform float uChopScale;
@@ -210,6 +211,18 @@ void main() {
   N.y = max(N.y, 0.12);
   N = normalize(N);
 
+  // The tide also fills the air bell. Inside its solid rim the surface
+  // transmits the rock overhead and catches the cavern in the local probe.
+  vec2 pocket = (vWorldPos.xz - uCavePool.xy) * uCavePool.zw;
+  if (uCavePool.z > 0.0 && dot(pocket, pocket) < 1.0) {
+    float grazing = pow(1.0 - clamp(abs(dot(V, N)), 0.0, 1.0), 2.3);
+    vec3 reflection = min(textureCube(uEnvMap, reflect(-V, N)).rgb, vec3(0.48));
+    vec3 water = mix(vec3(0.011, 0.061, 0.059), reflection, 0.28 + 0.56 * grazing);
+    gl_FragColor = vec4(water, mix(0.26 + 0.53 * grazing, 0.14 + 0.23 * grazing, uUnderwater));
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    return;
+  }
   if (uUnderwater > 0.5) {
     float depth = clamp((-uCameraPos.y + 2.0) * 0.05, 0.0, 1.0);
     vec3 murk = mix(uUnderColor, uUnderColor * 0.45, depth);
@@ -451,6 +464,7 @@ export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: O
       uSeabed: { value: null },
       uSeabedRect: { value: new THREE.Vector4(0, 0, 1, 1) },
       uSeabedRange: { value: new THREE.Vector2(0, 0) },
+      uCavePool: { value: new THREE.Vector4() },
       uWaves: { value: uWaves },
       uWaveExtra: { value: uWaveExtra },
       uEnvMap: { value: null },

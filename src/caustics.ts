@@ -21,11 +21,18 @@ const uniforms = {
 
 const VERT_DECL = /* glsl */ `
 varying vec3 vCausticWorld;
+#ifdef USE_CAUSTIC_EXPOSURE
+attribute float causticExposure;
+varying float vCausticExposure;
+#endif
 `
 
 const VERT_BODY = /* glsl */ `
 #include <begin_vertex>
 vCausticWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
+#ifdef USE_CAUSTIC_EXPOSURE
+vCausticExposure = causticExposure;
+#endif
 `
 
 const FRAG_DECL = /* glsl */ `
@@ -35,6 +42,9 @@ uniform float uCaustSurface;
 uniform float uCaustAir;
 uniform vec3 uCaustSun;
 varying vec3 vCausticWorld;
+#ifdef USE_CAUSTIC_EXPOSURE
+varying float vCausticExposure;
+#endif
 
 // Tileable water caustic, after the well-known Shadertoy construction: four
 // folded sine passes whose reciprocal lengths pile up into bright filaments.
@@ -67,6 +77,9 @@ const FRAG_BODY = /* glsl */ `
     float c = causticPattern(uv, uCaustTime * 0.55);
     // Fades in just under the surface and thins out with depth
     float fade = exp(-depthBelow * 0.085) * smoothstep(0.0, 0.9, depthBelow);
+    #ifdef USE_CAUSTIC_EXPOSURE
+    fade *= vCausticExposure;
+    #endif
     // Seen from the beach, only ankle-to-waist water shows any of this: the
     // surface has already tinted and hidden anything deeper, and a net of
     // light on the reef twenty metres down would read as a glitch
@@ -91,6 +104,9 @@ export function createCaustics(sunDir: THREE.Vector3) {
         if (!std.isMeshStandardMaterial || std.userData.caustics) continue
         // Instanced geometry has no single model matrix to read world position from
         if ((mesh as THREE.InstancedMesh).isInstancedMesh) continue
+        if (mesh.geometry.hasAttribute('causticExposure')) {
+          std.defines = { ...std.defines, USE_CAUSTIC_EXPOSURE: 1 }
+        }
         std.userData.caustics = true
         const previous = std.onBeforeCompile
         std.onBeforeCompile = (shader, renderer) => {

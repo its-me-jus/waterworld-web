@@ -87,7 +87,7 @@ function ellipsoid(px: number, py: number, pz: number, rx: number, ry: number, r
   return k1 > 1e-6 ? (k0 * (k0 - 1)) / k1 : -Math.min(rx, ry, rz)
 }
 
-function smin(a: number, b: number, k: number) {
+export function smoothUnion(a: number, b: number, k: number) {
   const h = Math.max(k - Math.abs(a - b), 0) / k
   return Math.min(a, b) - h * h * k * 0.25
 }
@@ -116,7 +116,7 @@ function reefField(lumps: ReefLump[], sandY: number) {
         py *= Math.min(1, ry / reach)
       }
       const e = ellipsoid(px, py, pz, l.radius * l.scale[0], ry, l.radius * l.scale[2])
-      d = d > 1e8 ? e : smin(d, e, 3.2)
+      d = d > 1e8 ? e : smoothUnion(d, e, 3.2)
     }
     // A boulder sat on sand is undercut all round its foot; a reef is not —
     // it flares out into a talus apron and the sand banks up against it
@@ -182,13 +182,23 @@ export function buildReefRock(lumps: ReefLump[], sandY: number, low: boolean): R
     y1 = Math.max(y1, l.at[1] + l.radius * l.scale[1])
   }
   const pad = 5
-  const ox = x0 - pad
-  const oz = z0 - pad
-  // The foot runs below the sand, where the plateau hides the open bottom
-  const oy = sandY - 3
-  const nx = Math.ceil((x1 + pad - ox) / h) + 1
-  const ny = Math.ceil((Math.min(y1 + pad, -0.5) - oy) / h) + 1
-  const nz = Math.ceil((z1 + pad - oz) / h) + 1
+  return buildRockSurface(field, {
+    x0: x0 - pad, x1: x1 + pad, z0: z0 - pad, z1: z1 + pad,
+    y0: sandY - 3, y1: Math.min(y1 + pad, -0.5),
+  }, h, rockPainter(sandY))
+}
+
+/** Mesh a solid and keep its sampled field for collision. Its foot can extend below the seabed. */
+export function buildRockSurface(
+  field: (x: number, y: number, z: number) => number,
+  bounds: { x0: number; x1: number; y0: number; y1: number; z0: number; z1: number },
+  h: number,
+  paint: (x: number, y: number, z: number, n: THREE.Vector3, ao: number, out: THREE.Color) => void,
+): ReefRock {
+  const { x0: ox, y0: oy, z0: oz } = bounds
+  const nx = Math.ceil((bounds.x1 - ox) / h) + 1
+  const ny = Math.ceil((bounds.y1 - oy) / h) + 1
+  const nz = Math.ceil((bounds.z1 - oz) / h) + 1
 
   const grid = new Float32Array(nx * ny * nz)
   const at = (i: number, j: number, k: number) => i + nx * (j + ny * k)
@@ -310,7 +320,6 @@ export function buildReefRock(lumps: ReefLump[], sandY: number, low: boolean): R
   const normals = new Float32Array(count * 3)
   const colors = new Float32Array(count * 3)
   const g = new THREE.Vector3()
-  const paint = rockPainter(sandY)
   const col = new THREE.Color()
   for (let vi = 0; vi < count; vi++) {
     let x = pos[vi * 3], y = pos[vi * 3 + 1], z = pos[vi * 3 + 2]

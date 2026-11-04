@@ -24,11 +24,12 @@ import { createSky } from './sky'
 import { createSparBuoy } from './spar'
 import { createSplashLayer } from './splash'
 import { createSwimmer } from './swimmer'
+import { createTidalCaves } from './tidal-caves'
 import { createUnderwaterWorld } from './underwater'
 import { createLowClouds } from './lowclouds'
 import { applyStormToWaves, oceanState, sampleOcean, setShelter, shelterAt } from './waves'
 import { createWreck } from './wreck'
-import { createWorldControls, type Destination } from './world-controls'
+import { createWorldControls, readDestination, type Destination } from './world-controls'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('#app missing')
@@ -130,6 +131,8 @@ const island = createIsland(scene, {
 
 // The second wreck: a coaster stranded on the barrier reef beside the landing pass
 const reefWreck = createReefWreck(scene, { heightAt: island.heightAt, lowPower })
+const tidalCaves = createTidalCaves(scene, lowPower)
+oceanMat.uniforms.uCavePool.value.copy(tidalCaves.chamberWater)
 
 // Spar buoy ~a third of the way to the island — a mast in the haze so the
 // crossing isn't wreck-or-island and nothing between.
@@ -173,11 +176,13 @@ const collide = (p: { x: number; y: number; z: number }) => {
   wreck.resolve(p)
   reefWreck.resolve(p)
   island.resolve(p)
+  tidalCaves.resolve(p)
 }
 
-// What you can stand on — the island shelf and the reef spire.
-const groundAt = (x: number, z: number) => Math.max(island.heightAt(x, z), wreck.standAt(x, z))
-swimmer.setGroundSampler(groundAt)
+// A diver under an overhang stands on the floor below them. A parachute
+// approaching from above lands on the same rock's roof.
+const groundAt = (x: number, z: number, fromY?: number) =>
+  Math.max(island.heightAt(x, z), wreck.standAt(x, z), tidalCaves.floorAt(x, z, fromY))
 /** True while the ground under you is the spire rather than the island. */
 const onPerchAt = (x: number, z: number) => wreck.standAt(x, z) > island.heightAt(x, z)
 
@@ -189,6 +194,7 @@ let prevSurfaceForAudio = Number.NaN
 // both handy when tuning the underwater look, the wreck, or the island.
 // ?hour=18 starts at dusk, ?storm=1 locks a full squall, ?calm=1 a glass-off.
 const params = new URLSearchParams(location.search)
+const startingPlace = readDestination(params.get('place'))
 const num = (key: string, fallback: number) =>
   params.has(key) ? Number(params.get(key)) : fallback
 const flyLift = import.meta.env.DEV ? num('fly', 0) : 0
@@ -314,6 +320,8 @@ function captureEnv() {
 }
 
 const player = createPlayer()
+const floorBelowPlayer = (x: number, z: number) => groundAt(x, z, player.y + 0.10)
+swimmer.setGroundSampler(floorBelowPlayer)
 
 // The way in is a parachute drop onto the island (src/parachute.ts). Anything
 // that asks for a specific place — ?x= ?z= ?yaw= ?pitch= ?depth=, the headless
@@ -321,7 +329,7 @@ const player = createPlayer()
 // ?chute=1 forces it, ?alt= sets the opening height.
 const wantChute =
   params.get('chute') === '1' ||
-  (params.get('chute') !== '0' &&
+  (params.get('chute') !== '0' && !startingPlace &&
     !navigator.webdriver &&
     !['x', 'z', 'yaw', 'pitch', 'depth', 'film'].some((k) => params.has(k)))
 const chute = createParachute(scene)
@@ -528,6 +536,7 @@ if (import.meta.env.DEV) {
       pelagic,
       islandLife,
       lagoon,
+      tidalCaves,
       sky: skyRig,
       underwater: underwaterWorld,
     },
@@ -548,11 +557,11 @@ function travelTo(place: Destination) {
     landOnBeach()
     return
   }
-  // Looking into the rainforest, over the barrier reef, or down the bow of the Wanderer.
   const spots = {
     forest: { x: 860, z: -600, yaw: -0.6, pitch: 0.14 },
     lagoon: { x: 804, z: -437, yaw: -0.63, pitch: -0.16 },
     wreck: { x: wreck.group.position.x + 14, z: wreck.group.position.z + 16, yaw: 0.72, pitch: -0.3 },
+    caves: tidalCaves.entrance,
   }
   Object.assign(player, spots[place])
   const seaY = sampleOcean(player.x, player.z, timer.getElapsed()).y
@@ -561,6 +570,7 @@ function travelTo(place: Destination) {
     player.y = groundAt(player.x, player.z) + 1.62
   } else {
     player.y = Math.max(groundAt(player.x, player.z) + 1.62, seaY + (place === 'wreck' ? -6 : 1.5))
+    if (place === 'caves') hud.whisper('Six metres down, the pale channel forks. The left arch runs deeper.', true)
   }
 }
 
@@ -577,6 +587,7 @@ const worldControls = film.on ? null : createWorldControls(app, {
   },
   travelTo,
 })
+if (startingPlace && !wantChute) travelTo(startingPlace)
 const idleInput = createInputState()
 const SEA_FAR_TINT = new THREE.Color(0.55, 0.68, 0.8)
 const seaFarHigh = new THREE.Color()
@@ -677,6 +688,7 @@ const lowClouds = createLowClouds(scene, island.centre, lowPower)
 const caustics = createCaustics(skyRig.sunDir)
 caustics.apply(wreck.group)
 caustics.apply(reefWreck.group)
+caustics.apply(tidalCaves.mesh)
 caustics.apply(island.terrain)
 caustics.apply(creatures.group)
 caustics.apply(pelagic.group)
@@ -749,7 +761,10 @@ function frame() {
   }
   const flight = chute.update(dt, t, player, camera, input, groundAt)
   if (flight?.touchdown) touchdown(flight.touchdown)
-  const view: PlayerFrame = flight ? flight.frame : updatePlayer(player, camera, input, dt, t, collide, groundAt, drift)
+  const view: PlayerFrame = flight ? flight.frame : updatePlayer(
+    player, camera, input, dt, t, collide, floorBelowPlayer, drift,
+    tidalCaves.inGallery(player.x, player.y, player.z),
+  )
   // Retain the physical sea but honour a request for a steady head and horizon.
   if (reducedMotion && !film.pose) {
     camera.rotation.z = 0
@@ -788,6 +803,7 @@ function frame() {
     })
   }
   const { underwater, surfaceY, depth } = view
+  const chamber = tidalCaves.chamberPresence(camera.position)
   if (depth > 1) diveControls = true
   else if (depth < 0.25) diveControls = false
   const travelMode = chute.active ? 'glide' : diveControls ? 'swim' : view.walking ? 'walk' : 'swim'
@@ -850,6 +866,7 @@ function frame() {
     ground: groundKind,
     grounded: player.fallFrom === null,
     waterDepth: Math.max(0, view.surfaceY - view.groundY),
+    chamber,
     lightning: weather.lightning,
     thunder: weather.thunder,
     daylight: weather.daylight,
@@ -1049,6 +1066,9 @@ function frame() {
     skyRig.hemi.color.copy(skyRig.dayHemiSky)
     skyRig.hemi.groundColor.copy(skyRig.dayHemiGround)
   }
+  skyRig.sunLight.intensity *= 1 - 0.96 * chamber
+  skyRig.hemi.intensity *= 1 - 0.69 * chamber
+  scene.environmentIntensity *= 1 - 0.75 * chamber
 
   document.body.classList.toggle('underwater', underwater)
   underOverlay.style.opacity = String(view.submersion)
@@ -1068,6 +1088,7 @@ function frame() {
   // Under the surface the net of light is the whole show; from the beach it
   // is a shimmer on the sand in the shallows, so a good deal gentler
   const sunOnWater = weather.daylight * (1 - weather.storm * 0.7)
+  tidalCaves.update(camera, skyRig.sunDir, sunOnWater, oceanState.tide, t, weather.biolum, underwater, oceanAudio.playCaveDrop)
   caustics.update(
     t,
     sunOnWater * (underwater ? 13 : 6),
@@ -1082,6 +1103,7 @@ function frame() {
     surfaceY,
     submersion: view.submersion,
     underwater,
+    underRock: underwater && tidalCaves.floorAt(camera.position.x, camera.position.z) > camera.position.y + 0.45,
     pixelRatio: renderer.getPixelRatio(),
     biolum: weather.biolum,
     daylight: weather.daylight,
@@ -1120,7 +1142,8 @@ function frame() {
     playerX: player.x,
     playerY: player.y,
     playerZ: player.z,
-    moving: view.moving,
+    moving: underwater ? view.effort : view.moving,
+    stroke: view.stroke,
     inSea: !onLand && (!chute.active || view.submersion > 0.05),
   })
   hud.update(dt)
@@ -1167,11 +1190,13 @@ function frame() {
     const z = player.z - Math.cos(heading) * distance
     const eye = view.walking ? player.y : Math.min(player.y, surfaceY + 0.12)
     cameraTarget.set(player.x, eye - (view.walking ? 0.78 : 0.27), player.z)
-    let y = Math.max(groundAt(x, z) + 0.35, eye + (view.walking ? -0.38 : 0.47))
+    const floor = floorBelowPlayer(x, z)
+    let y = Math.max(floor + 0.35, eye + (view.walking ? -0.38 : 0.47))
     const water = sampleOcean(x, z, t).y
     if (!underwater) y = Math.max(y, water + 0.42)
-    else y = Math.max(groundAt(x, z) + 0.13, Math.min(y, water - 0.15))
+    else y = Math.max(floor + 0.13, Math.min(y, water - 0.15))
     trackingCamera.position.set(x, y, z)
+    tidalCaves.clipView(cameraTarget, trackingCamera.position)
     trackingCamera.lookAt(cameraTarget)
     renderCamera = trackingCamera
     oceanMat.uniforms.uCameraPos.value.copy(renderCamera.position)
@@ -1189,7 +1214,7 @@ function frame() {
     const onScreen =
       1 - THREE.MathUtils.smoothstep(Math.max(Math.abs(sunNdc.x), Math.abs(sunNdc.y)), 1.0, 1.7)
     const sunUp = THREE.MathUtils.smoothstep(weather.sunElevation, -1.5, 5)
-    post.sun.strength = underwater ? 0 : ahead * onScreen * sunUp * (1 - weather.storm * 0.85)
+    post.sun.strength = underwater ? 0 : ahead * onScreen * sunUp * (1 - weather.storm * 0.85) * (1 - chamber)
   }
 
   post.render(scene, renderCamera)

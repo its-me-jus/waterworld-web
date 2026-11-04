@@ -215,6 +215,7 @@ export function updatePlayer(
   collide?: Collider,
   groundAt?: (x: number, z: number) => number,
   drift?: SeaDrift,
+  holdDiveDepth = false,
 ): PlayerFrame {
   if (Math.abs(input.lookDeltaX) > 0.01 || Math.abs(input.lookDeltaY) > 0.01) {
     player.yaw -= input.lookDeltaX * LOOK_SENS_TOUCH
@@ -408,6 +409,9 @@ export function updatePlayer(
     if (climbing || input.dive) {
       const target = (climbing ? SWIM_VERTICAL : 0) - (input.dive ? SWIM_VERTICAL : 0)
       player.vy = damp(player.vy, target, 6, dt)
+    } else if (holdDiveDepth && submersion === 1) {
+      // In the still gallery you can level off and look through the next arch.
+      player.vy = damp(player.vy, 0, 6, dt)
     } else {
       // Plenty of authority to climb back out of a wave that washed over us, but
       // it tapers off with depth so a dive still lets you hang and look around.
@@ -422,8 +426,8 @@ export function updatePlayer(
     if (collide) {
       const before = player.y
       collide(player)
-      // Settling onto rock or sand shouldn't keep banking downward velocity
-      if (player.y > before && player.vy < 0) player.vy = 0
+      // Lose vertical momentum into a floor or ceiling.
+      if ((player.y - before) * player.vy < 0) player.vy = 0
     }
 
     // —— head attitude ———————————————————————————————————————

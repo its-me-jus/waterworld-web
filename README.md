@@ -15,6 +15,13 @@ at your own pace or choose a place and time from the World button.
 - **The lagoon.** Small resident shoals turn through the shallows between the
   landing beach and the reef wreck. Their patches follow the seabed and tide;
   they are places to discover, not fish attached to the camera.
+- **The tidal caves.** Two tide pools open in a basalt outcrop off the landing
+  cove. Choose **World → Tidal caves** and dive about six metres. The pale
+  channel leads straight to the second pool. Take the left arch past the
+  shrimp to surface inside a hidden air chamber. Listen for dripping water,
+  then dive through its far arch to rejoin the second pool and the sea.
+  At night, glowworms light the ceiling and blue plankton wakes around your
+  hands. Release the dive control to hold depth in either passage.
 - **The ocean.** Real swell you ride rather than fight. Glass-offs come with the
   settled sky; a squall now and then turns the water grey and brings rain and
   distant thunder, but it never gets worse than atmosphere.

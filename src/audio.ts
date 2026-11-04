@@ -50,6 +50,8 @@ export type AudioFrame = {
   grounded?: boolean
   waterDepth?: number
   daylight?: number
+  /** How far the listener is inside the roofed tidal chamber. */
+  chamber?: number
 }
 
 /** Very quiet Lyria beds under the sea sound. Storm-bed is deliberately not
@@ -163,6 +165,9 @@ export function createOceanAudio() {
   let ambientBus: GainNode | null = null
   let weatherBus: GainNode | null = null
   let foleyBus: GainNode | null = null
+  let caveEcho: GainNode | null = null
+  let lastChamber = 0
+  let lastEcho = 0
   let movement: ReturnType<typeof createMovementFoley> | null = null
   let ready = false
   let unlocking: Promise<void> | null = null
@@ -269,6 +274,19 @@ export function createOceanAudio() {
     foleyBus = ctx.createGain()
     foleyBus.gain.value = 1
     foleyBus.connect(master)
+    // An early reflection and a short, dark tail. Only sounds made inside
+    // the chamber feed the delay, including the swimmer's own strokes.
+    caveEcho = ctx.createGain()
+    caveEcho.gain.value = 0
+    const delay = ctx.createDelay(0.5)
+    delay.delayTime.value = 0.145
+    const stone = ctx.createBiquadFilter()
+    stone.type = 'lowpass'
+    stone.frequency.value = 2150
+    const decay = ctx.createGain()
+    decay.gain.value = 0.36
+    foleyBus.connect(caveEcho).connect(delay).connect(stone).connect(master)
+    stone.connect(decay).connect(delay)
     movement = createMovementFoley(ctx, foleyBus)
 
     const noise = noiseBuffer(ctx, 4)
@@ -747,6 +765,25 @@ export function createOceanAudio() {
     seaWeight = w
   }
 
+  function playCaveDrop(level: number, pan: number) {
+    if (!ctx || !ready || !foleyBus || ctx.state !== 'running') return
+    const at = ctx.currentTime
+    const tone = ctx.createOscillator()
+    const gain = ctx.createGain()
+    const side = ctx.createStereoPanner()
+    const pitch = 680 + Math.random() * 310
+    tone.frequency.setValueAtTime(pitch, at)
+    tone.frequency.exponentialRampToValueAtTime(pitch * 1.95, at + 0.028)
+    gain.gain.setValueAtTime(0.0001, at)
+    gain.gain.exponentialRampToValueAtTime(0.23 * level, at + 0.004)
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.13)
+    side.pan.value = pan
+    tone.connect(gain).connect(side).connect(foleyBus)
+    tone.onended = () => { tone.disconnect(); gain.disconnect(); side.disconnect() }
+    tone.start(at)
+    tone.stop(at + 0.14)
+  }
+
   /** Occasional tiny bubble ticks while submerged. */
   function tickBubble() {
     if (!ctx || !master) return
@@ -913,6 +950,17 @@ export function createOceanAudio() {
 
     const underW = Math.min(1, Math.max(0, (submersion - 0.12) / 0.72))
     const surfaceW = 1 - underW
+    const chamber = frame.chamber ?? 0
+    if (chamber !== lastChamber) {
+      ambientBus?.gain.setTargetAtTime(1 - 0.78 * chamber, ctx.currentTime, 0.23)
+      weatherBus?.gain.setTargetAtTime(1 - 0.94 * chamber, ctx.currentTime, 0.28)
+      lastChamber = chamber
+    }
+    const echo = chamber * (0.10 + surfaceW * 0.45)
+    if (echo !== lastEcho) {
+      caveEcho?.gain.setTargetAtTime(echo, ctx.currentTime, 0.12)
+      lastEcho = echo
+    }
     const bobW =
       Math.max(0, 1 - submersion * 2.4) * (0.28 + Math.min(0.7, Math.abs(heave) * 1.1))
     const murk = Math.min(1, depth / 22)
@@ -959,7 +1007,7 @@ export function createOceanAudio() {
     const seaDuck = 1 - 0.55 * seaWeight
     const landward = onLand ? 1 : clamp01(shore * 1.4)
     const dayW = clamp01((daylight - 0.35) / 0.4)
-    const musicGate = stormQuiet * seaDuck * (1 - 0.5 * windRushLevel) * MUSIC_LEVEL
+    const musicGate = stormQuiet * seaDuck * (1 - 0.5 * windRushLevel) * (1 - 0.78 * chamber) * MUSIC_LEVEL
     const wantSurface = surfaceW * dayW * (1 - landward)
     const wantShore = surfaceW * Math.max(1 - dayW, landward)
     gMusic.surface = damp(gMusic.surface, wantSurface * musicGate, MUSIC_FADE, dt)
@@ -1191,5 +1239,5 @@ export function createOceanAudio() {
     }
   }
 
-  return { unlock, update, setSeaWeight, setWindRush, playWhaleBlow, playWhaleSong, playSeabirdCry }
+  return { unlock, update, setSeaWeight, setWindRush, playWhaleBlow, playWhaleSong, playSeabirdCry, playCaveDrop }
 }
