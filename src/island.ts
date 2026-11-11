@@ -1664,16 +1664,21 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
    * desktop on the light budget (built-in graphics) gets a roof in between:
    * `spacing` is the planting grid in metres, `cards` the leaf sprays on each
    * crown, `floor` how far the ground under the roof is painted toward shade
-   * (the full budget shades it by light instead, see the canopy map).
+   * (the full budget shades it by light instead, see the canopy map), and
+   * `lump` the subdivision of each crown's three shoulder masses: at 0 they
+   * are twelve-cornered and, looked down on from a ridge or the parachute,
+   * a roof of them is a field of angular slabs.
    * Timed on Intel UHD at 1080p: the in-between roof is 2,312 crowns against
    * the phone's 1,366, about 1.5 ms a frame from the sea and 3.5 ms standing
    * under it. Sprays cost more than crowns there, hence only 32 of them.
+   * Rounded shoulders add 0.23M triangles: about 1 ms from outside, nothing
+   * measurable from under the roof, where their undersides are cut away.
    */
   const ROOF = !low
-    ? { spacing: 6.8, cards: 64, floor: 0.45, wanted: 4500 }
+    ? { spacing: 6.8, cards: 64, floor: 0.45, wanted: 4500, lump: 1 }
     : opts.bigScreen
-      ? { spacing: 8.4, cards: 32, floor: 0.9, wanted: 3200 }
-      : { spacing: 11, cards: 30, floor: 0.75, wanted: 1800 }
+      ? { spacing: 8.4, cards: 32, floor: 0.9, wanted: 3200, lump: 1 }
+      : { spacing: 11, cards: 30, floor: 0.75, wanted: 1800, lump: 0 }
   const haze = opts.hazeColor.clone()
   const foliage = createFoliage(haze, { lowPower: opts.lowPower })
   const group = new THREE.Group()
@@ -3075,7 +3080,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   // allows, close enough that neighbours overlap. Trunks are bare open
   // cylinders — from inside you see them, from the sea you shouldn't.
   {
-    const templates = Array.from({ length: low ? 6 : 10 }, (_, k) => jungleCrown(k + 7100, 1, low ? 0 : 1))
+    const templates = Array.from({ length: low ? 6 : 10 }, (_, k) => jungleCrown(k + 7100, 1, ROOF.lump))
     const farTemplates = templates.map((_, k) => jungleCrown(k + 7100, 0))
     // Sprays about 0.4 of the crown's spread: 1.5–2.5 m once scaled, a few
     // dozen leaves each. Only near — past the swap the far lumps stand alone
