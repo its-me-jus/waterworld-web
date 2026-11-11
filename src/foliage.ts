@@ -486,7 +486,7 @@ const groundNormalBody = /* glsl */ `
     }
     vec3 nw = normalize((vec4(normal, 0.0) * viewMatrix).xyz + bump);
     normal = normalize((viewMatrix * vec4(nw, 0.0)).xyz);
-    normal = gDetailBump(normal, -vViewPosition, gDetailH);
+    normal = gDetailBump(normal, -vViewPosition, vec2(dFdx(gDetailH), dFdy(gDetailH)) + gDetailD);
   }
 `
 
@@ -498,20 +498,26 @@ const groundNormalBody = /* glsl */ `
  * before the normal stage in three's shader — and turned into a normal by its
  * screen-space derivatives (Mikkelsen's surface-gradient bump). It has to be
  * written outside any branch the derivatives would straddle.
+ *
+ * `gDetailD` is the same thing already differenced: how much the height
+ * changes one pixel to the right and one pixel down. dFdx and dFdy of a value
+ * the shader worked out are taken once per 2x2 block of pixels, so a height
+ * that changes from pixel to pixel (a grain texture seen close) comes back as
+ * a slope shared by four pixels, and the surface lights up in little squares.
+ * A slope read from the texture itself, one pixel along, is per pixel.
  */
 const detailPars = /* glsl */ `
 uniform sampler2D uDetail;
 float gDetailH = 0.0;
+vec2 gDetailD = vec2(0.0);
 float gDetailTone = 1.0;
-vec3 gDetailBump(vec3 N, vec3 p, float h) {
+vec3 gDetailBump(vec3 N, vec3 p, vec2 dh) {
   vec3 dpdx = dFdx(p);
   vec3 dpdy = dFdy(p);
-  float dhx = dFdx(h);
-  float dhy = dFdy(h);
   vec3 r1 = cross(dpdy, N);
   vec3 r2 = cross(N, dpdx);
   float det = dot(dpdx, r1);
-  vec3 grad = sign(det) * (dhx * r1 + dhy * r2);
+  vec3 grad = sign(det) * (dh.x * r1 + dh.y * r2);
   return normalize(abs(det) * N - grad);
 }
 `
@@ -526,11 +532,21 @@ const stoneColorBody = /* glsl */ `
     vec3 sw = pow(abs(normalize(vStoneN)), vec3(4.0));
     sw /= dot(sw, vec3(1.0));
     vec3 sp = vGroundPos / ${(DETAIL_TILE * 0.8).toFixed(3)};
-    float sr = texture2D(uDetail, sp.zy).b * sw.x + texture2D(uDetail, sp.xz).b * sw.y + texture2D(uDetail, sp.xy).b * sw.z;
+    vec2 uA = sp.zy, uB = sp.xz, uC = sp.xy;
+    float fA = texture2D(uDetail, uA).b, fB = texture2D(uDetail, uB).b, fC = texture2D(uDetail, uC).b;
+    float sr = fA * sw.x + fB * sw.y + fC * sw.z;
     float sFade = 1.0 - smoothstep(15.0, 45.0, length(vGroundPos - cameraPosition));
     gDetailTone = mix(1.0, 0.7 + sr * 0.6, sFade);
     diffuseColor.rgb *= gDetailTone;
-    gDetailH = (sr - 0.5) * 0.025 * sFade;
+    // The grain's slope, read again one pixel along each way (see detailPars)
+    gDetailD = vec2(
+      (texture2D(uDetail, uA + dFdx(uA)).b - fA) * sw.x +
+      (texture2D(uDetail, uB + dFdx(uB)).b - fB) * sw.y +
+      (texture2D(uDetail, uC + dFdx(uC)).b - fC) * sw.z,
+      (texture2D(uDetail, uA + dFdy(uA)).b - fA) * sw.x +
+      (texture2D(uDetail, uB + dFdy(uB)).b - fB) * sw.y +
+      (texture2D(uDetail, uC + dFdy(uC)).b - fC) * sw.z
+    ) * 0.025 * sFade;
   }
 `
 
@@ -576,18 +592,29 @@ const groundColorBody = /* glsl */ `
     vec2 gp = vGroundPos.xz;
     // The forest floor is painted darker under the roof; litter follows it
     float floorLum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
-    // Taps before any branch, so their mip selection never straddles one
-    vec4 det = texture2D(uDetail, gp / ${DETAIL_TILE.toFixed(3)});
+    // Taps before any branch, so their mip selection never straddles one.
+    // Each is read again one pixel right and one pixel down: the difference is
+    // the slope the bump wants, per pixel (see detailPars).
+    vec2 dUv = gp / ${DETAIL_TILE.toFixed(3)};
+    vec4 det = texture2D(uDetail, dUv);
+    vec4 detX = texture2D(uDetail, dUv + dFdx(dUv));
+    vec4 detY = texture2D(uDetail, dUv + dFdy(dUv));
     #ifdef GROUND_MICRO
       // Cliffs: two side-on taps at a coarser repeat, weighted by the facet's
       // own facing, since a top-down tap smears straight down a wall
       vec3 facet = abs(normalize(cross(dFdx(vGroundPos), dFdy(vGroundPos))));
       vec2 cw = facet.xz / max(facet.x + facet.z, 0.001);
-      float rockDet =
-        texture2D(uDetail, vGroundPos.zy / ${(DETAIL_TILE * 3).toFixed(3)}).b * cw.x +
-        texture2D(uDetail, vGroundPos.xy / ${(DETAIL_TILE * 3).toFixed(3)}).b * cw.y;
+      vec2 rA = vGroundPos.zy / ${(DETAIL_TILE * 3).toFixed(3)};
+      vec2 rB = vGroundPos.xy / ${(DETAIL_TILE * 3).toFixed(3)};
+      float rkA = texture2D(uDetail, rA).b, rkB = texture2D(uDetail, rB).b;
+      float rockDet = rkA * cw.x + rkB * cw.y;
+      vec2 rockD = vec2(
+        (texture2D(uDetail, rA + dFdx(rA)).b - rkA) * cw.x + (texture2D(uDetail, rB + dFdx(rB)).b - rkB) * cw.y,
+        (texture2D(uDetail, rA + dFdy(rA)).b - rkA) * cw.x + (texture2D(uDetail, rB + dFdy(rB)).b - rkB) * cw.y
+      );
     #else
       float rockDet = 0.5;
+      vec2 rockD = vec2(0.0);
     #endif
     ${beachRampBody}
     // None of these bands fade with distance: the whole point is that a
@@ -745,10 +772,16 @@ const groundColorBody = /* glsl */ `
       (1.0 - smoothstep(0.0, 1.2, relative)) * (1.0 - smoothstep(5.0, 18.0, gDist));
     float tidalRidge = sin(dot(gp, vec2(0.57, 0.82)) * 18.0 + gNoise(gp * 1.2) * 3.5);
     diffuseColor.rgb *= 1.0 + tidalRidge * tidalRipple * 0.045;
-    gDetailH =
-      (sandAmt * (det.r - 0.5) * 0.0022 * (1.0 - gWetness) + ripple * 0.02 * rippleAmt + tidalRidge * tidalRipple * 0.008) * detFade +
-      leafMask * litterAmt * det.g * 0.012 * detFade +
-      cliff * (rockDet - 0.5) * 0.08 * cliffFade;
+    // The ripples are smooth from one pixel to the next, so they stay a height
+    // and are differenced on screen. Grain, leaves and rock change pixel by
+    // pixel, so their slopes come from the second and third taps.
+    gDetailH = (ripple * 0.02 * rippleAmt + tidalRidge * tidalRipple * 0.008) * detFade;
+    float leafH = leafMask * det.g;
+    gDetailD =
+      vec2(detX.r - det.r, detY.r - det.r) * (sandAmt * 0.0022 * (1.0 - gWetness) * detFade) +
+      vec2(smoothstep(0.03, 0.12, detX.g) * detX.g - leafH, smoothstep(0.03, 0.12, detY.g) * detY.g - leafH) *
+        (litterAmt * 0.012 * detFade) +
+      rockD * (cliff * 0.08 * cliffFade);
 
     // A cliff in shade is lit by a clear sky, which is blue, and then has the
     // grade's blue shadow lift added on top: a dark rock face lands on that
@@ -945,7 +978,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
           .replace('#include <color_fragment>', `#include <color_fragment>\n${stoneColorBody}`)
           .replace(
             '#include <normal_fragment_begin>',
-            `#include <normal_fragment_begin>\nnormal = gDetailBump(normal, -vViewPosition, gDetailH);`,
+            `#include <normal_fragment_begin>\nnormal = gDetailBump(normal, -vViewPosition, gDetailD);`,
           )
           .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\ntotalEmissiveRadiance *= gDetailTone;`)
       }
