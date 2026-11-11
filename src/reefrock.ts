@@ -482,12 +482,20 @@ export function paintRock(geo: THREE.BufferGeometry, sandY: number, below = Infi
  * texture as far as you can see through the water. Both feed a tangent-free
  * bump. `drownEmissive` fades the material's emissive out below the surface,
  * for rock that needs a skylight in air and none under it.
+ *
+ * `shore` is for rock that stands out of the sea: by height above the tide it
+ * paints the wet splash zone, the pale barnacle line and the dark band over
+ * it, and rules fine beds on the steep faces. Write the tide into
+ * `material.userData.shoreTide.value` each frame.
  */
-export function reefRockMaterial(params: THREE.MeshStandardMaterialParameters, drownEmissive = false) {
+export function reefRockMaterial(params: THREE.MeshStandardMaterialParameters, drownEmissive = false, shore = false) {
   const mat = new THREE.MeshStandardMaterial(params)
   const uDetail = { value: groundDetail() }
+  const uShoreTide = { value: 0 }
+  mat.userData.shoreTide = uShoreTide
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uReefDetail = uDetail
+    if (shore) shader.uniforms.uShoreTide = uShoreTide
     shader.vertexShader = `varying vec3 vReefPos;\nvarying vec3 vReefN;\n${shader.vertexShader}`.replace(
       '#include <project_vertex>',
       `vReefPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
@@ -495,10 +503,14 @@ export function reefRockMaterial(params: THREE.MeshStandardMaterialParameters, d
       #include <project_vertex>`,
     )
     shader.fragmentShader = `uniform sampler2D uReefDetail;
+${shore ? 'uniform float uShoreTide;' : ''}
 varying vec3 vReefPos;
 varying vec3 vReefN;
 float rDetailH = 0.0;
+vec2 rDetailD = vec2(0.0);
 float rTone = 1.0;
+float rShoreWet = 0.0;
+float rShoreAir = 0.0;
 ${shader.fragmentShader}`
       .replace(
         '#include <color_fragment>',
@@ -506,16 +518,52 @@ ${shader.fragmentShader}`
         {
           vec3 sw = pow(abs(normalize(vReefN)), vec3(4.0));
           sw /= dot(sw, vec3(1.0));
+          // The bump needs the slope of this grain across the screen. Asking
+          // the GPU for the screen-space difference of the height itself gives
+          // one answer per 2x2 block of pixels, and the grain changes from one
+          // pixel to the next: every block tilted its own way and the rock
+          // came out in little squares, worst up close in the caves. So the
+          // fine grain is differenced here instead, by reading the texture
+          // again one pixel along each screen axis (the coordinates vary
+          // smoothly, so their differences are safe to take per block).
           vec3 sp = vReefPos / 1.25;
-          float fine = texture2D(uReefDetail, sp.zy).b * sw.x + texture2D(uReefDetail, sp.xz).b * sw.y + texture2D(uReefDetail, sp.xy).b * sw.z;
+          vec2 uA = sp.zy, uB = sp.xz, uC = sp.xy;
+          float fA = texture2D(uReefDetail, uA).b, fB = texture2D(uReefDetail, uB).b, fC = texture2D(uReefDetail, uC).b;
+          float fine = fA * sw.x + fB * sw.y + fC * sw.z;
+          float fineX = (texture2D(uReefDetail, uA + dFdx(uA)).b - fA) * sw.x + (texture2D(uReefDetail, uB + dFdx(uB)).b - fB) * sw.y + (texture2D(uReefDetail, uC + dFdx(uC)).b - fC) * sw.z;
+          float fineY = (texture2D(uReefDetail, uA + dFdy(uA)).b - fA) * sw.x + (texture2D(uReefDetail, uB + dFdy(uB)).b - fB) * sw.y + (texture2D(uReefDetail, uC + dFdy(uC)).b - fC) * sw.z;
+          // The coarse relief is read a mip and a half soft: broad enough that
+          // neighbouring blocks agree, so it can still be differenced on screen
           vec3 sq = vReefPos / 7.0;
-          float coarse = texture2D(uReefDetail, sq.yz + 0.37).b * sw.x + texture2D(uReefDetail, sq.zx + 0.61).b * sw.y + texture2D(uReefDetail, sq.yx + 0.13).b * sw.z;
+          float coarse = texture2D(uReefDetail, sq.yz + 0.37, 1.5).b * sw.x + texture2D(uReefDetail, sq.zx + 0.61, 1.5).b * sw.y + texture2D(uReefDetail, sq.yx + 0.13, 1.5).b * sw.z;
           float dist = length(vReefPos - cameraPosition);
           float fadeF = 1.0 - smoothstep(6.0, 24.0, dist);
           float fadeC = 1.0 - smoothstep(45.0, 140.0, dist);
           rTone = mix(1.0, 0.78 + fine * 0.44, fadeF) * mix(1.0, 0.85 + coarse * 0.3, fadeC);
           diffuseColor.rgb *= rTone;
-          rDetailH = (fine - 0.5) * 0.035 * fadeF + (coarse - 0.5) * 0.12 * fadeC;
+          rDetailH = (coarse - 0.5) * 0.12 * fadeC;
+          rDetailD = vec2(fineX, fineY) * 0.035 * fadeF;
+          ${shore ? `
+          // A rocky shore is banded by how long each level spends under water
+          float hgt = vReefPos.y - uShoreTide;
+          float air = smoothstep(-0.25, 0.1, hgt);
+          rShoreAir = air;
+          float steep = 1.0 - smoothstep(0.45, 0.8, abs(normalize(vReefN).y));
+          // Wet and near-black where the swell still reaches, drying upward
+          rShoreWet = (1.0 - smoothstep(0.1, 0.7 + coarse * 0.6, hgt)) * air;
+          diffuseColor.rgb *= 1.0 - 0.5 * rShoreWet;
+          // Barnacles: a pale broken line just above the wet rock
+          // (mixed with the coarse grain so a wide shelf does not show the fine tile repeating, and thinner on the flat)
+          float barnacle = smoothstep(0.55, 0.85, hgt) * (1.0 - smoothstep(0.95, 1.2 + coarse * 0.5, hgt)) * smoothstep(0.42, 0.6, fine * 0.45 + coarse * 0.55);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.46, 0.44, 0.39), barnacle * 0.42 * air * mix(0.4, 1.0, steep));
+          // The dark band of salt-crust above them, fading out by head height
+          float crust = smoothstep(1.1, 1.6, hgt) * (1.0 - smoothstep(2.2, 3.4, hgt));
+          diffuseColor.rgb *= 1.0 - 0.25 * crust * air;
+          // Beds: thin dark seams ruled along the steep faces, gone before they could shimmer
+          // (bent by the coarse grain and broken into runs, or they read as contour lines on a map)
+          float seam = smoothstep(0.86, 0.99, sin((vReefPos.y + coarse * 1.8) * 5.2)) * smoothstep(0.4, 0.6, fine * 0.4 + coarse * 0.6);
+          diffuseColor.rgb *= 1.0 - 0.2 * seam * steep * air * (1.0 - smoothstep(50.0, 130.0, dist));
+          ` : ''}
         }`,
       )
       .replace(
@@ -525,8 +573,8 @@ ${shader.fragmentShader}`
           vec3 p = -vViewPosition;
           vec3 dpdx = dFdx(p);
           vec3 dpdy = dFdy(p);
-          float dhx = dFdx(rDetailH);
-          float dhy = dFdy(rDetailH);
+          float dhx = dFdx(rDetailH) + rDetailD.x;
+          float dhy = dFdy(rDetailH) + rDetailD.y;
           vec3 r1 = cross(dpdy, normal);
           vec3 r2 = cross(normal, dpdx);
           float det = dot(dpdx, r1);
@@ -540,8 +588,26 @@ ${shader.fragmentShader}`
         totalEmissiveRadiance *= rTone;
         ${drownEmissive ? 'totalEmissiveRadiance *= smoothstep(-6.0, 0.5, vReefPos.y);' : ''}`,
       )
+    // Wet rock shines
+    if (shore) {
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `#include <roughnessmap_fragment>
+          roughnessFactor = mix(roughnessFactor, 0.3, rShoreWet);`,
+        )
+        // Dark rock in open shade sits right on the grade's blue shadow lift
+        // and comes out as ink. Out of the water it takes more of the sky's
+        // own light instead: scaled from what is already falling on it, so a
+        // sealed chamber and the night stay as dark as they were.
+        .replace(
+          '#include <lights_fragment_end>',
+          `#include <lights_fragment_end>
+          reflectedLight.indirectDiffuse *= 1.0 + 1.1 * rShoreAir;`,
+        )
+    }
   }
-  mat.customProgramCacheKey = () => `reefrock:${drownEmissive}`
+  mat.customProgramCacheKey = () => `reefrock:${drownEmissive}:${shore}`
   return mat
 }
 

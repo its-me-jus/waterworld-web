@@ -73,25 +73,37 @@ function skyOpening(x: number, z: number) {
   return light
 }
 
-/** Rock is negative. Carve the flooded passages, open pools and sealed air chamber. */
-function tidalRock(x: number, y: number, z: number) {
-  const warp = noise3(x * 0.11, y * 0.10, z * 0.09) - 0.5
-  const bedding = Math.sin(y * 2.65 + x * 0.17 + 0.9 * Math.sin(z * 0.23))
-  const rim = (Math.hypot((x - 1.6 * Math.sin(z * 0.17)) / 13.2, z / 31.5) - 1) * 13.2
-  const crest = 3.6 + 1.45 * Math.sin(z * 0.21 + x * 0.23) - x * 0.12
-    + 3.5 * bell((x + 7) / 4.1) * bell((z + 8) / 12) + 2.1 * warp
-    + 2.7 * bell((x - 7) / 3.2) * bell((z - 11) / 4.0)
-    - 3.2 * bell((x - 3) / 4.8) * bell((z - 6.9) / 3.1)
-  const oldRidge = Math.max(
-    (y - crest + Math.max(0, rim + 4.5) * 0.75) * 0.85,
-    rim + Math.max(-5.2, (y - 0.5) * 0.32) + warp * 2.6 + bedding * 0.24,
-  )
-  const shoulder = (Math.hypot((x + 12.6) / 10.9, (z + 1) / 21.4) - 1) * 10.9
-  const westRidge = Math.max(shoulder + Math.max(-3, (y - 1) * 0.16) + warp * 1.9,
-    (y - 8.5 + Math.max(0, shoulder + 5) * 0.83 + 1.15 * Math.sin(x * 0.43 + z * 0.19) + warp) * 0.9)
-  const outside = smoothUnion(oldRidge, westRidge, 2.7)
-  if (outside > 2.5 || y < -16) return outside
+/**
+ * Height of one bed of the basalt, in metres: the sea cuts the rock back a
+ * bed at a time. Two metres is thick for a bed, but the rock is meshed on a
+ * grid of about 0.8 m and anything finer is rounded away to a plain slope.
+ */
+const BED = 2.1
 
+/**
+ * Out of the water the outcrop is bedded basalt, not a dune. Heights are
+ * gathered onto benches a bed apart, with a short steep riser between, along
+ * beds that dip a little toward the sea and are never quite flat. The
+ * benching comes and goes over the rock, so some of the shore is stepped and
+ * some is left a plain slope: a way up from the water on foot.
+ */
+function benched(x: number, y: number, z: number, warp: number) {
+  const bed = y + 0.07 * x + 0.035 * z + warp * 0.5
+  const q = bed / BED
+  const level = Math.floor(q)
+  // A bench still climbs a little across its width. Dead flat, the field
+  // would be the same value through a whole slab of rock, and wherever that
+  // value was near zero the mesher made loose crumbs of it.
+  // (The 0.4 keeps the rock its old height on average: gathering every
+  // height in a bed up onto that bed's bench made the whole outcrop taller.)
+  const f = q - level
+  const stair = (level + 0.14 * f + 0.86 * smooth(f, 0.62, 0.96) + 0.4) * BED
+  const patch = smooth(noise3(x * 0.07 + 3.1, 0.4, z * 0.07 - 1.7), 0.22, 0.5)
+  return y + (stair - bed) * patch * smooth(y, -1.5, 0.3)
+}
+
+/** Signed distance to the flooded gallery that runs the length of the rock between the pools. */
+function galleryDistance(x: number, y: number, z: number) {
   const chamber = bell((z - 1.5) / 4.8)
   const bend = centreX(z) + 1.6 * bell((z - 6) / 3.6)
   const level = -5.55 + 0.75 * Math.sin(z * 0.16) - 1.25 * bell((z + 18) / 5.2)
@@ -100,7 +112,56 @@ function tidalRock(x: number, y: number, z: number) {
   const vault = 2.45 + 1.35 * chamber + 0.45 * Math.sin(z * 0.58 + x * 0.31)
   const height = dy > 0 ? vault : 2.55
   const across = x - bend + dy * 0.28 * Math.sin(z * 0.13)
-  let water = (Math.hypot(across / width, dy / height) - 1) * height
+  return (Math.hypot(across / width, dy / height) - 1) * height
+}
+
+/** Rock is negative. Carve the flooded passages, open pools and sealed air chamber. */
+function tidalRock(x: number, y: number, z: number) {
+  const warp = noise3(x * 0.11, y * 0.10, z * 0.09) - 0.5
+  const bedding = Math.sin(y * 2.65 + x * 0.17 + 0.9 * Math.sin(z * 0.23))
+  const rim = (Math.hypot((x - 1.6 * Math.sin(z * 0.17)) / 13.2, z / 31.5) - 1) * 13.2
+  // Only the part that stands in the air is benched and broken; under water
+  // the shelf keeps the smooth run the reef and the passages were cut into
+  const inAir = y > -2
+  // The gallery's roof is thin where it passes under the saddle between the
+  // pools. Close over it the rock keeps its old plain surface: a cleft there
+  // opened a third hole into the dive, which has exactly two ways in.
+  const free = inAir ? smooth(galleryDistance(x, y, z), 1.6, 4.4) : 0
+  const yb = inAir ? y + (benched(x, y, z, warp) - y) * free : y
+  const top = 3.6 + 1.45 * Math.sin(z * 0.21 + x * 0.23) - x * 0.12
+    + 3.5 * bell((x + 7) / 4.1) * bell((z + 8) / 12) + 2.1 * warp
+    + 2.7 * bell((x - 7) / 3.2) * bell((z - 11) / 4.0)
+    - 3.2 * bell((x - 3) / 4.8) * bell((z - 6.9) / 3.1)
+  // Crags and clefts a few metres across, so the skyline is broken rock.
+  // Rounded, not creased: a sharp ridge in the noise meshed as thorns.
+  let crag = 0
+  if (inAir) {
+    const c = 2 * noise3(x * 0.2 + 7.3, y * 0.15, z * 0.2 - 2.9) - 1
+    crag = (0.42 - c * c * 1.5) * 2.4 * smooth(y, -1, 1.5) * free
+    // A cleft may not cut down where the rock is already low (in the saddle
+    // it went under the tide and left a blind pool), nor along the line of
+    // the gallery, where a deep hollow between the two pools read from above
+    // as a third opening
+    if (crag < 0) crag *= smooth(top, 1.0, 2.8) * smooth(Math.abs(x - centreX(z)), 4, 8.5)
+  }
+  const crest = top + crag
+  const oldRidge = Math.max(
+    (yb - crest + Math.max(0, rim + 4.5) * 0.75) * 0.85,
+    rim + Math.max(-5.2, (yb - 0.5) * 0.32) + warp * 2.6 + bedding * 0.24,
+  )
+  const shoulder = (Math.hypot((x + 12.6) / 10.9, (z + 1) / 21.4) - 1) * 10.9
+  const westRidge = Math.max(shoulder + Math.max(-3, (yb - 1) * 0.16) + warp * 1.9,
+    (yb - 8.5 + Math.max(0, shoulder + 5) * 0.83 + 1.15 * Math.sin(x * 0.43 + z * 0.19) + warp - crag) * 0.9)
+  let outside = smoothUnion(oldRidge, westRidge, 2.7)
+  // Whatever the benches and clefts do to the outside, the air chamber keeps
+  // close on two metres of rock over it: a hole in that roof would let the
+  // daylight and the sea into a room that is meant to have neither
+  if (y > -1 && x < -3 && Math.abs(z - room.z) < 14) {
+    outside = smoothUnion(outside, (roomRadius(x, y, z) - 1) * 6.2 - 1.9, 1.2)
+  }
+  if (outside > 2.5 || y < -16) return outside
+
+  let water = galleryDistance(x, y, z)
   for (const pool of pools) {
     const dx = x - pool.x + 0.9 * Math.sin((z - pool.z) * 0.46 + 1.8) + 0.14 * y
     const dz = z - pool.z + 0.18 * dx + 0.62 * Math.sin(x * 0.53)
@@ -125,6 +186,9 @@ const basalt = new THREE.Color('#696560')
 const fracture = new THREE.Color('#a0998f')
 const seam = new THREE.Color('#cdad84')
 const moss = new THREE.Color('#6d7847')
+/** The rock in the air: dark where it is steep and sheltered, bleached where sun and salt work on it. */
+const darkBasalt = new THREE.Color('#47433e')
+const bleached = new THREE.Color('#8a8272')
 const silt = new THREE.Color('#dfc9a2')
 const wetStone = new THREE.Color('#665446')
 const flowstone = new THREE.Color('#d7b788')
@@ -140,7 +204,14 @@ function paintCaves(x: number, y: number, z: number, normal: THREE.Vector3, ao: 
     const runnel = Math.cos(x * 2.2 + z * 1.4 + 1.1 * Math.sin(z * 1.55) + y * 0.14 + grain * 0.9)
     color.lerp(wetStone, 0.46).lerp(flowstone, smooth(runnel, 0.45, 1) * (0.27 + 0.32 * grain))
   } else if (y > 0) {
-    color.lerp(moss, smooth(normal.y, 0.3, 0.85) * smooth(y, 0.7, 3.8) * (0.3 + 0.55 * grain))
+    // Bare basalt. The benches weather pale, the risers stay dark, and the
+    // only green is a little dry growth in the cracks of the highest ground:
+    // an even moss over the whole top read as a lawn on a dune.
+    const flat = smooth(normal.y, 0.55, 0.9)
+    color.copy(darkBasalt).lerp(basalt, 0.3 + 0.45 * grain)
+      .lerp(bleached, flat * smooth(y, 1.4, 4.2) * (0.3 + 0.5 * grain))
+    const tuft = smooth(noise3(x * 0.55 + 4.2, y * 0.3, z * 0.55 - 9.1), 0.6, 0.78)
+    color.lerp(moss, tuft * flat * smooth(y, 3.0, 5.5) * 0.4)
   } else {
     // A pale silty thread catches the skylight and leads around the blind bend.
     const channel = bell((x - centreX(z)) / 4.3)
@@ -163,7 +234,9 @@ export function createTidalCaves(scene: THREE.Scene, lowPower: boolean) {
     exposure[i] = sealed ? 0 : Math.max(exterior, skyOpening(x, z))
   }
   rock.geometry.setAttribute('causticExposure', new THREE.BufferAttribute(exposure, 1))
-  const mesh = new THREE.Mesh(rock.geometry, reefRockMaterial({ vertexColors: true, roughness: 0.88 }))
+  const rockMaterial = reefRockMaterial({ vertexColors: true, roughness: 0.88 }, false, true)
+  const shoreTide = rockMaterial.userData.shoreTide as { value: number }
+  const mesh = new THREE.Mesh(rock.geometry, rockMaterial)
   mesh.name = 'Tidal caves'
   mesh.position.set(SITE.x, 0, SITE.z)
   scene.add(mesh)
@@ -218,6 +291,7 @@ export function createTidalCaves(scene: THREE.Scene, lowPower: boolean) {
   function update(camera: THREE.PerspectiveCamera, sun: THREE.Vector3, strength: number, tide: number, time: number,
     night: number, underwater: boolean, onDrip: (level: number, pan: number) => void) {
     const eye = camera.position
+    shoreTide.value = tide
     residents.update(camera, sun, time, night, underwater, onDrip)
     const visible = strength > 0.02 && nearby(eye.x, eye.z) && eye.y < tide
     for (const shaft of shafts) {
