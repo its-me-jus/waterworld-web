@@ -18,7 +18,9 @@ export function createArrival(app: HTMLElement, opts: { drop: boolean; touch: ()
   help.title = 'Movement controls · H'
   if (opts.enabled) app.append(hint, help)
 
-  if (opts.drop && opts.enabled) {
+  /** Show the title. Called once the world is on screen, so none of its twelve seconds are spent behind the loading card. */
+  function begin() {
+    if (!opts.drop || !opts.enabled) return
     const title = document.createElement('div')
     title.id = 'arrival-title'
     title.innerHTML = '<span class="arrival-kicker">AN ISLAND. AN OPEN SEA.</span><h1>Waterworld</h1><span class="arrival-rule"></span><p>Let your curiosity lead.</p>'
@@ -76,5 +78,5 @@ export function createArrival(app: HTMLElement, opts: { drop: boolean; touch: ()
     if (!remaining) hint.setAttribute('aria-hidden', 'true')
   }
 
-  return { update, show }
+  return { update, show, begin }
 }

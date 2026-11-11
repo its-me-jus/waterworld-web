@@ -479,9 +479,36 @@ export function createSwimmer(camera: THREE.Camera) {
   // 1.5 m, and at the old 2.6 m this pooled on the sand in front of your feet
   // — invisible in daylight, but after dark it was the brightest thing on the
   // island and nothing was casting it.
-  const fill = new THREE.PointLight(0xd6e9f5, 0.65, 1.15, 1.9)
+  const FILL_INTENSITY = 0.65
+  const fill = new THREE.PointLight(0xd6e9f5, FILL_INTENSITY, 1.15, 1.9)
   fill.position.set(0.12, -0.04, -0.26)
   rig.add(fill)
+
+  /**
+   * Put the body away (the sky probe and film shots must not see it) without
+   * hiding the rig itself. three.js compiles every lit shader for the number
+   * of lights in view, so a light that drops out with its parent makes the
+   * whole scene's shaders rebuild, which is a freeze of several seconds. The
+   * light stays where it is and is turned down to nothing instead.
+   */
+  const putAway = new Set<THREE.Object3D>()
+  let hidden = false
+  function setHidden(next: boolean) {
+    hidden = next
+    if (next) {
+      // Safe to call every frame: the pose update may have shown a part again
+      for (const part of rig.children) {
+        if (part === fill || !part.visible) continue
+        part.visible = false
+        putAway.add(part)
+      }
+      fill.intensity = 0
+    } else {
+      for (const part of putAway) part.visible = true
+      putAway.clear()
+      fill.intensity = FILL_INTENSITY
+    }
+  }
 
   // Arms hang from clavicles in the rig frame (not the torso) so their poses
   // stay readable in screen space no matter how far the body leans prone.
@@ -870,5 +897,13 @@ export function createSwimmer(camera: THREE.Camera) {
     }
   }
 
-  return { rig, update, setGroundSampler }
+  return {
+    rig,
+    update,
+    setGroundSampler,
+    setHidden,
+    get hidden() {
+      return hidden
+    },
+  }
 }

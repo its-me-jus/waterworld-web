@@ -202,7 +202,10 @@ function ceilingLights(parent: THREE.Group, rock: ReefRock, room: Room, low: boo
   const dots = new THREE.Points(geometry, material)
   dots.name = 'Glowworm ceiling'
   dots.renderOrder = 3
-  dots.onBeforeRender = renderer => { material.uniforms.uPixels.value = renderer.domElement.height }
+  // The scene buffer can be smaller than the canvas (post.ts setScale)
+  dots.onBeforeRender = renderer => {
+    material.uniforms.uPixels.value = renderer.getRenderTarget()?.height ?? renderer.domElement.height
+  }
   parent.add(dots)
   return { material, silk }
 }
@@ -213,9 +216,12 @@ export function createCaveLife(parent: THREE.Mesh, rock: ReefRock, room: Room, l
   parent.add(life)
   const antennaClock = shellfish(life, rock, low)
   const glow = ceilingLights(life, rock, room, low)
+  // Hung on the rock, not on `life`, which is hidden when you are far away:
+  // a light that leaves the scene makes every lit shader in it rebuild (a
+  // freeze of seconds on the approach to the caves). It dims to nothing instead.
   const poolLight = new THREE.PointLight('#98d6c6', 0, 18, 2)
   poolLight.position.set(room.x - 0.9, 1.05, room.z - 2.4)
-  life.add(poolLight)
+  parent.add(poolLight)
 
   // Sheltered little schools at the two junctions. Their short orbits stay
   // inside the deep mouths of the pools and pass clear of the rock.
@@ -250,6 +256,7 @@ export function createCaveLife(parent: THREE.Mesh, rock: ReefRock, room: Room, l
     const x = eye.x - parent.position.x, z = eye.z - parent.position.z
     life.visible = Math.abs(x + 5) < 50 && Math.abs(z) < 57 && eye.y < 20
     if (!life.visible) {
+      poolLight.intensity = 0
       for (const seep of seeps) seep.age = -1
       return
     }

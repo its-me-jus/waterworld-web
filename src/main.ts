@@ -17,6 +17,7 @@ import { createOcean } from './ocean'
 import { createParachute } from './parachute'
 import { bindKeyboardMouse, createPlayer, updatePlayer, type PlayerFrame } from './player'
 import { createPostChain } from './post'
+import { DETAIL_LAYER, createGovernor, quality } from './quality'
 import { createReefWreck } from './reefwreck'
 import { createSeaState } from './sea'
 import { createShoreSurf } from './shore'
@@ -39,6 +40,18 @@ const lowPower = isLowPowerDevice()
 const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)')
 let reducedMotion = motionPreference.matches
 motionPreference.addEventListener('change', (e) => { reducedMotion = e.matches })
+
+// The loading card in index.html stays up while the world is built and its
+// shaders compile. The screenshot and film scripts take their pictures on a
+// fixed delay, so for them it comes down at once and nothing waits on the
+// compile; `?boot=1` gives an automated run the visitor's start-up.
+const bootCard = document.getElementById('boot-card')
+const visitorBoot = (() => {
+  const q = new URLSearchParams(location.search)
+  return q.get('boot') === '1' || (!navigator.webdriver && !q.has('film'))
+})()
+if (!visitorBoot) bootCard?.remove()
+performance.mark('ww:start')
 
 const depthReadout = document.createElement('div')
 depthReadout.id = 'depth'
@@ -64,10 +77,13 @@ const camera = new THREE.PerspectiveCamera(66, window.innerWidth / window.innerH
 camera.rotation.order = 'YXZ'
 // The swimmer body is parented to the camera, so the camera has to be in the scene
 scene.add(camera)
+camera.layers.enable(DETAIL_LAYER)
 
 const pixelRatioCap = lowPower ? 1.25 : 1.75
 const renderer = new THREE.WebGLRenderer({
-  antialias: !lowPower,
+  // The scene is drawn into the post chain's own buffer; all the canvas ever
+  // receives is one full-screen pass, which multisampling can do nothing for
+  antialias: false,
   powerPreference: 'high-performance',
 })
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap))
@@ -84,6 +100,27 @@ const post = createPostChain(renderer, { lowPower })
 const sunForward = new THREE.Vector3()
 const sunNdc = new THREE.Vector3()
 post.setSize(window.innerWidth, window.innerHeight, renderer.getPixelRatio())
+
+// Holds the frame rate by drawing the scene smaller and scaling it up. Off for
+// film stills and for the screenshot scripts, which want every pixel and run
+// on a software renderer that would talk it straight down to the minimum.
+const startParams = new URLSearchParams(location.search)
+let sceneScale = 1
+let scaleChanged = false
+const governor = createGovernor(
+  (scale) => {
+    sceneScale = scale
+    scaleChanged = true
+    post.setScale(scale)
+  },
+  {
+    enabled:
+      startParams.get('governor') === '1' ||
+      (startParams.get('governor') !== '0' && !startParams.has('film') && !navigator.webdriver),
+  },
+)
+/** Point sprites are sized in buffer pixels, so they follow the buffer when it shrinks. */
+const spritePixelRatio = () => renderer.getPixelRatio() * sceneScale
 
 const skyRig = createSky(scene, 30, 38, {
   shadows: true,
@@ -295,10 +332,25 @@ scene.environmentIntensity = 0.42
 
 let glowProbeHide: THREE.Object3D | null = null
 
-function captureEnv() {
+/** Draw into the probe with everything that must not be in it put away. */
+function withProbeScene(draw: () => void, skyOnly = false) {
+  // Just the sky and its clouds: enough for the first ambient light, and
+  // only two shaders to wait for
+  const putAway = skyOnly
+    ? scene.children.filter((c) => {
+        if (!c.visible || c === skyRig.sky || c === skyRig.clouds) return false
+        // Anything carrying a light stays (hiding a light rebuilds every shader)
+        let lit = false
+        c.traverse((o) => { if ((o as THREE.Light).isLight) lit = true })
+        return !lit
+      })
+    : []
+  for (const c of putAway) c.visible = false
   if (glowProbeHide) glowProbeHide.visible = false
   ocean.visible = false
-  swimmer.rig.visible = false
+  // A film shot has the body put away already, and it must stay that way
+  const bodyWasHidden = swimmer.hidden
+  swimmer.setHidden(true)
   // Feeding the cube map back into the shading of the objects being captured
   // would compound its own brightness every refresh
   const wasEnv = scene.environmentIntensity
@@ -309,15 +361,49 @@ function captureEnv() {
   // leave every lit material sampling a shadow map that doesn't exist yet.
   renderer.shadowMap.autoUpdate = false
   if (!skyRig.sunLight.shadow.map) renderer.shadowMap.needsUpdate = true
-  envCam.position.set(camera.position.x, Math.max(camera.position.y, 2), camera.position.z)
-  envCam.update(renderer, scene)
+  draw()
   renderer.shadowMap.autoUpdate = true
   scene.environmentIntensity = wasEnv
-  envRT.texture.needsPMREMUpdate = true
   if (glowProbeHide) glowProbeHide.visible = true
   ocean.visible = true
-  swimmer.rig.visible = true
+  if (!bodyWasHidden) swimmer.setHidden(false)
+  for (const c of putAway) c.visible = true
 }
+
+/** All six faces at once: the first capture, and after a film camera jump. */
+function captureEnv(skyOnly = false) {
+  withProbeScene(() => {
+    envCam.position.set(camera.position.x, Math.max(camera.position.y, 2), camera.position.z)
+    envCam.update(renderer, scene)
+  }, skyOnly)
+  envRT.texture.needsPMREMUpdate = true
+}
+
+/**
+ * One face of the probe. A refresh used to draw the world six more times
+ * inside a single frame, which on built-in graphics froze the picture for a
+ * fifth of a second every four; spread over six frames it is not felt. The
+ * sky moves slowly enough that a cube half a second in the making shows no seam.
+ */
+function captureEnvFace(face: number) {
+  withProbeScene(() => {
+    if (face === 0) {
+      envCam.position.set(camera.position.x, Math.max(camera.position.y, 2), camera.position.z)
+      envCam.updateMatrixWorld()
+    }
+    const target = renderer.getRenderTarget()
+    // Mipmaps once, with the last face, when all six are in
+    const mipmaps = envRT.texture.generateMipmaps
+    envRT.texture.generateMipmaps = mipmaps && face === 5
+    renderer.setRenderTarget(envRT, face)
+    renderer.render(scene, envCam.children[face] as THREE.Camera)
+    envRT.texture.generateMipmaps = mipmaps
+    renderer.setRenderTarget(target)
+  })
+  if (face === 5) envRT.texture.needsPMREMUpdate = true
+}
+/** The face the probe draws next; 6 when it is between refreshes. */
+let envFace = 6
 
 const player = createPlayer()
 const floorBelowPlayer = (x: number, z: number) => groundAt(x, z, player.y + 0.10)
@@ -371,16 +457,9 @@ touch.setVisible(mobile)
 const hud = createHud(app)
 const arrival = createArrival(app, { drop: wantChute, touch: () => mobile, enabled: !film.on })
 glassWhisper = hud.whisper
-// Arrive gently: the world fades up out of the dark, and only then does one
-// quiet line say how to move. After that the world speaks for itself.
-// (Skipped under test automation, so screenshots catch the finished picture.)
-if (!navigator.webdriver) {
-  const introFade = document.createElement('div')
-  introFade.id = 'intro-fade'
-  app.appendChild(introFade)
-  requestAnimationFrame(() => requestAnimationFrame(() => introFade.classList.add('done')))
-  window.setTimeout(() => introFade.remove(), 4200)
-}
+// Arrive gently: the world fades up out of the dark (the loading card's own
+// fade, see start() at the foot of this file), and only then does one quiet
+// line say how to move. After that the world speaks for itself.
 
 // One way out of the drop for anyone who has seen it: land on the beach now
 const skipChute = document.createElement('button')
@@ -539,6 +618,8 @@ if (import.meta.env.DEV) {
       tidalCaves,
       sky: skyRig,
       underwater: underwaterWorld,
+      quality: quality(),
+      governor,
     },
   })
 }
@@ -576,6 +657,7 @@ function travelTo(place: Destination) {
 
 let tracking = false
 const trackingCamera = new THREE.PerspectiveCamera(41, camera.aspect, 0.05, camera.far)
+trackingCamera.layers.enable(DETAIL_LAYER)
 const cameraTarget = new THREE.Vector3()
 const worldControls = film.on ? null : createWorldControls(app, {
   setTracking: on => { tracking = on },
@@ -623,7 +705,7 @@ function onResize() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap))
   renderer.setSize(window.innerWidth, window.innerHeight)
   post.setSize(window.innerWidth, window.innerHeight, renderer.getPixelRatio())
-  islandLife.setPixelRatio(renderer.getPixelRatio())
+  scaleChanged = true
 }
 window.addEventListener('resize', onResize)
 applyView()
@@ -673,7 +755,9 @@ if (lowPower) {
   island.terrain.userData.noCast = true
   for (const obj of island.group.children) {
     const mesh = obj as THREE.Mesh
-    if (mesh.isMesh && (mesh.geometry.attributes.position?.count ?? 0) > 40000) {
+    // Heavy layers are cut into cells (island.ts), so the test is the layer's size, not the cell's
+    const verts = (obj.userData.layerVerts as number | undefined) ?? mesh.geometry?.attributes.position?.count ?? 0
+    if (mesh.isMesh && verts > 40000) {
       obj.userData.noCast = true
     }
   }
@@ -705,6 +789,9 @@ const oceanNightDeep = new THREE.Color('#020d18')
 const oceanNightShallow = new THREE.Color('#0a2c44')
 const moonColor = new THREE.Color('#9fb8ea')
 const oceanStormShallow = new THREE.Color('#1a3a48')
+const duskLift = new THREE.Color(0.16, 0.09, 0.05)
+const duskGain = new THREE.Color(1, 0.86, 0.7)
+const stormGain = new THREE.Color(0.86, 0.9, 0.95)
 const underHemiSky = new THREE.Color('#6fc6d8')
 const underHemiNight = new THREE.Color('#1a3a48')
 
@@ -722,8 +809,20 @@ let firstDive = false
 
 function frame() {
   timer.update()
-  const dt = Math.min(timer.getDelta(), 0.05)
+  const frameSeconds = timer.getDelta()
+  const dt = Math.min(frameSeconds, 0.05)
   const t = timer.getElapsed()
+  governor.update(frameSeconds)
+  if (scaleChanged) {
+    scaleChanged = false
+    // Sprays, plankton and fireflies are point sprites sized in buffer pixels
+    const ratio = spritePixelRatio()
+    islandLife.setPixelRatio(ratio)
+    scene.traverse((obj) => {
+      const uniform = ((obj as THREE.Points).material as THREE.ShaderMaterial | undefined)?.uniforms?.uPixelRatio
+      if (uniform) uniform.value = ratio
+    })
+  }
 
   const weather = climate.update(film.frozen ? 0 : dt)
   oceanMat.uniforms.uDaylight.value = weather.daylight
@@ -876,7 +975,7 @@ function frame() {
 
   const showDiver = tracking && !chute.active
   swimmer.update(dt, t, view, player.pitch + player.viewPitch, player.roll, showDiver)
-  if (film.on) swimmer.rig.visible = false
+  if (film.on) swimmer.setHidden(true)
 
   skyRig.update(t, weather)
   // Keep every sky layer centred on the eye — an XZ-only follow left the
@@ -1028,13 +1127,8 @@ function frame() {
     scene.environmentIntensity = 0.06
   } else {
     post.grade.bloom = 0.34 + weather.daylight * 0.3 + dusk * 0.22 - weather.storm * 0.18
-    post.grade.lift
-      .setRGB(0.05, 0.1, 0.18)
-      .lerp(new THREE.Color(0.16, 0.09, 0.05), dusk * 0.7)
-    post.grade.gain
-      .setRGB(1, 0.97, 0.9)
-      .lerp(new THREE.Color(1, 0.86, 0.7), dusk)
-      .lerp(new THREE.Color(0.86, 0.9, 0.95), weather.storm * 0.8)
+    post.grade.lift.setRGB(0.05, 0.1, 0.18).lerp(duskLift, dusk * 0.7)
+    post.grade.gain.setRGB(1, 0.97, 0.9).lerp(duskGain, dusk).lerp(stormGain, weather.storm * 0.8)
     post.grade.contrast = 0.16 + weather.storm * 0.05
     post.grade.saturation = 1.12 + dusk * 0.1 - weather.storm * 0.2
     post.grade.vignette = 0.26 + weather.storm * 0.12 + (1 - weather.daylight) * 0.08
@@ -1104,7 +1198,7 @@ function frame() {
     submersion: view.submersion,
     underwater,
     underRock: underwater && tidalCaves.floorAt(camera.position.x, camera.position.z) > camera.position.y + 0.45,
-    pixelRatio: renderer.getPixelRatio(),
+    pixelRatio: spritePixelRatio(),
     biolum: weather.biolum,
     daylight: weather.daylight,
     effort: view.effort,
@@ -1156,19 +1250,32 @@ function frame() {
       spawnBubble()
       bubbleTimer = 0.7 + Math.random() * 1.1
     }
-  } else {
+  } else if (bubblesLayer.firstChild) {
     bubblesLayer.replaceChildren()
   }
 
   // Refresh reflections as the sky and clouds move — storms need it more often
   envTimer -= dt
+  const envEvery = lowPower ? 10 : weather.storm > 0.2 || weather.daylight < 0.35 ? 2 : 4
   if (film.freshEnv) {
-    envTimer = 0
+    // A film camera has jumped: the shot needs the whole sky from the new spot now
     film.freshEnv = false
-  }
-  if (envTimer <= 0 && !underwater) {
-    captureEnv()
-    envTimer = lowPower ? 10 : weather.storm > 0.2 || weather.daylight < 0.35 ? 2 : 4
+    if (!underwater) {
+      captureEnv()
+      envFace = 6
+      envTimer = envEvery
+    }
+  } else if (underwater) {
+    // The sky is put away down here; a refresh in progress waits for the surface
+    if (envFace < 6) {
+      envFace = 6
+      envTimer = 0
+    }
+  } else if (envFace < 6) {
+    captureEnvFace(envFace++)
+  } else if (envTimer <= 0) {
+    envFace = 0
+    envTimer = envEvery
   }
 
   shadowScanTimer -= dt
@@ -1234,5 +1341,37 @@ function frame() {
   scene.background.copy(skyRig.horizonColor)
   airFog.color.copy(skyRig.horizonColor)
 }
-captureEnv()
-frame()
+performance.mark('ww:built')
+
+/**
+ * Everything is built; get it on screen. A visitor waits here, behind the
+ * loading card, while every shader compiles off the main thread, so nothing
+ * freezes later when it first swims into view. Then the card fades and the
+ * world is simply there.
+ */
+async function start() {
+  if (visitorBoot) {
+    // Materials are compiled for the ambient light they will be drawn with,
+    // so the sky has to be in the probe before they are
+    captureEnv(true)
+    await Promise.race([
+      post.compile(scene, camera),
+      // A driver that never reports back must not hold the door shut
+      new Promise((resolve) => window.setTimeout(resolve, 30000)),
+    ])
+    performance.mark('ww:compiled')
+  }
+  captureEnv()
+  frame()
+  arrival.begin()
+  // Two frames, so the first picture (and the shadow shaders it compiles) is behind the card
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      performance.mark('ww:shown')
+      if (!bootCard?.isConnected) return
+      bootCard.classList.add('done')
+      window.setTimeout(() => bootCard.remove(), 2700)
+    }),
+  )
+}
+void start()

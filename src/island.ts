@@ -3,6 +3,7 @@ import { createCoastalTerrain } from './coastmesh'
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { bakePlant, createFoliage, plantTint, type PlantBake } from './foliage'
 import { barkTexture, barkUv, fernTexture, leafAtlas, leafCards, openUnderside, palmBarkTexture, shrinkCore } from './leaftex'
+import { DETAIL_LAYER } from './quality'
 import { fbm, noise2 } from './waves'
 
 /**
@@ -3130,6 +3131,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
           for (let i = 0; i < color.count; i++) {
             color.setXYZ(i, color.getX(i) * deep, color.getY(i) * deep, color.getZ(i) * deep)
           }
+          // (clone() shares the template's userData object, so it gets its own)
+          geo.userData = { at: [lx, lz] }
           list.push(geo.applyMatrix4(place))
         }
         // Regrowth is thin and low, so it takes some of the sun, not all of it
@@ -3204,6 +3207,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
         for (let v = 0; v < color.count; v++) {
           color.setXYZ(v, color.getX(v) * deep, color.getY(v) * deep, color.getZ(v) * deep)
         }
+        geo.userData = { at: [lx, lz] }
         list.push(geo.applyMatrix4(place))
       }
       roof.push({ x: lx, z: lz, r: size * wide * 1.05, y: h - 0.3 + trunkH + size * stretch * 0.1 })
@@ -3345,6 +3349,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     noCast?: boolean
     /** Only drawn past this range — the far stand-in for a layer with the same `range`. */
     farFrom?: number
+    /** Its `range` switches the whole island at once, because a far stand-in takes its place. */
+    wholeIsland?: boolean
     /** Texture, multiplied into the colour — leaf atlas or bark. */
     map?: THREE.Texture
     /** Cut-out threshold on the map's alpha, for leaf cards. */
@@ -3429,6 +3435,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       transmit: 0.25,
       noCast: true,
       range: 300,
+      wholeIsland: true,
     },
     {
       parts: jungleLeaves,
@@ -3447,6 +3454,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       transmit: 0.9,
       noCast: true,
       range: 300,
+      wholeIsland: true,
     },
     // The same roof from out at sea, swapped in where the near one drops out
     {
@@ -3463,7 +3471,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // Rainforest bark runs pale — grey and lichen-blotched, not the brown of a
     // temperate trunk — and in this much shade it needs the wood fill or every
     // bole is a black post
-    { parts: jungleTrunks, color: 0xbcb398, roughness: 0.8, wind: BROAD_WIND, noCast: true, fill: woodFill, range: 300, map: bark, underRoof: true },
+    { parts: jungleTrunks, color: 0xbcb398, roughness: 0.8, wind: BROAD_WIND, noCast: true, fill: woodFill, range: 300, wholeIsland: true, map: bark, underRoof: true },
     {
       parts: grassParts,
       range: 330,
@@ -3577,8 +3585,51 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
    * horizon and the ground cover is most of its triangle count. Each layer
    * names the range past which it is only costing frames.
    */
-  const fadeOut: { mesh: THREE.Mesh; range: number }[] = []
+  const fadeOut: { mesh: THREE.Mesh; range: number; at?: THREE.Vector3; reach?: number }[] = []
   const fadeIn: { mesh: THREE.Mesh; range: number }[] = []
+
+  /**
+   * One mesh per layer for the whole island means nothing is ever out of
+   * view: with your back to the forest the GPU still runs every crown through
+   * the vertex stage, and the sun's shadow box, eighty metres across, redraws
+   * a kilometre of grass. Heavy layers are cut into ground cells instead, so
+   * the camera, the shadow pass and the sky probe each draw only what falls
+   * inside them. Light layers stay whole: a cell costs a draw call.
+   */
+  const CELL = 140
+  const CELL_MIN_TRIS = 12000
+  const trisOf = (geo: THREE.BufferGeometry) => (geo.index ? geo.index.count : geo.getAttribute('position').count) / 3
+  function cells(parts: THREE.BufferGeometry[]) {
+    let tris = 0
+    for (const part of parts) tris += trisOf(part)
+    if (tris < CELL_MIN_TRIS) return [parts]
+    const byCell = new Map<number, THREE.BufferGeometry[]>()
+    for (const part of parts) {
+      // A crown's near, far and leaf versions carry the spot they were planted
+      // on, so all three land in the same cell whatever their own shapes
+      const at = part.userData.at as [number, number] | undefined
+      const pos = part.getAttribute('position')
+      const key =
+        Math.floor((at ? at[0] : pos.getX(0)) / CELL) * 4096 + Math.floor((at ? at[1] : pos.getZ(0)) / CELL)
+      const list = byCell.get(key)
+      if (list) list.push(part)
+      else byCell.set(key, [part])
+    }
+    return [...byCell.values()]
+  }
+  const layerNames = new Map<THREE.BufferGeometry[], string>(
+    Object.entries({
+      trunks, leaves, nuts, broadTrunks, broadCanopy, broadLeaves, jungleCanopy, jungleLeaves, jungleFar,
+      jungleTrunks, grassParts, fernParts, scrubParts, scrubLeaves, bloomParts, reedParts, vineParts,
+      wrackParts, rocks, boulderParts, wood, fallenParts, deadParts, coralParts, pathParts,
+    }).map(([name, parts]) => [parts, name]),
+  )
+
+  /** Too small to show in a reflection or tint the ambient light: left out of the sky probe. */
+  const groundDetail = new Set([
+    'nuts', 'grassParts', 'fernParts', 'scrubParts', 'scrubLeaves', 'bloomParts', 'reedParts', 'vineParts',
+    'wrackParts', 'wood', 'fallenParts', 'deadParts', 'coralParts', 'pathParts',
+  ])
 
   for (const layer of layers) {
     if (layer.parts.length === 0) continue
@@ -3598,14 +3649,37 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       underRoof: layer.underRoof,
       ...(layer.fill ?? skylight),
     })
-    const mesh = foliage.mesh(
-      mergeGeometries(layer.parts, false) as THREE.BufferGeometry,
-      material,
-    )
-    if (layer.noCast) mesh.userData.noCast = true
-    group.add(mesh)
-    if (layer.range) fadeOut.push({ mesh, range: layer.range })
-    if (layer.farFrom) fadeIn.push({ mesh, range: layer.farFrom })
+    const name = layerNames.get(layer.parts) ?? 'layer'
+    let layerVerts = 0
+    for (const part of layer.parts) layerVerts += part.getAttribute('position').count
+    const split = cells(layer.parts)
+    for (const parts of split) {
+      const geometry = mergeGeometries(parts, false) as THREE.BufferGeometry
+      const mesh = foliage.mesh(geometry, material)
+      mesh.name = name
+      // The whole layer's size, for the phone's "too heavy to cast" test in main.ts
+      mesh.userData.layerVerts = layerVerts
+      if (layer.noCast) mesh.userData.noCast = true
+      if (groundDetail.has(name)) mesh.layers.set(DETAIL_LAYER)
+      // Wind moves a vertex up to a metre; the culling sphere has to cover it
+      geometry.computeBoundingSphere()
+      const sphere = geometry.boundingSphere as THREE.Sphere
+      sphere.radius += 2
+      group.add(mesh)
+      if (layer.range) {
+        // Undergrowth also drops out cell by cell with distance from the eye.
+        // The forest roof does not: it trades places with its far stand-in for
+        // the whole island at once, so no cell is ever half of each.
+        const perCell = split.length > 1 && !layer.wholeIsland
+        fadeOut.push({
+          mesh,
+          range: layer.range,
+          at: perCell ? sphere.center.clone().add(group.position) : undefined,
+          reach: sphere.radius,
+        })
+      }
+      if (layer.farFrom) fadeIn.push({ mesh, range: layer.farFrom })
+    }
   }
 
   // —— rain catchment ————————————————————————————————————————
@@ -3930,6 +4004,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     flyHeight: number
   }
 
+  /** Layers are not inherited, so every part of a small animal is marked. */
+  const smallLife = (animal: THREE.Object3D) => animal.traverse((part) => part.layers.set(DETAIL_LAYER))
+
   const crabs: Crab[] = []
   const lizards: Lizard[] = []
   const flutters: Flutter[] = []
@@ -3949,6 +4026,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       if (h < 0.25 || h > 2.8) continue
       const mesh = crabMesh(i + 50)
       mesh.position.set(lx, h + 0.02, lz)
+      smallLife(mesh)
       group.add(mesh)
       crabs.push({
         mesh,
@@ -3980,6 +4058,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       const mesh = lizardMesh(i + 80)
       mesh.position.set(lx, h + 0.02, lz)
       mesh.rotation.y = fbm(i, 7.7) * Math.PI * 2
+      smallLife(mesh)
       group.add(mesh)
       lizards.push({
         mesh,
@@ -4001,6 +4080,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       const h = Math.max(surface(lx, lz), 2)
       const mesh = butterflyMesh(i + 120)
       mesh.position.set(lx, h + 1.2 + fbm(i, 1.4) * 1.5, lz)
+      smallLife(mesh)
       group.add(mesh)
       flutters.push({
         mesh,
@@ -4026,6 +4106,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       if (h < 0.4 || h > 4.5) continue
       const mesh = gullMesh(i + 140)
       mesh.position.set(lx, h + 0.12, lz)
+      smallLife(mesh)
       group.add(mesh)
       gulls.push({
         mesh,
@@ -4064,6 +4145,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   }
 
   let wildlifeTime = 0
+  /** Metres past which crabs, lizards and butterflies are too small to be worth drawing. */
+  const SMALL_LIFE_RANGE = 110
 
   function update(camera: THREE.Camera, underwater: boolean, time = 0) {
     // Nothing is visible 700 m through water. Close in it's the shelf and the
@@ -4074,7 +4157,12 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // Drop the undergrowth once it's too far away to resolve. Measured from
     // the island's centre rather than the nearest ground, so the switch happens
     // out at sea where there's nothing to see it happen to.
-    for (const layer of fadeOut) layer.mesh.visible = range < layer.range + 320
+    for (const layer of fadeOut) {
+      let on = range < layer.range + 320
+      // A cell of undergrowth is also judged on its own distance from the eye
+      if (on && layer.at) on = camera.position.distanceTo(layer.at) - (layer.reach ?? 0) < layer.range + 40
+      layer.mesh.visible = on
+    }
     for (const layer of fadeIn) layer.mesh.visible = range >= layer.range + 320
 
     const dt = wildlifeTime > 0 ? Math.min(0.05, Math.max(0, time - wildlifeTime)) : 0.016
@@ -4100,6 +4188,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       }
 
       const dist = Math.hypot(camX - c.x, camZ - c.z)
+      // A crab is a couple of dozen small parts and nothing at all from a
+      // hundred metres; out of sight it holds still and costs no draw calls
+      c.mesh.visible = dist < SMALL_LIFE_RANGE
+      if (!c.mesh.visible) continue
       // Freeze a beat when first noticed, then sidestep — gives a grab window
       if (dist < 3.8) c.spook = Math.min(1, c.spook + dt * 1.4)
       else c.spook = Math.max(0, c.spook - dt * 0.35)
@@ -4157,6 +4249,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // —— lizards ————————————————————————————————————————————
     for (const l of lizards) {
       const dist = Math.hypot(camX - l.x, camZ - l.z)
+      l.mesh.visible = dist < SMALL_LIFE_RANGE
+      if (!l.mesh.visible) continue
       if (dist < 4.2) l.alert = Math.min(1, l.alert + dt * 3)
       else l.alert = Math.max(0, l.alert - dt * 0.5)
 
@@ -4182,6 +4276,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
 
     // —— butterflies ——————————————————————————————————————
     for (const f of flutters) {
+      f.mesh.visible = Math.hypot(camX - f.x, camZ - f.z) < SMALL_LIFE_RANGE
+      if (!f.mesh.visible) continue
       f.x += Math.cos(time * f.speed + f.phase) * 0.55 * dt
       f.z += Math.sin(time * f.speed * 0.85 + f.phase * 1.3) * 0.55 * dt
       f.y = Math.max(surface(f.x, f.z) + 0.8, f.y + Math.sin(time * 2.2 + f.phase) * 0.35 * dt)
@@ -4206,6 +4302,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // —— gulls ——————————————————————————————————————————————
     for (const g of gulls) {
       const dist = Math.hypot(camX - g.x, camZ - g.z)
+      // Gulls are white on sand and read from further off than a crab does
+      g.mesh.visible = dist < SMALL_LIFE_RANGE * 2.5
+      if (!g.mesh.visible) continue
       if (dist < 7 && g.flying < 0.2) g.flying = 1
       if (g.flying > 0) {
         g.flying = Math.min(1, g.flying + dt * 0.15)

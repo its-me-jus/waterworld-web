@@ -51,6 +51,18 @@ export type PostChain = {
   /** Draw `scene` through the chain and onto the canvas. */
   render: (scene: THREE.Scene, camera: THREE.Camera) => void
   setSize: (width: number, height: number, pixelRatio: number) => void
+  /**
+   * Draw the scene at this fraction of the canvas's pixels (each way) and
+   * scale it up in the last pass. The frame-rate governor drives it.
+   */
+  setScale: (scale: number) => void
+  /**
+   * Compile every material in the scene for this chain's buffer, without
+   * blocking, and resolve when they are ready. Without it each shader is
+   * compiled the first time its object comes into view, and the picture
+   * freezes while it does: seconds, the first time a whale surfaces.
+   */
+  compile: (scene: THREE.Scene, camera: THREE.Camera) => Promise<unknown>
   grade: Grade
   /**
    * Where the sun is on screen (0–1 uv, may lie outside the frame) and how much
@@ -367,18 +379,35 @@ export function createPostChain(
 
   const quad = new FullScreenQuad(compositeMat)
 
+  let fullWidth = 1
+  let fullHeight = 1
+  let scale = 1
   let bufferWidth = 1
   let bufferHeight = 1
 
-  function setSize(width: number, height: number, pixelRatio: number) {
-    bufferWidth = Math.max(1, Math.floor(width * pixelRatio))
-    bufferHeight = Math.max(1, Math.floor(height * pixelRatio))
+  function resize() {
+    bufferWidth = Math.max(1, Math.floor(fullWidth * scale))
+    bufferHeight = Math.max(1, Math.floor(fullHeight * scale))
     sceneTarget.setSize(bufferWidth, bufferHeight)
-    compositeMat.uniforms.uResolution.value.set(bufferWidth, bufferHeight)
+    // The last pass runs at the canvas's own size whatever the scene drew at
+    compositeMat.uniforms.uResolution.value.set(fullWidth, fullHeight)
     for (const rt of [nearA, nearB, rayB, rayC, farA, farB]) {
       const d = divisors.get(rt) ?? 4
       rt.setSize(Math.max(1, Math.floor(bufferWidth / d)), Math.max(1, Math.floor(bufferHeight / d)))
     }
+  }
+
+  function setSize(width: number, height: number, pixelRatio: number) {
+    fullWidth = Math.max(1, Math.floor(width * pixelRatio))
+    fullHeight = Math.max(1, Math.floor(height * pixelRatio))
+    resize()
+  }
+
+  function setScale(next: number) {
+    const clamped = Math.min(1, Math.max(0.25, next))
+    if (clamped === scale) return
+    scale = clamped
+    resize()
   }
 
   function blurInto(
@@ -453,11 +482,19 @@ export function createPostChain(
     quad.render(renderer)
   }
 
+  function compile(scene: THREE.Scene, camera: THREE.Camera) {
+    // A program is built for the buffer it draws into: it has to be this one
+    renderer.setRenderTarget(sceneTarget)
+    const ready = renderer.compileAsync(scene, camera)
+    renderer.setRenderTarget(null)
+    return ready
+  }
+
   function dispose() {
     sceneTarget.dispose()
     for (const rt of [nearA, nearB, rayB, rayC, farA, farB]) rt.dispose()
     quad.dispose()
   }
 
-  return { render, setSize, grade, sun, dispose }
+  return { render, setSize, setScale, compile, grade, sun, dispose }
 }

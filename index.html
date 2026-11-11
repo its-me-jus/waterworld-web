@@ -16,9 +16,42 @@
       content="A calm first-person ocean to drift and wander in — swell, sky, a wreck on the reef, an island on the horizon."
     />
     <title>WaterWorld</title>
+    <style>
+      /* Here, not in the bundle, so the first paint is already the dark sea
+         and a quiet line, not a white page while the world is being built. */
+      html, body { margin: 0; background: #061018; }
+      #boot-card {
+        position: fixed; inset: 0; z-index: 30;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.1rem;
+        background: #061018; color: #d9e6e4;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        pointer-events: none;
+        transition: opacity 2.4s ease-out;
+      }
+      #boot-card.done { opacity: 0; }
+      .boot-kicker { font-size: 0.62rem; letter-spacing: 0.34em; font-weight: 500; opacity: 0.85; }
+      .boot-rule {
+        width: 5.5rem; height: 1px; background: currentColor; will-change: transform, opacity;
+        animation: boot-breathe 2.6s ease-in-out infinite;
+      }
+      .boot-line { font: italic 1rem/1.4 Georgia, 'Times New Roman', serif; opacity: 0.7; }
+      @keyframes boot-breathe {
+        0%, 100% { transform: scaleX(0.35); opacity: 0.35; }
+        50% { transform: scaleX(1); opacity: 0.8; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-rule { animation: none; opacity: 0.6; }
+        #boot-card { transition-duration: 0.4s; }
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>
+    <div id="boot-card" role="status">
+      <span class="boot-kicker">WATERWORLD</span>
+      <span class="boot-rule"></span>
+      <span class="boot-line">The tide is coming in.</span>
+    </div>
     <script type="module" src="/src/boot.ts"></script>
   </body>
 </html>

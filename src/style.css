@@ -239,21 +239,6 @@ body.underwater #bubbles {
   opacity: 1;
 }
 
-/* —— arrival —— */
-#intro-fade {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  background: #061018;
-  pointer-events: none;
-  opacity: 1;
-  transition: opacity 3.2s ease-out;
-}
-
-#intro-fade.done {
-  opacity: 0;
-}
-
 /* —— the drop —— */
 #skip-chute {
   position: fixed;
@@ -414,6 +399,5 @@ button:focus-visible { outline: 2px solid #f2e6b8; outline-offset: 5px; }
     0%, 9%, 100% { opacity: 0; }
     26%, 65% { opacity: 1; }
   }
-  #intro-fade { transition-duration: 0.4s; }
   #control-hint, #whisper, #depth { transition-duration: 0.15s; }
 }

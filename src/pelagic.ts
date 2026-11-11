@@ -1137,7 +1137,10 @@ export function createPelagicLife(scene: THREE.Scene, deps: PelagicDeps) {
     if (!visible) return
 
     whale.swimPhase += dt * 2.35
-    bendWhale(mother, whale.swimPhase, 0.72, archOffset)
+    // Past a couple of hundred metres the bend cannot be seen; the body holds
+    // its last pose and the vertex buffer is not rewritten every frame
+    const bending = distToCam < 240
+    if (bending) bendWhale(mother, whale.swimPhase, 0.72, archOffset)
     const pecFlap = Math.sin(whale.swimPhase * 0.55) * 0.16
     mother.pecL.rotation.set(0.26 + pecFlap, 0, 0)
     mother.pecR.rotation.set(-(0.26 + pecFlap), 0, 0)
@@ -1170,7 +1173,7 @@ export function createPelagicLife(scene: THREE.Scene, deps: PelagicDeps) {
         calfState.mistDone = true
         plume.emitMist(calfState.x + hx * 1.8, calfSurf, calfState.z + hz * 1.8, 0.55, 10)
       }
-      bendWhale(calf, whale.swimPhase * 1.55 + 1.1, 0.65, archOffset * 0.6)
+      if (bending) bendWhale(calf, whale.swimPhase * 1.55 + 1.1, 0.65, archOffset * 0.6)
       const calfFlap = Math.sin(t * 1.8) * 0.2
       calf.pecL.rotation.set(0.24 + calfFlap, 0, 0)
       calf.pecR.rotation.set(-(0.24 + calfFlap), 0, 0)

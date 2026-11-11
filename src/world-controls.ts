@@ -1,4 +1,5 @@
 import './world-controls.css'
+import { quality, setDetailChoice, type DetailChoice } from './quality'
 
 const destinations = { beach: 'Landing cove', forest: 'Rainforest', lagoon: 'Lagoon', wreck: 'Wanderer wreck', caves: 'Tidal caves' }
 export type Destination = keyof typeof destinations
@@ -34,7 +35,8 @@ export function createWorldControls(app: HTMLElement, actions: {
     <section><h3>Travel to</h3><div class="world-places"></div></section>
     <section><h3>Camera</h3><div class="world-places">
       <button type="button" id="track-diver" aria-pressed="false">Track diver</button>
-    </div></section>`
+    </div></section>
+    <section><h3>Detail</h3><p class="world-note"></p><div class="world-detail"></div></section>`
   app.append(toggle, panel)
   const slider = panel.querySelector('input')!
   const readout = panel.querySelector('output')!
@@ -74,6 +76,21 @@ export function createWorldControls(app: HTMLElement, actions: {
   }
   for (const place of Object.keys(destinations) as Destination[]) {
     addButton(places, destinations[place], () => { actions.travelTo(place); panel.close() })
+  }
+
+  // How much island this machine is drawing, and a way to overrule the guess.
+  // The world is built once at one budget, so a change reloads it.
+  const picked = quality()
+  panel.querySelector('.world-note')!.textContent =
+    `${picked.detail === 'full' ? 'Full island' : 'Lighter island'} (${picked.reason}). Changing this reloads the world.`
+  const detail = panel.querySelector('.world-detail')!
+  for (const [choice, label] of Object.entries({ auto: 'Auto', full: 'Full', light: 'Lighter' }) as [DetailChoice, string][]) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.textContent = label
+    button.setAttribute('aria-pressed', String(picked.choice === choice))
+    button.onclick = () => { if (picked.choice !== choice) setDetailChoice(choice) }
+    detail.append(button)
   }
 
   let clockTick = 0

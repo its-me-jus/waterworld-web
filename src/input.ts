@@ -1,4 +1,5 @@
 /** Unified input — keyboard + on-screen touch pads. */
+import { quality } from './quality'
 
 export type InputState = {
   /** -1..1 forward/back in camera space (W/S or left stick Y) */
@@ -28,7 +29,10 @@ export function preferTouchUI() {
   return window.matchMedia('(pointer: coarse)').matches || window.innerWidth < 820
 }
 
-/** Slightly cheaper render path for phones / small screens. */
+/**
+ * The lighter world: phones, small processors, and built-in graphics that
+ * time slow (see quality.ts). A choice made in the World panel overrides it.
+ */
 export function isLowPowerDevice() {
-  return preferTouchUI() || (navigator.hardwareConcurrency || 8) <= 4
+  return quality().detail === 'light'
 }

@@ -20,6 +20,7 @@ function canDraw() {
 }
 
 function explain(app: HTMLElement) {
+  document.getElementById('boot-card')?.remove()
   const card = document.createElement('div')
   card.setAttribute('role', 'alert')
   card.style.cssText = [

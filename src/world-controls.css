@@ -55,3 +55,6 @@
 .world-times, .world-places { display: grid; gap: 0.35rem; }
 .world-times { grid-template-columns: repeat(4, 1fr); }
 .world-places { grid-template-columns: repeat(2, 1fr); margin-top: 0.65rem; }
+.world-detail { display: grid; gap: 0.35rem; grid-template-columns: repeat(3, 1fr); margin-top: 0.65rem; }
+.world-note { margin: 0.3rem 0 0; font-size: 0.74rem; line-height: 1.4; color: #adcfc8; }
+#world-panel .world-detail button[aria-pressed='true'] { background: #a6d6c838; border-color: #e9d6a4aa; }

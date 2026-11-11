@@ -63,6 +63,12 @@ already doing ("The tide is turning."). That is the whole interface.
   to arrive there on foot or swimming. Time continues from the hour you choose.
 - **Motion:** the system's reduced-motion preference removes extra head bob,
   sway and camera banking while retaining the physical sea.
+- **Detail:** the World panel shows whether this machine is drawing the full
+  island or the lighter one, and why, with **Auto / Full / Lighter** to
+  overrule it (the world reloads). Auto times the graphics chip for a few
+  milliseconds at start: phones, small processors and slow built-in graphics
+  get the lighter island. Either way the picture's resolution is trimmed live
+  to hold the frame rate, and restored when there is room.
 
 ## Local
 
@@ -72,6 +78,13 @@ npm run dev
 ```
 
 ## Dev
+
+- `?quality=full|light|auto` picks the island budget for one load;
+  `?governor=0|1` turns the live resolution scaling off or on. Automated runs
+  (the screenshot scripts) get the full island with the governor off, so shots
+  stay comparable; `?quality=auto&governor=1` tests the real behaviour.
+- In a dev build `ww.quality` and `ww.governor` (console) show what was chosen
+  and the current resolution scale.
 
 - `node scripts/check-coastmesh.mjs` — checks tidal-band surface accuracy,
   upward face winding, finite normals and bounded phone/desktop geometry.
