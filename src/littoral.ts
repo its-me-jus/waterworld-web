@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import type { Hud } from './hud'
+import { skyFill } from './skyfill'
 import { oceanState } from './waves'
 
 /**
@@ -75,12 +76,12 @@ const mats = () => ({
   // Plain lit stone goes black in shade, so rocks carry a warm fill of their own.
   // Smooth-shaded: the lumps are welded for it, and flat facets read as a
   // low-poly model rather than worn rock.
-  rock: new THREE.MeshStandardMaterial({
+  rock: skyFill(new THREE.MeshStandardMaterial({
     color: '#6a6358',
     roughness: 0.95,
     emissive: '#7a7160',
     emissiveIntensity: 0.5,
-  }),
+  })),
   periwinkle: new THREE.MeshStandardMaterial({
     color: '#5a6a78',
     roughness: 0.6,
@@ -106,12 +107,12 @@ const mats = () => ({
     flatShading: true,
   }),
   /** Sheer face of the island shelf drop-off — swim-along reef wall. */
-  wall: new THREE.MeshStandardMaterial({
+  wall: skyFill(new THREE.MeshStandardMaterial({
     color: '#5a554c',
     roughness: 0.97,
     emissive: '#6f6859',
     emissiveIntensity: 0.7,
-  }),
+  })),
 })
 
 function limpetMesh(m: ReturnType<typeof mats>) {

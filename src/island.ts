@@ -4,6 +4,7 @@ import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometr
 import { bakePlant, createFoliage, plantTint, type PlantBake } from './foliage'
 import { barkTexture, barkUv, fernTexture, leafAtlas, leafCards, openUnderside, palmBarkTexture, shrinkCore } from './leaftex'
 import { DETAIL_LAYER } from './quality'
+import { skyFill } from './skyfill'
 import { fbm, noise2 } from './waves'
 
 /**
@@ -3691,7 +3692,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   {
     // Standing water with nothing to reflect renders as a hole in the ground,
     // so this leans on an emissive sky term rather than a mirror finish.
-    const poolWater = new THREE.MeshStandardMaterial({
+    const poolWater = skyFill(new THREE.MeshStandardMaterial({
       color: 0x3f757b,
       roughness: 0.28,
       metalness: 0.05,
@@ -3699,7 +3700,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       emissiveIntensity: 0.85,
       transparent: true,
       opacity: 0.92,
-    })
+    }))
     const rimMaterial = foliage.material({
       color: 0x6e6656,
       roughness: 0.95,
@@ -3833,7 +3834,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   if (cairnSpot) {
     const stoneMat = foliage.material({ color: 0x6a6358, roughness: 0.97, ...stoneFill })
     const darkStone = foliage.material({ color: 0x5a5448, roughness: 0.98, ...stoneFill })
-    const dripWater = new THREE.MeshStandardMaterial({
+    const dripWater = skyFill(new THREE.MeshStandardMaterial({
       color: 0x3f757b,
       roughness: 0.28,
       metalness: 0.05,
@@ -3841,7 +3842,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       emissiveIntensity: 0.85,
       transparent: true,
       opacity: 0.92,
-    })
+    }))
 
     const { lx: clx, lz: clz, h: ch } = cairnSpot
     const cairnDist = Math.hypot(clx, clz)

@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { DETAIL_TILE, groundDetail } from './groundtex'
+import { skyFill, skyFillUniform } from './skyfill'
 
 /**
  * Everything the island is made of, shaded.
@@ -754,7 +755,8 @@ const groundColorBody = /* glsl */ `
     // floor and reads as ink however it is painted. Basalt has a colour of its
     // own, so give it a share of itself back as emission, which keeps the
     // columns, streaks and moss visible in shade and takes the cast off.
-    totalEmissiveRadiance += diffuseColor.rgb * cliff * 0.3;
+    // It is the sky's light, so it goes down with the sky (skyfill.ts).
+    totalEmissiveRadiance += diffuseColor.rgb * cliff * 0.3 * uSkyFill;
   }
 `
 
@@ -780,6 +782,7 @@ const shapedFillBody = /* glsl */ `
 
 const groundWetPars = /* glsl */ `
 uniform float uTide;
+uniform float uSkyFill;
 float gWetness = 0.0;
 `
 
@@ -825,6 +828,8 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       ...rest
     } = params
     const mat = new THREE.MeshStandardMaterial({ ...rest, fog: false })
+    // Its emissive is the sky's light in open shade, and goes down with the sky
+    if (rest.emissive !== undefined) skyFill(mat)
     if (shadowedBleed) mat.defines = { ...mat.defines, SHADOWED_BLEED: '' }
     const roofShade = underRoof && !opts.lowPower
     if (roofShade) mat.defines = { ...mat.defines, CANOPY_SHADE: '' }
@@ -947,6 +952,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
 
       if (ground) {
         shader.uniforms.uTide = uTide
+        shader.uniforms.uSkyFill = skyFillUniform
         shader.fragmentShader = shader.fragmentShader
           .replace('#include <color_fragment>', `#include <color_fragment>\n${groundColorBody}`)
           .replace(

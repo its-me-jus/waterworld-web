@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { buildReefRock, paintRock, reefLife, reefRockMaterial } from './reefrock'
 import { addGrowth, PLANK_TILE_LENGTH, PLANKS_PER_TILE, plankTextures } from './woodtex'
+import { skyFill } from './skyfill'
 import { buildSpear } from './spear'
 import { fbm, sampleOcean } from './waves'
 
@@ -67,7 +68,7 @@ function materials() {
     // skylight term of its own — the blue a real rock takes in open shade.
     // Under the surface that skylight is wrong — it made the drowned flank
     // glow like a ghost through the murk — so it fades out below the waterline.
-    perchRock: reefRockMaterial(
+    perchRock: skyFill(reefRockMaterial(
       {
         vertexColors: true,
         roughness: 1,
@@ -75,7 +76,7 @@ function materials() {
         emissiveIntensity: 0.9,
       },
       true,
-    ),
+    )),
     iron: new THREE.MeshStandardMaterial({
       color: 0x5a5048,
       roughness: 0.65,
@@ -89,13 +90,13 @@ function materials() {
     // Thin canvas glows when the sun is behind it. Standard shading has no
     // transmission, so without an emissive lift the backlit side of the sail
     // renders as a black cutout.
-    cloth: new THREE.MeshStandardMaterial({
+    cloth: skyFill(new THREE.MeshStandardMaterial({
       color: 0xb5a88e,
       roughness: 0.92,
       side: THREE.DoubleSide,
       emissive: 0x4c545b,
       emissiveIntensity: 0.55,
-    }),
+    })),
     weed: new THREE.MeshStandardMaterial({
       color: 0x51713f,
       roughness: 0.9,

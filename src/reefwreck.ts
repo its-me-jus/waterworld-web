@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { barrelObject, plankObject } from './wreck'
+import { skyFill } from './skyfill'
 import { fbm, sampleOcean } from './waves'
 
 /**
@@ -464,8 +465,9 @@ export function createReefWreck(scene: THREE.Scene, opts: ReefWreckOptions) {
   // —— materials ——
   const plate = plateTexture()
   const planks = deckTexture()
+  // (registered as sky fill, so the hull does not go on glowing after dark)
   const lit = (extra: THREE.MeshStandardMaterialParameters) =>
-    new THREE.MeshStandardMaterial({ vertexColors: true, ...extra })
+    skyFill(new THREE.MeshStandardMaterial({ vertexColors: true, ...extra }))
   const mat = {
     // Skylight stand-in on every lit part: out here the air hemisphere is lit
     // by a near-black sea, so shade would crush to a silhouette
@@ -476,7 +478,7 @@ export function createReefWreck(scene: THREE.Scene, opts: ReefWreckOptions) {
     reef: lit({ roughness: 1, emissive: 0x3a362c, emissiveIntensity: 0.55 }),
     barnacle: new THREE.MeshStandardMaterial({ color: 0xcfc6b2, roughness: 0.98 }),
     wood: new THREE.MeshStandardMaterial({ color: 0x846a49, roughness: 0.94 }),
-    iron: new THREE.MeshStandardMaterial({ color: 0x5a5048, roughness: 0.65, metalness: 0.5, emissive: 0x171a1d, emissiveIntensity: 0.55 }),
+    iron: skyFill(new THREE.MeshStandardMaterial({ color: 0x5a5048, roughness: 0.65, metalness: 0.5, emissive: 0x171a1d, emissiveIntensity: 0.55 })),
   }
 
   // —— torn plating ——

@@ -22,6 +22,7 @@ import { createReefWreck } from './reefwreck'
 import { createSeaState } from './sea'
 import { createShoreSurf } from './shore'
 import { createSky } from './sky'
+import { setSkyFill } from './skyfill'
 import { createSparBuoy } from './spar'
 import { createSplashLayer } from './splash'
 import { createSwimmer } from './swimmer'
@@ -826,6 +827,8 @@ function frame() {
 
   const weather = climate.update(film.frozen ? 0 : dt)
   oceanMat.uniforms.uDaylight.value = weather.daylight
+  // Stone, wood and steel carry the sky's light in shade; it follows the sky down
+  setSkyFill(weather.daylight)
   applyStormToWaves(weather.storm)
   syncWaves()
   // The sea breathes under the squalls — glass-offs oil the chop down, and
@@ -1340,6 +1343,8 @@ function frame() {
 
 {
   const weather = climate.update(0)
+  // Before the first sky probe is taken, so a world that opens at night does not light it with day's fill
+  setSkyFill(weather.daylight)
   applyStormToWaves(weather.storm)
   syncWaves()
   sea.update(0, climate.getElapsed())
