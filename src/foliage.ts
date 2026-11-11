@@ -95,6 +95,13 @@ export type FoliageParams = THREE.MeshStandardMaterialParameters & {
    * Desktop only; a phone keeps the shade painted into the ground.
    */
   underRoof?: boolean
+  /**
+   * Let a crown's solid core drop out where it is seen close and from below.
+   * The core is there to give a crown mass from the sea and from above. From
+   * the ground at the forest's edge its flank is a smooth dark slab hanging
+   * in front of the sprays; cut away there, what is left is leaf and sky.
+   */
+  openBelow?: boolean
 }
 
 export type PlantBake = {
@@ -824,6 +831,23 @@ const groundWetBody = /* glsl */ `
   metalnessFactor = mix(metalnessFactor, 0.06, gWetness * 0.55);
 `
 
+/**
+ * A crown core seen from underneath and near to: gone by forty metres, whole
+ * again by eighty, and only where it stands above the eye, so from a ridge or
+ * the air the roof keeps its mass. The edge of the cut is broken by noise fixed
+ * to the crown, so it opens leaf by leaf as you walk in, not along a line.
+ */
+const openBelowBody = /* glsl */ `
+  #ifdef OPEN_BELOW
+  {
+    vec3 obTo = vGroundPos - cameraPosition;
+    float obDist = length(obTo);
+    float obCut = (1.0 - smoothstep(40.0, 80.0, obDist)) * smoothstep(-0.04, 0.12, obTo.y / max(obDist, 0.001));
+    if (obCut > 0.0 && gNoise(vGroundPos.xz * 2.6 + vGroundPos.y * vec2(1.9, 2.7)) < obCut * 1.05) discard;
+  }
+  #endif
+`
+
 /** Texels across the leaf atlas, for the mip-level estimate on cards whose map doesn't say. */
 const CARD_TEX_SIZE = 1024
 
@@ -858,6 +882,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
       leafBump = 0,
       transmit = 0,
       underRoof = false,
+      openBelow = false,
       ...rest
     } = params
     const mat = new THREE.MeshStandardMaterial({ ...rest, fog: false })
@@ -866,6 +891,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     if (shadowedBleed) mat.defines = { ...mat.defines, SHADOWED_BLEED: '' }
     const roofShade = underRoof && !opts.lowPower
     if (roofShade) mat.defines = { ...mat.defines, CANOPY_SHADE: '' }
+    if (openBelow) mat.defines = { ...mat.defines, OPEN_BELOW: '' }
     // The two closest octaves of ground colour are the finest detail in the
     // frame and the least visible on a five-inch screen. They come out on a
     // phone, where the terrain is most of the fill in any shot facing inland.
@@ -875,7 +901,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
     // handed the same program whichever compiled first. Name what actually
     // changes the shader.
     const cards = !!rest.map && (rest.alphaTest ?? 0) > 0
-    const programKey = `foliage:${wind > 0}:${translucency > 0}:${ground}:${leafBump > 0}:${cards}:${stone}:${roofShade}`
+    const programKey = `foliage:${wind > 0}:${translucency > 0}:${ground}:${leafBump > 0}:${cards}:${stone}:${roofShade}:${openBelow}`
     mat.customProgramCacheKey = () => programKey
     const uShapedFill = { value: shapedFill ? 1 : 0 }
     if ((ground || stone) && !uDetail.value) uDetail.value = groundDetail()
@@ -962,6 +988,7 @@ export function createFoliage(haze: THREE.Color, opts: { lowPower?: boolean } = 
         ${shader.fragmentShader}
       `
         .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${cloudShadowBody}${roofShade ? canopyShadeBody : ''}`)
+        .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>\n${openBelow ? openBelowBody : ''}`)
         .replace(
           '#include <emissivemap_fragment>',
           // The fill lifts shade evenly, which on a textured surface washes out

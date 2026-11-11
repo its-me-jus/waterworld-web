@@ -1673,12 +1673,15 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
    * under it. Sprays cost more than crowns there, hence only 32 of them.
    * Rounded shoulders add 0.23M triangles: about 1 ms from outside, nothing
    * measurable from under the roof, where their undersides are cut away.
+   * `open` lets a crown's core drop out seen close from below (foliage.ts
+   * `openBelow`): about 1 ms at the forest's edge and inside it. Off on a
+   * phone, whose thirty sprays a crown would leave holes without the core.
    */
   const ROOF = !low
-    ? { spacing: 6.8, cards: 64, floor: 0.45, wanted: 4500, lump: 1 }
+    ? { spacing: 6.8, cards: 64, floor: 0.45, wanted: 4500, lump: 1, open: true }
     : opts.bigScreen
-      ? { spacing: 8.4, cards: 32, floor: 0.9, wanted: 3200, lump: 1 }
-      : { spacing: 11, cards: 30, floor: 0.75, wanted: 1800, lump: 0 }
+      ? { spacing: 8.4, cards: 32, floor: 0.9, wanted: 3200, lump: 1, open: true }
+      : { spacing: 11, cards: 30, floor: 0.75, wanted: 1800, lump: 0, open: false }
   const haze = opts.hazeColor.clone()
   const foliage = createFoliage(haze, { lowPower: opts.lowPower })
   const group = new THREE.Group()
@@ -3384,6 +3387,8 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     transmit?: number
     /** Shaded by the canopy map; see FoliageParams. */
     underRoof?: boolean
+    /** Core drops out seen close from below; see FoliageParams. */
+    openBelow?: boolean
   }[] = [
     // Bark is rough but it is not chalk. Left at 0.95 a trunk picks up nothing
     // at all from the sky probe, so backlit it goes to a flat black cutout —
@@ -3422,6 +3427,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       shadowedBleed: true,
       leafBump: 0.9,
       transmit: 0.25,
+      openBelow: ROOF.open,
     },
     // The sprays over those lumps. Casts, cut out, so a specimen tree drops a
     // dappled shadow instead of a solid blot. Brighter than the lumps by the
@@ -3461,6 +3467,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       noCast: true,
       range: 300,
       wholeIsland: true,
+      openBelow: ROOF.open,
     },
     {
       parts: jungleLeaves,
@@ -3672,6 +3679,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
       alphaTest: layer.alphaTest ?? 0,
       transmit: layer.transmit,
       underRoof: layer.underRoof,
+      openBelow: layer.openBelow,
       ...(layer.fill ?? skylight),
     })
     const name = layerNames.get(layer.parts) ?? 'layer'
