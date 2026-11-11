@@ -39,6 +39,10 @@ uniform float uTide;
 uniform vec4 uShelter;
 uniform vec4 uWaves[${WAVE_COUNT}];
 uniform vec2 uWaveExtra[${WAVE_COUNT}];
+// Metres between vertices at the mesh's own size, and how many times that the
+// mesh is stretched as the eye climbs (1 at sea level; see main.ts)
+uniform float uGrid;
+uniform float uBand;
 
 varying vec3 vWorldPos;
 varying vec3 vNormal;
@@ -84,19 +88,30 @@ void main() {
   vec3 binormal = vec3(0.0, 0.0, 1.0);
   vec3 disp = vec3(0.0);
 
+  // Seen from height the mesh is stretched to reach the horizon, and a grid
+  // twenty metres to the square cannot hold a nine-metre wave: sampled that
+  // coarsely the short trains come out as a regular quilt of bumps, the grid
+  // itself drawn on the sea. So each train is carried only while the stretched
+  // grid has the vertices for it; the fragment stage draws the rest per pixel.
+  // Nothing changes at sea level, where uBand is 1.
+  float cell = uGrid * uBand;
+  float limit = clamp((uBand - 1.0) * 2.0, 0.0, 1.0);
+
   for (int i = 0; i < ${WAVE_COUNT}; i++) {
     // Long swell dies against the island; short waves keep a lap — waves.ts
     float keep = 0.1 + 0.35 * (1.0 - clamp(uWaves[i].w / 60.0, 0.0, 1.0));
     float att = mix(1.0, keep, lee);
+    att *= mix(1.0, smoothstep(2.0 * cell, 4.5 * cell, uWaves[i].w), limit);
     disp += gerstner(world.xz, uWaves[i], uWaveExtra[i], att, tangent, binormal);
   }
 
   // Chop rides the sea state's amp (glass-offs oil it down) and the storm's
-  // chopScale (squalls whip it up) — the lee hushes it to a ripple
+  // chopScale (squalls whip it up) — the lee hushes it to a ripple. It is
+  // finer than any stretched grid can hold, so it goes first.
   float chop =
     (fbm(world.xz * 0.08 + vec2(uTime * 0.07, -uTime * 0.05), 4) - 0.5) * 0.55 * uAmp +
     (fbm(world.xz * 0.22 + vec2(-uTime * 0.11, uTime * 0.03), 3) - 0.5) * 0.22 * uAmp;
-  disp.y += chop * uChopScale * (1.0 - 0.65 * lee);
+  disp.y += chop * uChopScale * (1.0 - 0.65 * lee) * (1.0 - limit);
 
   world += disp;
   // Mean sea level — matches oceanState.tide / sampleOcean
@@ -134,12 +149,47 @@ uniform vec4 uShelf;
 uniform sampler2D uSeabed;
 uniform vec4 uSeabedRect;
 uniform vec2 uSeabedRange;
+// The same wave trains the vertex stage moves, for drawing them per pixel from height
+uniform vec4 uWaves[${WAVE_COUNT}];
+uniform vec2 uWaveExtra[${WAVE_COUNT}];
+uniform float uAmp;
+uniform float uBand;
 
 varying vec3 vWorldPos;
 varying vec3 vNormal;
 varying float vCrest;
 
 ${noiseGLSL}
+
+// The sea's surface as it looks from the air, worked out for each pixel so it
+// does not depend on how coarse the mesh under it is. A sum of a few perfect
+// wave trains is a perfect lattice when you can see a square kilometre of it,
+// which no sea is. A real one is short-crested: a crest runs a few
+// wavelengths and gives out, and waves arrive a few at a time. So each train
+// here has its own two slow fields, one that lets its crests wander and one
+// that brings its height up and down in groups, and the trains never lock
+// together. A train finer than a couple of pixels fades out instead of
+// shimmering. The two shortest trains are left to the ripple detail.
+vec3 seaFromAbove(vec2 p, float lee) {
+  float foot = max(length(dFdx(p)), length(dFdy(p)));
+  vec2 slope = vec2(0.0);
+  for (int i = 0; i < ${WAVE_COUNT} - 2; i++) {
+    float wavelength = uWaves[i].w;
+    float k = 6.28318530718 / wavelength;
+    float c = sqrt(9.8 / k) * uWaveExtra[i].y;
+    vec2 d = normalize(uWaves[i].xy);
+    float fi = float(i);
+    vec2 q = p / wavelength;
+    float wander = (noise(q * 0.17 + vec2(fi * 5.3, fi * 2.1)) - 0.5) * 7.0;
+    float f = k * (dot(d, p) - c * uTime) + uWaveExtra[i].x + wander;
+    // The groups drift downwind with the waves, at half their speed as groups do
+    float group = smoothstep(0.22, 0.78, noise(q * 0.27 - d * (c * uTime * 0.5 * 0.27 / wavelength) + vec2(fi * 1.7 + 9.0, fi * 4.3))) * 1.7;
+    float keep = mix(1.0, 0.1 + 0.35 * (1.0 - clamp(wavelength / 60.0, 0.0, 1.0)), lee);
+    float seen = 1.0 - smoothstep(0.16 * wavelength, 0.42 * wavelength, foot);
+    slope += d * (uWaves[i].z * uAmp * keep * group * seen * cos(f));
+  }
+  return normalize(vec3(-slope.x, 1.0, -slope.y));
+}
 
 // Micro-detail normal from noise gradient, faded with distance to kill shimmer
 vec3 detailNormal(vec2 p, float fade) {
@@ -165,7 +215,11 @@ vec3 detailNormal(vec2 p, float fade) {
 float waterDepth(vec3 p) {
   vec2 uv = (p.xz - uSeabedRect.xy) * uSeabedRect.zw;
   float floorY = uSeabedRange.x + textureLod(uSeabed, clamp(uv, 0.0, 1.0), 0.0).r * uSeabedRange.y;
-  vec2 inside = step(vec2(0.0), uv) * step(uv, vec2(1.0));
+  // The map is a square of sea floor. Where the floor at its edge is still
+  // shallow enough to tint the water, the tint stopped dead along the square:
+  // a ruled line across the sea from the air. It eases out to open water over
+  // the last stretch inside the edge instead.
+  vec2 inside = smoothstep(vec2(0.0), vec2(0.07), uv) * (1.0 - smoothstep(vec2(0.93), vec2(1.0), uv));
   return mix(100.0, p.y - floorY, inside.x * inside.y * step(0.001, uSeabedRange.y));
 }
 
@@ -206,6 +260,9 @@ void main() {
   // only aliases into the lattice; the sea out there is an even sheen anyway
   float farFlat = max(farN * (0.45 + 0.45 * macro), smoothstep(380.0, 1300.0, dist));
   vec3 base = normalize(mix(vNormal, vec3(0.0, 1.0, 0.0), farFlat));
+  // 0 at sea level, 1 once the eye is up where the mesh is stretched
+  float high = smoothstep(1.0, 2.0, uBand);
+  if (high > 0.001) base = normalize(mix(base, seaFromAbove(vWorldPos.xz, lee), high));
   vec3 detail = detailNormal(vWorldPos.xz, fade * (1.0 - 0.78 * lee) * (0.7 + 0.6 * macro));
   vec3 N = normalize(base + vec3(detail.x, 0.0, detail.z) * 0.7);
   N.y = max(N.y, 0.12);
@@ -343,6 +400,9 @@ void main() {
   // Sun glitter: sharp near, broader far — dialled back over the shelf so it
   // doesn't glitter like open ocean on ankle-deep water
   float rough = mix(0.05, 0.2, clamp(dist * 0.006, 0.0, 1.0));
+  // From the air every wave is drawn, so the sun can find its own facets: a
+  // tighter lobe gives a path of glints where the broad one gave a white sheet
+  rough = mix(rough, 0.11, high);
   rough = mix(rough, 0.24, shallow);
   // From high up the broad far lobe spreads into a white sheet over half the
   // sea, so the glare thins as the eye climbs
@@ -402,6 +462,11 @@ void main() {
   // From height the far sea is a hazy blue a shade under the sky, not the
   // sky's own white; the dome below the horizon is painted the same (sky.ts)
   vec3 farSea = mix(uHorizonColor * 0.85, uHorizonColor * vec3(0.55, 0.68, 0.8), smoothstep(25.0, 220.0, uCameraPos.y));
+  // And it pales into the haze as the line of sight flattens toward the
+  // horizon, by the same rule the dome below the horizon is painted with
+  // (sky.ts), so the two meet without a seam and the sea line is soft. V.y is
+  // the sine of the angle the line of sight dips below level.
+  farSea = mix(farSea, uHorizonColor, (1.0 - smoothstep(0.0, 0.11, V.y)) * high);
   color = mix(color, farSea, far * 0.92);
 
   // Soft edge: last metres over the beach go translucent so sand peeks through
@@ -467,6 +532,8 @@ export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: O
       uCavePool: { value: new THREE.Vector4() },
       uWaves: { value: uWaves },
       uWaveExtra: { value: uWaveExtra },
+      uGrid: { value: size / segments },
+      uBand: { value: 1 },
       uEnvMap: { value: null },
       uDeepColor: { value: new THREE.Color('#031d2b') },
       uShallowColor: { value: new THREE.Color('#12718c') },

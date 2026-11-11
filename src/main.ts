@@ -1010,6 +1010,15 @@ function frame() {
   else if (seaWant < seaScale - 0.6) seaScale--
   ocean.scale.set(seaScale, 1, seaScale)
   oceanMat.uniforms.uHalfExtent.value = OCEAN_SIZE * 0.5 * seaScale
+  // How coarse the sea's grid is about to be, as a smooth number: the shader
+  // lets go of each wave train before the mesh steps to a size that cannot
+  // hold it, so the step itself shows nothing. 1 up to 25 m (the sea from the
+  // beach and the low hills is untouched), 2 where the mesh first doubles.
+  const eyeHeight = camera.position.y
+  oceanMat.uniforms.uBand.value = Math.max(
+    seaScale,
+    eyeHeight < 58 ? 1 + THREE.MathUtils.smoothstep(eyeHeight, 25, 58) : (eyeHeight + 52) / 55,
+  )
   follow(camera.position.x, camera.position.z)
   // follow() snaps to the unscaled vertex spacing; the grid is coarser now
   const seaStep = (OCEAN_SIZE / OCEAN_SEGMENTS) * seaScale

@@ -123,6 +123,8 @@ void main() {
     vec3 bankCol = mix(mix(uShadow, uTint, 0.7), uTint * 1.05, lift);
     bankCol += uTint * pow(sun, 8.0) * 0.6 * (1.0 - lift * 0.5);
     float bankA = bank * mix(0.22, 0.8, smoothstep(0.0, 0.6, lift)) * uOpacity;
+    // The base thins to nothing at the sea line, where the dome takes over
+    bankA *= smoothstep(0.0, 0.012, d.y);
     // Over the deck, under its alpha — the bank is further away
     float outA = alpha + bankA * (1.0 - alpha);
     col = (col * alpha + bankCol * bankA * (1.0 - alpha)) / max(outA, 0.001);
@@ -138,6 +140,11 @@ void main() {
   float hazeA = alpha + haze * (1.0 - alpha);
   col = (col * alpha + uHaze * haze * (1.0 - alpha)) / max(hazeA, 0.001);
   alpha = hazeA;
+  // This shell stops at the horizon. Below it the sea writes depth, and a
+  // haze drawn here was cut off along the circle where the shell meets the
+  // water: from the air, a ruled white line with flat blue under it. The sky
+  // dome carries the haze on down from here instead (see belowSea there).
+  alpha *= step(0.0, d.y);
 
   gl_FragColor = vec4(col, alpha);
 
@@ -337,6 +344,8 @@ const skyScale = { value: 0.3 }
  * painted a white band; main.ts sets it to the far sea's hazy blue.
  */
 const seaFar = { value: new THREE.Color(0.5, 0.6, 0.68) }
+/** The horizon haze, shared with the cloud shell, for the sea line seen from height. */
+const seaHaze = { value: new THREE.Color(0.8, 0.86, 0.9) }
 
 /** Fixed moon direction — high enough to read, offset from the sun track. */
 const MOON_ELEVATION = 42
@@ -383,12 +392,20 @@ export function createSky(
   sky.material.onBeforeCompile = (shader) => {
     shader.uniforms.uSkyScale = skyScale
     shader.uniforms.uSeaFar = seaFar
+    shader.uniforms.uSeaHaze = seaHaze
     shader.fragmentShader = shader.fragmentShader
-      .replace('void main() {', 'uniform float uSkyScale;\nuniform vec3 uSeaFar;\nvoid main() {')
+      .replace('void main() {', 'uniform float uSkyScale;\nuniform vec3 uSeaFar;\nuniform vec3 uSeaHaze;\nvoid main() {')
       .replace(
         'gl_FragColor = vec4( texColor, 1.0 );',
-        `float belowSea = smoothstep(0.0, -0.03, normalize(vWorldPosition - cameraPosition).y);
-        gl_FragColor = vec4(mix(texColor * uSkyScale, uSeaFar, belowSea), 1.0);`,
+        // Above the horizon: the sky. Below it: the cloud shell's haze carried
+        // on through the sea line at the same strength (0.62, see cloudFragment),
+        // then deepening to the far sea's colour as the line of sight dips,
+        // by the rule the ocean mesh uses for its own far water (ocean.ts).
+        `float skyY = normalize(vWorldPosition - cameraPosition).y;
+        vec3 skyCol = texColor * uSkyScale;
+        vec3 seaLine = mix(skyCol, uSeaHaze, 0.62);
+        vec3 belowCol = mix(seaLine, uSeaFar, smoothstep(0.0, 0.11, -skyY));
+        gl_FragColor = vec4(skyY < 0.0 ? belowCol : skyCol, 1.0);`,
       )
   }
 
@@ -701,6 +718,7 @@ export function createSky(
         horizonColor.lerp(new THREE.Color('#d8e4f4'), Math.min(0.85, flash * 0.9))
       }
       cloudMat.uniforms.uHaze.value.copy(horizonColor)
+      seaHaze.value.copy(horizonColor)
 
       // Aim the key light at the moon once the sun is down so silhouettes read
       if (climate.sunElevation < 2) {
