@@ -24,6 +24,8 @@ export type IslandOptions = {
   x: number
   z: number
   lowPower?: boolean
+  /** A desktop-sized screen: the light budget gets a closer forest roof there. */
+  bigScreen?: boolean
   /** Distant land takes the colour of the air between you and it. */
   hazeColor: THREE.Color
 }
@@ -1655,6 +1657,23 @@ function gullMesh(seed: number) {
 
 export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const low = opts.lowPower ?? false
+  /**
+   * The forest roof, by budget. A phone's is a third as many crowns, each
+   * stretched wide to keep the cover. Held in the hand that reads as forest;
+   * on a monitor every crown is a blocky slab with sunlit hill between, so a
+   * desktop on the light budget (built-in graphics) gets a roof in between:
+   * `spacing` is the planting grid in metres, `cards` the leaf sprays on each
+   * crown, `floor` how far the ground under the roof is painted toward shade
+   * (the full budget shades it by light instead, see the canopy map).
+   * Timed on Intel UHD at 1080p: the in-between roof is 2,312 crowns against
+   * the phone's 1,366, about 1.5 ms a frame from the sea and 3.5 ms standing
+   * under it. Sprays cost more than crowns there, hence only 32 of them.
+   */
+  const ROOF = !low
+    ? { spacing: 6.8, cards: 64, floor: 0.45, wanted: 4500 }
+    : opts.bigScreen
+      ? { spacing: 8.4, cards: 32, floor: 0.9, wanted: 3200 }
+      : { spacing: 11, cards: 30, floor: 0.75, wanted: 1800 }
   const haze = opts.hazeColor.clone()
   const foliage = createFoliage(haze, { lowPower: opts.lowPower })
   const group = new THREE.Group()
@@ -1951,9 +1970,9 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // Under a closed roof the floor is in shade all day. From the sea that dark
     // between the crowns is most of what reads as depth — a lit lawn showing
     // through is what made the slopes look planted
-    // On desktop the canopy map shades the floor by light (foliage.ts), so the
+    // On the full budget the canopy map shades the floor by light (foliage.ts), so the
     // paint only carries the darker soil and litter, not the shade as well
-    growth.lerp(forestFloor, forestCover(x, z) * (1 - roofGap(x, z) * 0.3) * (low ? 0.75 : 0.45))
+    growth.lerp(forestFloor, forestCover(x, z) * (1 - roofGap(x, z) * 0.3) * ROOF.floor)
     const growing = THREE.MathUtils.smoothstep(y, 4, 15)
     // Steep faces shed soil — bare rock on the cliffs and up around the crater.
     // Mesh normals alone under-read carved faces (a cliff spans ~2 cells), so
@@ -2089,7 +2108,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   const bloomWanted = low ? 30 : 80
   const saplingWanted = low ? 110 : 260
   /** Crowns in the closed forest roof — a ceiling, the grid spacing sets the real count. */
-  const jungleWanted = low ? 1800 : 4500
+  const jungleWanted = ROOF.wanted
   // Extra cliff-scree stones — rubble at the foot of carved faces
   const screeWanted = low ? 40 : 90
   // broadWanted is the mid-story tree target; saplings add on top of that
@@ -3063,10 +3082,10 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     // Flat cards: the roof is seen from ten metres up at the nearest, where a
     // fold along the rib doesn't show and would double the count
     const leafTemplates = templates.map((t, k) =>
-      leafCards(t, { count: low ? 30 : 64, length: 0.62, seed: k + 7100, fold: false, depth: 0.16 }),
+      leafCards(t, { count: ROOF.cards, length: 0.62, seed: k + 7100, fold: false, depth: 0.16 }),
     )
     for (const t of templates) openUnderside(shrinkCore(t, 0.82))
-    const spacing = low ? 11 : 6.8
+    const spacing = ROOF.spacing
     const reach = 300
     let planted = 0
     for (let gz = -reach; gz <= reach && planted < jungleWanted; gz += spacing) {

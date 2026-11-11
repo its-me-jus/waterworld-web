@@ -164,6 +164,7 @@ const island = createIsland(scene, {
   x: 980,
   z: -680,
   lowPower,
+  bigScreen: quality().bigScreen,
   hazeColor: skyRig.horizonColor,
 })
 

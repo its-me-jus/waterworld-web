@@ -38,6 +38,12 @@ export type Quality = {
   reason: string
   /** The fill test's time in ms, when it ran. */
   gpuMs: number | null
+  /**
+   * A desktop-sized screen with a mouse. The light budget was drawn for a
+   * phone held at arm's length; on a monitor the same forest shows the hill
+   * between its trees, so it gets a closer roof there (see island.ts).
+   */
+  bigScreen: boolean
 }
 
 function readChoice(): DetailChoice {
@@ -179,7 +185,7 @@ export function quality(): Quality {
       reason = gpuMs === null ? 'graphics speed unknown' : 'fast graphics'
     }
   }
-  chosen = { detail, choice, reason, gpuMs }
+  chosen = { detail, choice, reason, gpuMs, bigScreen: !touch }
   return chosen
 }
 
