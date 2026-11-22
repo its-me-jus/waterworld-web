@@ -182,7 +182,7 @@ export async function handleNpc(request: Request, env: ServerEnv = {}, ip = 'sha
   const retry = retryAfter(ip, Date.now())
   if (retry) return json(429, { error: 'Try again shortly' }, { 'Retry-After': String(retry) })
 
-  const deadline = AbortSignal.timeout(8000)
+  const deadline = AbortSignal.timeout(10_000)
   const signal = request.signal ? AbortSignal.any([deadline, request.signal]) : deadline
   let turn: NpcTurnRequest | null
   try {
@@ -206,7 +206,7 @@ export async function handleNpc(request: Request, env: ServerEnv = {}, ip = 'sha
     const ai = new GoogleGenAI({ apiKey: key, vertexai: false })
     const pending = ai.models.generateContent({
       model, contents: JSON.stringify(turn), config: {
-        abortSignal: signal, httpOptions: { timeout: 8000 }, systemInstruction: direction,
+        abortSignal: signal, httpOptions: { timeout: 10_000 }, systemInstruction: direction,
         responseMimeType: 'application/json', responseJsonSchema: decisionSchema(turn),
         maxOutputTokens: 650, temperature: 0.65,
       },

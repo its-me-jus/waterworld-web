@@ -32,6 +32,15 @@ import { createLowClouds } from './lowclouds'
 import { applyStormToWaves, oceanState, sampleOcean, setShelter, shelterAt } from './waves'
 import { createWreck } from './wreck'
 import { createWorldControls, readDestination, type Destination } from './world-controls'
+import { createHeistIntro, createIslandSmoke } from './story/heist-intro'
+import { createHeistProps } from './story/cash-bag'
+import { createTribeSim } from './tribe/tribe-sim'
+import { getTribePlaces } from './tribe/places'
+import type { TribePlayerState } from './tribe/types'
+import { createStoryState } from './ai/story-state'
+import { createNpcBrain } from './ai/npc-brain'
+import { createInteractionUI, type InteractionContext } from './ai/interaction-ui'
+import { createEarpiece } from './ai/earpiece'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 if (!app) throw new Error('#app missing')
@@ -497,6 +506,7 @@ function landOnBeach() {
 }
 function cutAwayToBeach() {
   if (!chute.active) return
+  heistIntro.skip()
   chute.cut()
   landOnBeach()
 }
@@ -598,6 +608,229 @@ const desktop = bindKeyboardMouse(renderer.domElement, player, {
 
 if (mobile) document.body.classList.add('playing')
 
+const places = getTribePlaces(island, reefWreck.position, tidalCaves.entrance)
+const campSmoke = createIslandSmoke(scene, places.campFire, lowPower)
+if (film.on) campSmoke.setVisible(false)
+const heistProps = createHeistProps(scene, {
+  island,
+  reefWreckPos: reefWreck.position,
+  reefWreckStandAt: reefWreck.standAt,
+  reefWreckYaw: reefWreck.yaw,
+  wreckPos: wreck.group.position,
+  wreckPerch: wreck.perch,
+  wreckStandAt: wreck.standAt,
+  tidalCaves,
+  lowPower,
+})
+const story = createStoryState()
+const brain = createNpcBrain(story)
+const earpiece = createEarpiece()
+
+function syncPropsFromStory() {
+  const s = story.getState()
+  if (s.bagState === 'stashed_caves') heistProps.bag.stashInCaves()
+  else if (s.bagState === 'dropped') heistProps.bag.drop(places.landing)
+  else heistProps.bag.pickUp()
+  for (const id of ['salvage_compass', 'salvage_flare', 'radio_battery', 'spear'] as const) {
+    const recovered =
+      s.inventory.includes(id) ||
+      (id === 'salvage_compass' && s.flags.salvagedCompass) ||
+      (id === 'salvage_flare' && s.flags.salvagedFlare) ||
+      (id === 'radio_battery' && s.flags.salvagedBattery)
+    if (recovered) heistProps.pickUp(id)
+  }
+}
+syncPropsFromStory()
+
+let prevEnding = story.getState().ending
+story.subscribe((s) => {
+  if (s.ending === 'burn_the_bag' && prevEnding !== 'burn_the_bag') {
+    heistProps.burnCashBills(places.campFire, 60)
+    heistProps.bag.drop(places.campFire)
+  }
+  prevEnding = s.ending
+})
+
+let playerCrouched = false
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyC' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
+  if (document.querySelector('dialog[open]')) return
+  const target = e.target as HTMLElement | null
+  if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) return
+  if (chute.active || player.mode !== 'walk') return
+  playerCrouched = !playerCrouched
+})
+
+let interactionUI: ReturnType<typeof createInteractionUI> | null = null
+const tribe = createTribeSim(scene, {
+  island,
+  reefWreckPos: reefWreck.position,
+  tidalCaves,
+  lowPower,
+  onWhisper: (text) => hud.whisper(text),
+  onPlayerCaptured: () => {
+    playerCrouched = false
+    interactionUI?.capture()
+  },
+  onProximityEnter: (id) => {
+    if (id === 'kael') hud.whisper('A figure steps clear of the trees.')
+  },
+})
+
+const heistIntro = createHeistIntro(app, {
+  enabled: wantChute && !film.on,
+  getAltitude: () => (chute.active ? chute.height : 0),
+  onSkip: () => void oceanAudio.unlock(),
+  onDone: () => arrival.begin(),
+})
+
+const timer = new THREE.Timer()
+timer.connect(document)
+let bubbleTimer = 0
+let envTimer = 0
+function travelTo(place: Destination) {
+  heistIntro.skip()
+  chute.cut()
+  playerCrouched = false
+  Object.assign(player, createPlayer(), { unlocked: document.pointerLockElement === renderer.domElement })
+  prevSurfaceForAudio = Number.NaN
+  heave = 0
+  envTimer = 0
+  if (place === 'beach') {
+    landOnBeach()
+    return
+  }
+  if (place === 'camp') {
+    const dx = places.landing.x - places.campFire.x
+    const dz = places.landing.z - places.campFire.z
+    const baseAngle = Math.atan2(dz, dx)
+    let cx = places.campFire.x + Math.cos(baseAngle) * 38
+    let cz = places.campFire.z + Math.sin(baseAngle) * 38
+    for (const offset of [0, 0.2, -0.2, 0.4, -0.4, 0.65, -0.65]) {
+      const tx = places.campFire.x + Math.cos(baseAngle + offset) * 38
+      const tz = places.campFire.z + Math.sin(baseAngle + offset) * 38
+      const th = groundAt(tx, tz)
+      if (th >= 0.8 && th < 16) {
+        cx = tx
+        cz = tz
+        break
+      }
+    }
+    player.x = cx
+    player.z = cz
+    player.mode = 'walk'
+    player.y = groundAt(cx, cz) + 1.62
+    player.yaw = Math.atan2(-(places.campFire.x - cx), -(places.campFire.z - cz))
+    player.pitch = 0.02
+    saidShore = true
+    return
+  }
+  const spots = {
+    forest: { x: 860, z: -600, yaw: -0.6, pitch: 0.14 },
+    lagoon: { x: 804, z: -437, yaw: -0.63, pitch: -0.16 },
+    wreck: { x: wreck.group.position.x + 14, z: wreck.group.position.z + 16, yaw: 0.72, pitch: -0.3 },
+    caves: tidalCaves.entrance,
+  }
+  Object.assign(player, spots[place])
+  const seaY = sampleOcean(player.x, player.z, timer.getElapsed()).y
+  if (place === 'forest') {
+    player.mode = 'walk'
+    player.y = groundAt(player.x, player.z) + 1.62
+  } else {
+    player.y = Math.max(groundAt(player.x, player.z) + 1.62, seaY + (place === 'wreck' ? -6 : 1.5))
+    if (place === 'caves') hud.whisper('Six metres down, the pale channel forks. The left arch runs deeper.', true)
+  }
+}
+
+const camForward = new THREE.Vector3()
+const billOrigin = new THREE.Vector3()
+const dropOrigin = new THREE.Vector3()
+const playerPosVec = new THREE.Vector3()
+const tribePlayer: TribePlayerState = { x: 0, y: 0, z: 0, yaw: 0, speed: 0, crouched: false, mode: 'walk' }
+
+// Mount interactionUI before createWorldControls so its KeyG guard protects Speak/Ask input.
+interactionUI = film.on ? null : createInteractionUI(app, {
+  story,
+  brain,
+  onGesture(gesture) {
+    tribe.playerGesture(gesture)
+    if (gesture === 'crouch') playerCrouched = true
+    else if (gesture === 'empty_hands' || gesture === 'back_away') playerCrouched = false
+    else if (gesture === 'offer_cash') {
+      camera.getWorldDirection(camForward)
+      billOrigin.copy(camera.position).addScaledVector(camForward, 1.1)
+      heistProps.burstCashBills(billOrigin, 18)
+    } else if (gesture === 'drop_bag') {
+      const floor = groundAt(player.x, player.z)
+      const seaY = sampleOcean(player.x, player.z, timer.getElapsed()).y
+      dropOrigin.set(player.x, Math.max(floor, seaY), player.z)
+      heistProps.bag.drop(dropOrigin)
+    }
+  },
+  onDecision(decision) {
+    tribe.applyAiDecision(decision.npcId, decision.action, decision.pose)
+    if (decision.action === 'scoff_at_cash') {
+      const npc = tribe.npcs.find((n) => n.id === decision.npcId)
+      if (npc) {
+        billOrigin.copy(npc.rig.root.position)
+        billOrigin.y += 1.25
+        heistProps.burstCashBills(billOrigin, 10)
+      }
+    }
+  },
+  onWorldAction(ctx) {
+    if (ctx.kind === 'salvage') heistProps.pickUp(ctx.item)
+    else if (ctx.kind === 'cave') {
+      if (story.getState().bagState === 'stashed_caves') heistProps.bag.stashInCaves()
+      else heistProps.bag.pickUp()
+    } else if (ctx.kind === 'dropped_bag') heistProps.bag.pickUp()
+    else if (ctx.kind === 'campfire') heistProps.burnCashBills(places.campFire, 24)
+  },
+  onWashAshore() {
+    playerCrouched = false
+    tribe.resetEncounters()
+    earpiece.reset()
+    prevSurfaceForAudio = Number.NaN
+    heave = 0
+    envTimer = 0
+    chute.cut()
+    landOnBeach()
+    syncPropsFromStory()
+  },
+  onFreshDrop() {
+    playerCrouched = false
+    tribe.resetEncounters()
+    heistProps.resetProps()
+    earpiece.reset()
+    saidShore = false
+    saidPerch = false
+    firstDive = false
+    prevSurfaceForAudio = Number.NaN
+    heave = 0
+    envTimer = 0
+    Object.assign(player, createPlayer(), { unlocked: document.pointerLockElement === renderer.domElement })
+    chute.begin(player, { ...chuteStart, pitch: -0.12 }, timer.getElapsed())
+    skipChute.hidden = false
+    hud.whisper('New drop. Same soggy duffel.', true)
+  },
+})
+
+let tracking = false
+const trackingCamera = new THREE.PerspectiveCamera(41, camera.aspect, 0.05, camera.far)
+trackingCamera.layers.enable(DETAIL_LAYER)
+const cameraTarget = new THREE.Vector3()
+const worldControls = film.on ? null : createWorldControls(app, {
+  setTracking: on => { tracking = on },
+  getMinutes: () => Math.floor(climate.state.dayPhase * 1440),
+  setMinutes: (minutes) => {
+    const day = Math.floor(climate.getElapsed() / DAY_LENGTH)
+    climate.setElapsed((day + minutes / 1440) * DAY_LENGTH)
+    envTimer = 0
+  },
+  travelTo,
+})
+if (startingPlace && !wantChute) travelTo(startingPlace)
+
 // Dev-only handle, for poking at state from the console or a headless run
 if (import.meta.env.DEV) {
   Object.assign(window, {
@@ -622,56 +855,18 @@ if (import.meta.env.DEV) {
       underwater: underwaterWorld,
       quality: quality(),
       governor,
+      places,
+      heistProps,
+      tribe,
+      story,
+      brain,
+      earpiece,
+      interactionUI,
+      campSmoke,
+      heistIntro,
     },
   })
 }
-
-const timer = new THREE.Timer()
-timer.connect(document)
-let bubbleTimer = 0
-let envTimer = 0
-function travelTo(place: Destination) {
-  chute.cut()
-  Object.assign(player, createPlayer(), { unlocked: document.pointerLockElement === renderer.domElement })
-  prevSurfaceForAudio = Number.NaN
-  heave = 0
-  envTimer = 0
-  if (place === 'beach') {
-    landOnBeach()
-    return
-  }
-  const spots = {
-    forest: { x: 860, z: -600, yaw: -0.6, pitch: 0.14 },
-    lagoon: { x: 804, z: -437, yaw: -0.63, pitch: -0.16 },
-    wreck: { x: wreck.group.position.x + 14, z: wreck.group.position.z + 16, yaw: 0.72, pitch: -0.3 },
-    caves: tidalCaves.entrance,
-  }
-  Object.assign(player, spots[place])
-  const seaY = sampleOcean(player.x, player.z, timer.getElapsed()).y
-  if (place === 'forest') {
-    player.mode = 'walk'
-    player.y = groundAt(player.x, player.z) + 1.62
-  } else {
-    player.y = Math.max(groundAt(player.x, player.z) + 1.62, seaY + (place === 'wreck' ? -6 : 1.5))
-    if (place === 'caves') hud.whisper('Six metres down, the pale channel forks. The left arch runs deeper.', true)
-  }
-}
-
-let tracking = false
-const trackingCamera = new THREE.PerspectiveCamera(41, camera.aspect, 0.05, camera.far)
-trackingCamera.layers.enable(DETAIL_LAYER)
-const cameraTarget = new THREE.Vector3()
-const worldControls = film.on ? null : createWorldControls(app, {
-  setTracking: on => { tracking = on },
-  getMinutes: () => Math.floor(climate.state.dayPhase * 1440),
-  setMinutes: (minutes) => {
-    const day = Math.floor(climate.getElapsed() / DAY_LENGTH)
-    climate.setElapsed((day + minutes / 1440) * DAY_LENGTH)
-    envTimer = 0
-  },
-  travelTo,
-})
-if (startingPlace && !wantChute) travelTo(startingPlace)
 const idleInput = createInputState()
 const SEA_FAR_TINT = new THREE.Color(0.55, 0.68, 0.8)
 const seaFarHigh = new THREE.Color()
@@ -842,7 +1037,7 @@ function frame() {
 
   touch.apply(input)
   desktop.mergeKeys(input)
-  if (worldControls?.open) Object.assign(input, idleInput)
+  if (worldControls?.open || document.querySelector('dialog[open]')) Object.assign(input, idleInput)
   // Any keyboard use unlocks the audio context (WASD before click)
   if (
     input.moveForward ||
@@ -862,11 +1057,14 @@ function frame() {
     x: sea.current.x * lee,
     z: sea.current.z * lee,
   }
+  if (chute.active || player.mode !== 'walk') playerCrouched = false
+  const bagMods = heistProps.getMovementModifiers()
   const flight = chute.update(dt, t, player, camera, input, groundAt)
   if (flight?.touchdown) touchdown(flight.touchdown)
   const view: PlayerFrame = flight ? flight.frame : updatePlayer(
     player, camera, input, dt, t, collide, floorBelowPlayer, drift,
     tidalCaves.inGallery(player.x, player.y, player.z),
+    { ...bagMods, crouched: playerCrouched },
   )
   // Retain the physical sea but honour a request for a steady head and horizon.
   if (reducedMotion && !film.pose) {
@@ -911,7 +1109,8 @@ function frame() {
   else if (depth < 0.25) diveControls = false
   const travelMode = chute.active ? 'glide' : diveControls ? 'swim' : view.walking ? 'walk' : 'swim'
   touch.setMode(travelMode)
-  arrival.update(dt, travelMode === 'swim' && diveControls ? 'dive' : travelMode)
+  heistIntro.update(dt)
+  if (!heistIntro.playing) arrival.update(dt, travelMode === 'swim' && diveControls ? 'dive' : travelMode)
   if (!firstDive && depth > 1.5 && !film.on) {
     firstDive = true
     hud.whisper('The swell goes quiet above you.')
@@ -1253,6 +1452,85 @@ function frame() {
     stroke: view.stroke,
     inSea: !onLand && (!chute.active || view.submersion > 0.05),
   })
+  if (chute.active && chute.height < 240 && !story.getState().flags.seenSmoke) {
+    story.discover('seenSmoke')
+  }
+  campSmoke.update(dt, t, weather)
+  heistProps.update(dt, t, weather, camera.position)
+  const currentStory = story.getState()
+  tribePlayer.x = player.x
+  tribePlayer.y = player.y
+  tribePlayer.z = player.z
+  tribePlayer.yaw = player.yaw
+  tribePlayer.speed = view.speed
+  tribePlayer.crouched = playerCrouched
+  tribePlayer.mode = chute.active ? 'glide' : view.walking ? 'walk' : 'swim'
+  tribe.update(dt, t, tribePlayer, weather, currentStory.heldItem, currentStory.bagState === 'carried', camera)
+  const vinceLine = earpiece.update(view.walking ? view.groundY : 0, currentStory, onLand && !chute.active)
+  if (vinceLine) hud.whisper(vinceLine)
+
+  if (interactionUI) {
+    let nextCtx: InteractionContext | null = null
+    if (!film.on && !chute.active && !heistIntro.playing) {
+      playerPosVec.set(player.x, player.y, player.z)
+      const nearest = tribe.getNearestNpc(playerPosVec)
+      const kaelHostile =
+        nearest?.id === 'kael' &&
+        (nearest.pose === 'warn_spear_raise' || nearest.pose === 'stalk' || nearest.pose === 'charge_attack')
+      const npcCtx = (): InteractionContext | null => {
+        if (!nearest) return null
+        const talaPos = tribe.npcs.find((n) => n.id === 'tala')?.rig.root.position
+        const oruPos = tribe.npcs.find((n) => n.id === 'oru')?.rig.root.position
+        const talaPresent =
+          !!talaPos && ((!!oruPos && talaPos.distanceTo(oruPos) < 22) || talaPos.distanceTo(playerPosVec) < 18)
+        return {
+          kind: 'npc',
+          npcId: nearest.id,
+          talaPresent,
+          trespassing: places.inSacredZone(player.x, player.z),
+        }
+      }
+      const hit = heistProps.getNearbyInteractable(playerPosVec, 4.2)
+      let hitCtx: InteractionContext | null = null
+      if (hit) {
+        if (
+          hit.kind === 'salvage_compass' ||
+          hit.kind === 'salvage_flare' ||
+          hit.kind === 'radio_battery' ||
+          hit.kind === 'spear'
+        ) {
+          hitCtx = { kind: 'salvage', item: hit.kind }
+        } else if (hit.kind === 'cash_bag' && currentStory.bagState === 'dropped') {
+          hitCtx = { kind: 'dropped_bag' }
+        } else if (hit.kind === 'campfire') {
+          hitCtx = { kind: 'campfire' }
+        } else if (hit.kind === 'cave_stash') {
+          hitCtx = { kind: 'cave' }
+        } else if (hit.kind === 'totem') {
+          hitCtx = { kind: 'totem' }
+        }
+      }
+      const endings = story.availableEndings()
+      const atEscape =
+        (endings.includes('smart_escape') || endings.includes('stealth_heist')) &&
+        (playerPosVec.distanceTo(places.landing) < 20 || playerPosVec.distanceTo(reefWreck.position) < 35)
+
+      if (kaelHostile && nearest && nearest.distance < 12) {
+        nextCtx = npcCtx()
+      } else if (heistProps.bag.canStashAt(camera.position)) {
+        nextCtx = { kind: 'cave' }
+      } else if (hit && hitCtx && (!nearest || nearest.distance >= 7.5 || (hit.distance < 3.4 && hit.distance < nearest.distance - 0.3))) {
+        nextCtx = hitCtx
+      } else if (nearest && nearest.distance < 7.5) {
+        nextCtx = npcCtx()
+      } else if (atEscape) {
+        nextCtx = { kind: 'escape' }
+      } else if (hitCtx) {
+        nextCtx = hitCtx
+      }
+    }
+    interactionUI.setContext(nextCtx)
+  }
   hud.update(dt)
 
   splash.update(dt, camera.position.y, surfaceY, view.moving, view.submersion)
@@ -1378,7 +1656,8 @@ async function start() {
   }
   captureEnv()
   frame()
-  arrival.begin()
+  heistIntro.start()
+  if (!heistIntro.playing) arrival.begin()
   // Two frames, so the first picture (and the shadow shaders it compiles) is behind the card
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {

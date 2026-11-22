@@ -1,7 +1,7 @@
 import './world-controls.css'
 import { quality, setDetailChoice, type DetailChoice } from './quality'
 
-const destinations = { beach: 'Landing cove', forest: 'Rainforest', lagoon: 'Lagoon', wreck: 'Wanderer wreck', caves: 'Tidal caves' }
+const destinations = { beach: 'Landing cove', camp: 'Campfire', forest: 'Rainforest', lagoon: 'Lagoon', wreck: 'Wanderer wreck', caves: 'Tidal caves' }
 export type Destination = keyof typeof destinations
 
 export function readDestination(name: string | null): Destination | undefined {

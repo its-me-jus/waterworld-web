@@ -225,7 +225,7 @@ body.underwater #bubbles {
   z-index: 5;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 0.9s ease;
+  transition: opacity 0.9s ease, bottom 0.25s ease;
   max-width: 80vw;
   text-align: center;
   color: rgba(222, 238, 244, 0.9);
@@ -351,6 +351,16 @@ body.film #sea-help {
 .control-copy { font-size: 0.85rem; letter-spacing: 0.025em; line-height: 1.6; }
 body.touch-ui #control-hint { bottom: max(11.25rem, calc(env(safe-area-inset-bottom) + 9.5rem)); max-width: min(27rem, calc(100vw - 3.5rem)); }
 body.touch-ui #whisper { bottom: 38%; }
+
+#app:has(.ww-dock:not([hidden])) #control-hint {
+  opacity: 0;
+}
+#app:has(.ww-dock:not([hidden])) #whisper {
+  bottom: max(14rem, 32%);
+}
+body.touch-ui #app:has(.ww-dock:not([hidden])) #whisper {
+  bottom: 54dvh;
+}
 
 #sea-help {
   position: fixed;

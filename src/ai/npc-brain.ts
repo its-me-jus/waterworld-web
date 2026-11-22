@@ -42,7 +42,7 @@ export function createNpcBrain(story: StoryManager, fetcher: typeof fetch = glob
     signal?.addEventListener('abort', stop, { once: true })
     const deadline = new AbortController()
     const combined = AbortSignal.any([owner.signal, deadline.signal])
-    const timer = setTimeout(() => deadline.abort(), 8_250)
+    const timer = setTimeout(() => deadline.abort(), 10_500)
     try {
       let decision: NpcAiDecision | null = null
       if (Date.now() >= retryAfter) {

@@ -135,8 +135,10 @@ export function bindKeyboardMouse(
   const keys = new Set<string>()
 
   const onKeyDown = (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement | null
+    if (target?.closest?.('input, textarea, select, [contenteditable="true"]') || document.querySelector('dialog[open]')) return
     // Let Space/Enter activate a focused help or arrival button normally.
-    if ((e.code === 'Space' || e.code === 'Enter') && (e.target as HTMLElement)?.closest?.('button')) return
+    if ((e.code === 'Space' || e.code === 'Enter') && target?.closest?.('button')) return
     keys.add(e.code)
     if (e.code === 'Space') e.preventDefault()
   }
@@ -206,6 +208,13 @@ export function bindKeyboardMouse(
   }
 }
 
+export type PlayerModifiers = {
+  swimSpeedMult?: number
+  sinkBias?: number
+  walkSpeedMult?: number
+  crouched?: boolean
+}
+
 export function updatePlayer(
   player: PlayerState,
   camera: PerspectiveCamera,
@@ -216,6 +225,7 @@ export function updatePlayer(
   groundAt?: (x: number, z: number) => number,
   drift?: SeaDrift,
   holdDiveDepth = false,
+  mods?: PlayerModifiers,
 ): PlayerFrame {
   if (Math.abs(input.lookDeltaX) > 0.01 || Math.abs(input.lookDeltaY) > 0.01) {
     player.yaw -= input.lookDeltaX * LOOK_SENS_TOUCH
@@ -309,9 +319,10 @@ export function updatePlayer(
     player.effort = damp(player.effort, Math.min(1, planar * 0.55 * (1 + Math.max(0, climb) * 1.5)), 5, dt)
     player.moving = damp(player.moving, planar, 4.5, dt)
 
+    const walkMult = (mods?.walkSpeedMult ?? 1) * (mods?.crouched ? 0.58 : 1)
     player.speed = damp(
       player.speed,
-      planar * WALK_SPEED * slopeFactor,
+      planar * WALK_SPEED * slopeFactor * walkMult,
       planar > 0.02 ? 9 : 7,
       dt,
     )
@@ -328,7 +339,8 @@ export function updatePlayer(
 
     // Vertical: real gravity when the ground falls away, a stiff spring when
     // it rises — steps over relief without stair-popping or sinking through.
-    const floorY = gat(player.x, player.z) + WALK_EYE
+    const eyeHeight = WALK_EYE - (mods?.crouched ? 0.52 : 0)
+    const floorY = gat(player.x, player.z) + eyeHeight
     if (player.y > floorY + 0.04) {
       if (player.fallFrom == null) player.fallFrom = player.y
       player.vy = Math.max(player.vy - 26 * dt, -15)
@@ -373,7 +385,7 @@ export function updatePlayer(
         : 0.84 + 0.32 * Math.sin(player.stroke * TAU * 2)
     const surge = 1 + (pulse - 1) * player.effort
 
-    const maxSpeed = SURFACE_SPEED + (SUBMERGED_SPEED - SURFACE_SPEED) * wasUnder
+    const maxSpeed = (SURFACE_SPEED + (SUBMERGED_SPEED - SURFACE_SPEED) * wasUnder) * (mods?.swimSpeedMult ?? 1)
     player.speed = damp(player.speed, planar * maxSpeed * surge, planar > 0.02 ? 3.6 : 1.5, dt)
 
     if (len > 0.02) {
@@ -406,17 +418,19 @@ export function updatePlayer(
     const floatEye = surfaceY + EYE_HEIGHT
     const climbing = input.rise && depth > 0.05
 
+    const sinkBias = mods?.sinkBias ?? 0
+
     if (climbing || input.dive) {
-      const target = (climbing ? SWIM_VERTICAL : 0) - (input.dive ? SWIM_VERTICAL : 0)
+      const target = (climbing ? SWIM_VERTICAL : 0) - (input.dive ? SWIM_VERTICAL : 0) - sinkBias
       player.vy = damp(player.vy, target, 6, dt)
     } else if (holdDiveDepth && submersion === 1) {
       // In the still gallery you can level off and look through the next arch.
-      player.vy = damp(player.vy, 0, 6, dt)
+      player.vy = damp(player.vy, -sinkBias, 6, dt)
     } else {
       // Plenty of authority to climb back out of a wave that washed over us, but
       // it tapers off with depth so a dive still lets you hang and look around.
       const climbCap = 1.0 + 6.5 * clamp(1 - depth / 6, 0, 1)
-      const target = clamp((floatEye - player.y) * 7, -3.5, climbCap) + surfaceVel * ride
+      const target = clamp((floatEye - player.y) * 7, -3.5, climbCap) + surfaceVel * ride - sinkBias
       player.vy = damp(player.vy, target, 13, dt)
     }
     player.vy = clamp(player.vy, -9, 9)

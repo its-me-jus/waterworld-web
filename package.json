@@ -15,13 +15,13 @@
     "hands": "node scripts/gen-hands.mjs"
   },
   "devDependencies": {
-    "@google/genai": "^2.15.0",
     "@types/three": "^0.185.1",
     "playwright-core": "^1.62.1",
     "typescript": "~6.0.2",
     "vite": "^8.2.0"
   },
   "dependencies": {
+    "@google/genai": "^2.15.0",
     "three": "^0.185.1"
   }
 }
