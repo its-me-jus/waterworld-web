@@ -12,7 +12,7 @@ import type {
   TribeWeather,
 } from '../tribe/types'
 import { oceanState, sampleOcean } from '../waves'
-import { createCamp } from './camp'
+import { createCamp, type CampFireState } from './camp'
 import {
   TAU,
   UP,
@@ -165,6 +165,8 @@ export interface HeistProps {
   resetProps(): void
   update(dt: number, t: number, weather: TribeWeather, eye?: THREE.Vector3): void
   spots: HeistSpots
+  /** The camp fire's flames as last drawn (strength, night, storm, flicker), for its sound. */
+  readonly fire: Readonly<CampFireState>
 }
 
 // —— constants ——————————————————————————————————————————————————
@@ -1981,5 +1983,6 @@ export function createHeistProps(scene: THREE.Scene, opts: HeistPropsOptions): H
     resetProps,
     update,
     spots,
+    fire: camp.fire,
   }
 }

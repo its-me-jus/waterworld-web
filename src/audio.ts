@@ -1239,5 +1239,16 @@ export function createOceanAudio() {
     }
   }
 
-  return { unlock, update, setSeaWeight, setWindRush, playWhaleBlow, playWhaleSong, playSeabirdCry, playCaveDrop }
+  /**
+   * For world sounds made elsewhere (src/tribe/tribe-sound.ts): the one
+   * AudioContext and the ambient bus, which carries the dive's ear muffle and
+   * the chamber's duck and stops with the context on a hidden tab. Null until
+   * the first gesture has unlocked sound. `master` is there for dev taps only.
+   */
+  function getWorldOutput(): { ctx: AudioContext; bus: AudioNode; master: AudioNode } | null {
+    if (!ready || !ctx || !ambientBus || !master) return null
+    return { ctx, bus: ambientBus, master }
+  }
+
+  return { unlock, update, setSeaWeight, setWindRush, playWhaleBlow, playWhaleSong, playSeabirdCry, playCaveDrop, getWorldOutput }
 }

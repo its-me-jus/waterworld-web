@@ -81,6 +81,21 @@ export interface Camp {
   /** Draw calls the camp adds over the bare fire pit it replaced (which was three). */
   draws: number
   update(dt: number, t: number, weather: TribeWeather, eye?: THREE.Vector3): void
+  /** The flames as last drawn (the same numbers `flames.update` gets), for the fire's sound. */
+  readonly fire: Readonly<CampFireState>
+}
+
+/** The camp fire's live state. `burning` is false beyond FIRE_FAR, where the rest goes stale. */
+export type CampFireState = {
+  burning: boolean
+  /** 0..1 how big the flames are: low by day, up at night, beaten down by rain. */
+  strength: number
+  /** 0 day .. 1 night. */
+  night: number
+  /** 0 clear .. 1 squall. */
+  storm: number
+  /** The light's flicker, about 0.6..1. */
+  flicker: number
 }
 
 /** The fire's light at full night, in candela (the cave's pool light is 39). */
@@ -1715,6 +1730,8 @@ export function createCamp(o: CampOptions): Camp {
   const FAR2 = FAR_SHOW * FAR_SHOW
   const NEAR2 = NEAR_SHOW * NEAR_SHOW
   const light = o.fireLight
+  /** The flames as last drawn, for the fire's sound. Read it, don't keep it. */
+  const fireState: CampFireState = { burning: false, strength: 0, night: 0, storm: 0, flicker: 0.8 }
 
   function update(_dt: number, t: number, weather: TribeWeather, eye?: THREE.Vector3) {
     const d2 = eye ? eye.distanceToSquared(fire) : 0
@@ -1725,6 +1742,7 @@ export function createCamp(o: CampOptions): Camp {
     hearthMesh.visible = burning
     coalMesh.visible = burning
     flames.mesh.visible = burning
+    fireState.burning = burning
     if (!burning) {
       if (light.intensity !== 0) light.intensity = 0
       return
@@ -1742,8 +1760,12 @@ export function createCamp(o: CampOptions): Camp {
     light.position.y = 0.66 + 0.1 * flicker
     emberMat.emissiveIntensity = (1.1 + 1.5 * night) * wet * (0.75 + 0.25 * flicker)
     flames.update(t, (0.7 + 0.3 * night) * wet, night, weather.storm, flicker)
+    fireState.strength = (0.7 + 0.3 * night) * wet
+    fireState.night = night
+    fireState.storm = weather.storm
+    fireState.flicker = flicker
   }
 
   // Five meshes beyond the hearth's own three (pit, embers, flames), which were there before
-  return { sites, triangles, parts, notes, draws: 5, update }
+  return { sites, triangles, parts, notes, draws: 5, update, fire: fireState as Readonly<CampFireState> }
 }

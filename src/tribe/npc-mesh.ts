@@ -2729,9 +2729,30 @@ export type IslanderMotion = {
   swim?: number
 }
 
+/**
+ * Read-out of the walk for the footstep sound. Written by `update` the frame a
+ * foot plants (the instant its stance begins); nothing in the body reads it.
+ */
+export type IslanderGait = {
+  /** Feet planted so far. Compare with the last value you saw. */
+  steps: number
+  /** Which foot planted last: 1 right, -1 left. */
+  side: number
+  /** 0..1 how much of a walk the legs were in when it landed. */
+  weight: number
+  /** 0..1 how much of a run. */
+  run: number
+  /** 0..1 how deep in water. */
+  wade: number
+  /** Ground speed at the plant, m/s. */
+  speed: number
+}
+
 export type IslanderRig = {
   root: THREE.Group
   id: NpcId
+  /** Footfalls, for the sound (src/tribe/tribe-sound.ts). */
+  readonly gait: IslanderGait
   /** Triangles in the whole islander, accessories included. */
   triangles: number
   /** Meshes in the islander: one draw call each. */
@@ -3027,6 +3048,7 @@ export function buildIslander(id: NpcId, opts?: { lowPower?: boolean }): Islande
   const footY = [0, 0]
   const footZ = [0, 0]
   const footPitch = [0, 0]
+  const gait: IslanderGait = { steps: 0, side: 0, weight: 0, run: 0, wade: 0, speed: 0 }
 
   const X = new THREE.Vector3(1, 0, 0)
   const Z = new THREE.Vector3(0, 0, 1)
@@ -3138,6 +3160,7 @@ export function buildIslander(id: NpcId, opts?: { lowPower?: boolean }): Islande
     const afoot = (1 - sit) * (1 - w.swim)
     // Steps per second rise with speed; a run is a quicker, longer stride
     const cadence = (0.66 + 0.3 * Math.min(v, 2.4)) * (1 - runW) + (1.25 + 0.06 * v) * runW
+    const phaseWas = phase
     phase = (phase + cadence * dt * (1 - sit)) % 1
     const duty = 0.62 - 0.26 * runW
     // Feet travel back at exactly ground speed while planted, so they do not skate
@@ -3149,6 +3172,20 @@ export function buildIslander(id: NpcId, opts?: { lowPower?: boolean }): Islande
     const lift = (0.07 + 0.09 * runW) * gaitW * (1 - 0.6 * w.wade) * (1 - w.swim)
     const slope = clamp(motion.slope ?? 0, -1.2, 1.2) * afoot
     const walk = gaitW * afoot
+    // For the sound only: a foot lands as its stance begins, where its phase wraps to 0
+    // (the right foot's phase is `phase`, the left's is half a cycle on). Reads, never writes, the gait.
+    if (walk > 0.25 && v > 0.08) {
+      const right = phase < phaseWas
+      const left = phaseWas < 0.5 && phase >= 0.5
+      if (right || left) {
+        gait.steps += right && left ? 2 : 1
+        gait.side = left ? -1 : 1
+        gait.weight = walk
+        gait.run = runW
+        gait.wade = w.wade
+        gait.speed = Math.max(0, motion.speed)
+      }
+    }
     // Standing: every so often the weight goes over to the other leg, and stays a while
     const idle = (1 - gaitW) * afoot * (1 - w.reach)
     const s0 = Math.sin((TAU * t) / who.shiftPeriod + seed * 3.1)
@@ -3412,6 +3449,7 @@ export function buildIslander(id: NpcId, opts?: { lowPower?: boolean }): Islande
   return {
     root,
     id,
+    gait,
     triangles,
     drawCalls,
     height: who.height,

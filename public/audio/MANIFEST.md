@@ -37,3 +37,12 @@ npm run audio -- --only rain,thunder
 ```
 
 Keys live in `.env` (never commit). See `docs/audio-handoff.md`.
+
+## Islanders' voices (`voices/`, not generated yet)
+
+Short wordless vocalisations for Kael, Tala and Oru (`voices/<cue>.mp3`, mono 96 kbps, under
+250 KB in all). `node scripts/gen-voices.mjs` makes up to 29 ElevenLabs takes into
+`shots/sound/takes/`; `python shots/sound/pick-voices.py` measures them, trims the chosen one per
+cue into `voices/`, lists them in `src/tribe/voice-files.ts` and renders a numbered reel of every
+take (`shots/sound/clips/voices-all-takes.wav`). Until a cue has a file, the game plays its
+procedural voice from `src/tribe/tribe-sound.ts`. The camp fire and footsteps are always procedural.

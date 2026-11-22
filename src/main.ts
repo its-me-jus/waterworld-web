@@ -35,6 +35,7 @@ import { createWorldControls, readDestination, type Destination } from './world-
 import { createHeistIntro, createIslandSmoke } from './story/heist-intro'
 import { createHeistProps } from './story/cash-bag'
 import { createTribeSim } from './tribe/tribe-sim'
+import { createIslandSound } from './tribe/tribe-sound'
 import { getTribePlaces } from './tribe/places'
 import type { TribePlayerState } from './tribe/types'
 import { createStoryState } from './ai/story-state'
@@ -675,6 +676,25 @@ const tribe = createTribeSim(scene, {
   // The sim narrates Kael's approach itself now (its far-notice lines, with its own gap between whispers),
   // so nothing is said here: a line from here used to land on top of them.
   onProximityEnter: () => {},
+  // A look, a warning, a laugh: the islanders' few wordless sounds (islandSound exists by the first frame)
+  onCue: (id, cue) => islandSound.cue(id, cue),
+})
+
+// The camp fire, the islanders' feet and their voices, on the sea's own context and ambient bus.
+// ?voices=0 drops the voices (and the spear knocks) to compare; ?tribesound=0 drops all of it.
+const islandSound = createIslandSound({
+  output: () => oceanAudio.getWorldOutput(),
+  fire: heistProps.fire,
+  firePos: places.campFire,
+  npcs: tribe.npcs,
+  heightAt: island.heightAt,
+  rockAt: (x, z) => {
+    const r = tidalCaves.floorAt(x, z)
+    return Number.isFinite(r) && r > island.heightAt(x, z) - 0.05
+  },
+  lowPower,
+  voices: params.get('voices') !== '0',
+  enabled: params.get('tribesound') !== '0',
 })
 
 const heistIntro = createHeistIntro(app, {
@@ -864,7 +884,13 @@ if (import.meta.env.DEV) {
       interactionUI,
       campSmoke,
       heistIntro,
+      audio: oceanAudio,
+      islandSound,
     },
+  })
+  // Auditions and taps for the islanders' sound (shots/sound scripts); never in a build
+  void import('./tribe/tribe-sound-dev').then((m) => {
+    ;(window as unknown as { ww: Record<string, unknown> }).ww.soundDev = m.createSoundDev(oceanAudio, islandSound)
   })
 }
 const idleInput = createInputState()
@@ -1466,6 +1492,7 @@ function frame() {
   tribePlayer.crouched = playerCrouched
   tribePlayer.mode = chute.active ? 'glide' : view.walking ? 'walk' : 'swim'
   tribe.update(dt, t, tribePlayer, weather, currentStory.heldItem, currentStory.bagState === 'carried', camera)
+  islandSound.update(dt, camera, view.submersion, weather.rain, oceanState.tide)
   const vinceLine = earpiece.update(view.walking ? view.groundY : 0, currentStory, onLand && !chute.active)
   if (vinceLine) hud.whisper(vinceLine)
 

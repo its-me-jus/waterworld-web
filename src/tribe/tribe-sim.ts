@@ -681,7 +681,22 @@ export type TribeSimOptions = {
   onProximityEnter?: (id: NpcId, snapshot: NpcPerceptionSnapshot) => void
   onPlayerCaptured?: (id: NpcId) => void
   onWhisper?: (text: string) => void
+  /**
+   * Optional, for the islanders' sound: a moment in an encounter, raised the
+   * frame it happens (read off the state after each think; nothing here
+   * changes what anyone does).
+   */
+  onCue?: (id: NpcId, cue: TribeCue) => void
 }
+
+/**
+ * - `look`: a look up at the player from what they are doing, before any encounter
+ * - `notice`: turns to watch (Kael, Oru) or to wonder (Tala)
+ * - `warn`: Kael's spear comes up (`chase` once he comes for you)
+ * - `calm`: Kael gives ground; `wary`: Tala backs off
+ * - `laugh`: the laugh / scoff pose begins; `accept`: takes what is offered
+ */
+export type TribeCue = 'look' | 'notice' | 'warn' | 'chase' | 'calm' | 'wary' | 'laugh' | 'accept'
 
 /** Debug view of one islander, for the console and the brain's HUD. */
 export type NpcDebugState = {
@@ -3557,6 +3572,31 @@ export function createTribeSim(scene: THREE.Scene, opts: TribeSimOptions) {
 
   const forward = new THREE.Vector3()
 
+  // —— cues for the sound: read off the state after each think, never fed back ——
+  const cueWas = npcs.map((n) => ({ state: n.state as string, pose: n.pose as string, look: false }))
+
+  function cues(n: Npc) {
+    const was = cueWas[n.index]
+    const on = opts.onCue!
+    const st = n.state
+    if (st !== was.state) {
+      if (st === 'warn') on(n.id, 'warn')
+      else if (st === 'stalk' && was.state !== 'charge') on(n.id, 'chase')
+      else if (st === 'step_back') on(n.id, 'calm')
+      else if (st === 'wary') on(n.id, 'wary')
+      else if ((st === 'watch' || st === 'curious') && was.state === 'schedule') on(n.id, 'notice')
+      was.state = st
+    }
+    if (n.pose !== was.pose) {
+      if (n.pose === 'laugh_baffled') on(n.id, 'laugh')
+      else if (n.pose === 'accept_gift') on(n.id, 'accept')
+      was.pose = n.pose
+    }
+    const look = st === 'schedule' && ((glancing(n) && n.gl.who === -1) || n.farT > 0)
+    if (look && !was.look) on(n.id, 'look')
+    was.look = look
+  }
+
   function update(
     dt: number,
     t: number,
@@ -3691,6 +3731,7 @@ export function createTribeSim(scene: THREE.Scene, opts: TribeSimOptions) {
       n.reach = 0
       think(n, dt)
       applyGlance(n)
+      if (opts.onCue) cues(n)
       move(n, dt)
 
       const rig = n.rig
