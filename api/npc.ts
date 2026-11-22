@@ -52,7 +52,8 @@ function credentials(bindings: ServerEnv) {
       } catch { /* A project may run entirely offline. */ }
     }
   }
-  return { key, model: model || 'gemini-2.5-flash-lite' }
+  // 2.5 Flash-Lite is closed to keys made after Nov 2026 ("no longer available to new users")
+  return { key, model: model || 'gemini-3.5-flash-lite' }
 }
 
 /** Why a model call failed, for the server log only: a status and Google's short reason, anything key-shaped cut out. */

@@ -304,7 +304,7 @@ test('The proxy sends a constrained Gemini request and validates the actual SDK 
       candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ text: JSON.stringify(generated) }] } }],
     })
   })
-  const response = await handleNpc(post(request), { GEMINI_API_KEY: 'fixture-key', GEMINI_NPC_MODEL: 'gemini-2.5-flash-lite' }, '192.0.2.5')
+  const response = await handleNpc(post(request), { GEMINI_API_KEY: 'fixture-key', GEMINI_NPC_MODEL: 'gemini-3.5-flash-lite' }, '192.0.2.5')
   assert.equal(response.status, 200)
   assert.equal(envelope.generationConfig.responseMimeType, 'application/json')
   assert.ok(envelope.generationConfig.responseJsonSchema.required.includes('action'))
