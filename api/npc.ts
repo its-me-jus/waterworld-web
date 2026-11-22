@@ -55,6 +55,15 @@ function credentials(bindings: ServerEnv) {
   return { key, model: model || 'gemini-2.5-flash-lite' }
 }
 
+/** Why a model call failed, for the server log only: a status and Google's short reason, anything key-shaped cut out. */
+function upstreamReason(error: unknown) {
+  const e = (error ?? {}) as { status?: unknown; code?: unknown; name?: unknown; message?: unknown }
+  const message = String(e.message ?? error)
+    .replace(/AIza[0-9A-Za-z_-]{20,}|AQ\.[0-9A-Za-z_.-]{10,}/g, '[key]')
+    .slice(0, 300)
+  return { status: e.status ?? e.code ?? null, name: e.name ?? null, message }
+}
+
 function json(status: number, value: unknown, headers: Record<string, string> = {}) {
   return Response.json(value, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers } })
 }
@@ -215,7 +224,12 @@ export async function handleNpc(request: Request, env: ServerEnv = {}, ip = 'sha
     signal.throwIfAborted()
     const decision = normalizeDecision(JSON.parse(result.text || ''), turn, 'cloud')
     if (decision) return json(200, reconcileDecision(turn, decision))
-  } catch { /* Never forward upstream errors, credentials, prompts, or raw model output. */ }
+    console.error('npc: model reply did not fit the decision contract')
+  } catch (error) {
+    // Never forward upstream errors, credentials, prompts, or raw model output to the player.
+    // The server log gets the reason alone, so a refused key or a retired model can be seen.
+    if (!signal.aborted) console.error('npc: model call failed:', upstreamReason(error))
+  }
   finally { signal.removeEventListener('abort', interrupt) }
   if (signal.aborted) return json(504, { error: 'NPC cloud timed out' })
   return json(502, { error: 'NPC cloud unavailable' })
