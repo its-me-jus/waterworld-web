@@ -5,6 +5,7 @@ import { createArrival } from './arrival'
 import { createCaustics } from './caustics'
 import { createClimate, DAY_LENGTH } from './climate'
 import { createCreatures } from './creatures'
+import { createFootprints } from './footprints'
 import { createIslandLife } from './islandlife'
 import { createPelagicLife } from './pelagic'
 import { createTouchControls } from './controls'
@@ -24,6 +25,7 @@ import { createShoreSurf } from './shore'
 import { createSky } from './sky'
 import { setSkyFill } from './skyfill'
 import { createSparBuoy } from './spar'
+import { createSparSound } from './spar-sound'
 import { createSplashLayer } from './splash'
 import { createSwimmer } from './swimmer'
 import { createTidalCaves } from './tidal-caves'
@@ -178,6 +180,8 @@ const island = createIsland(scene, {
   hazeColor: skyRig.horizonColor,
 })
 
+const footprints = createFootprints(scene, island.sandHeightAt, lowPower)
+
 // The second wreck: a coaster stranded on the barrier reef beside the landing pass
 const reefWreck = createReefWreck(scene, { heightAt: island.heightAt, lowPower })
 const tidalCaves = createTidalCaves(scene, lowPower)
@@ -188,6 +192,7 @@ oceanMat.uniforms.uCavePool.value.copy(tidalCaves.chamberWater)
 const spar = createSparBuoy(scene, {
   x: -38 + (980 - -38) * 0.32,
   z: -104 + (-680 - -104) * 0.32,
+  gridStep: OCEAN_SIZE / OCEAN_SEGMENTS,
 })
 
 // The island shelters its waterline: fully calm over the beach ring, the
@@ -236,6 +241,7 @@ const groundAt = (x: number, z: number, fromY?: number) =>
 const onPerchAt = (x: number, z: number) => wreck.standAt(x, z) > island.heightAt(x, z)
 
 const oceanAudio = createOceanAudio()
+const sparSound = createSparSound(spar.group, oceanAudio.getWorldOutput)
 let heave = 0
 let prevSurfaceForAudio = Number.NaN
 
@@ -1177,6 +1183,9 @@ function frame() {
     else groundKind = 'rock'
   }
 
+  footprints.update(dt, t, player, view, groundKind, weather.rain,
+    !chute.active && !film.pose && !heistIntro.playing && chamber < 0.1)
+
   oceanAudio.update({
     dt,
     submersion: view.submersion,
@@ -1271,6 +1280,7 @@ function frame() {
   )
 
   oceanMat.uniforms.uTime.value = t
+  oceanMat.uniforms.uRain.value = weather.rain
   // From height the sea is too coarse a grid to carry the short waves (they
   // alias into a honeycomb), and a real one looks calmer from up there anyway
   oceanMat.uniforms.uAmp.value = oceanState.amp * (1 - 0.6 * THREE.MathUtils.smoothstep(camera.position.y, 40, 170))
@@ -1459,7 +1469,8 @@ function frame() {
     daylight: weather.daylight,
     storm: weather.storm,
   })
-  spar.update(t)
+  spar.update(t, camera.position)
+  sparSound.update(t, camera, view.submersion)
   pelagic.update(dt, t, camera, {
     underwater,
     daylight: weather.daylight,
