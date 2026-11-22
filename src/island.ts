@@ -37,6 +37,8 @@ export type Island = {
   centre: THREE.Vector3
   /** World ground height. Deep negative once you're off the shelf. */
   heightAt: (x: number, z: number) => number
+  /** Height of the drawn sand. Returns -Infinity over rock, vegetation or open water outside the mesh. */
+  sandHeightAt: (x: number, z: number) => number
   /** Keeps the swimmer out of the rock and lets them wade up the beach. */
   resolve: (p: { x: number; y: number; z: number }) => void
   /** How many boulder / stone ellipsoids are live. */
@@ -2031,6 +2033,13 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
   geometry.setAttribute('aSandW', new THREE.BufferAttribute(sandWeight, 1))
+
+  function readSandHeight(a: number, b: number, c: number, wa: number, wb: number, wc: number) {
+    const sand = wa * sandWeight[a] + wb * sandWeight[b] + wc * sandWeight[c]
+    if (sand < 0.50) return -Infinity
+    return wa * position.getY(a) + wb * position.getY(b) + wc * position.getY(c)
+  }
+  const sandHeightAt = (x: number, z: number) => geometry.sampleFace(x - opts.x, z - opts.z, readSandHeight)
 
   // The air hemisphere's ground colour is near-black, because for the ocean it
   // should be. The sky cube map now does most of the skylight work, so this is
@@ -4411,6 +4420,7 @@ export function createIsland(scene: THREE.Scene, opts: IslandOptions): Island {
     terrain,
     centre,
     heightAt,
+    sandHeightAt,
     resolve,
     shore,
     pools,

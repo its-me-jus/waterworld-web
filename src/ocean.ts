@@ -136,6 +136,7 @@ uniform vec3 uCameraPos;
 uniform vec3 uHorizonColor;
 uniform vec4 uCavePool;
 uniform float uUnderwater;
+uniform float uRain;
 uniform float uTime;
 uniform float uChopScale;
 uniform float uHalfExtent;
@@ -207,6 +208,29 @@ vec3 detailNormal(vec2 p, float fade) {
   float dx = (hx - h) * 3.4 + (gx - g) * 2.0;
   float dz = (hz - h) * 3.4 + (gz - g) * 2.0;
   return normalize(vec3(-dx * fade, 1.0, -dz * fade));
+}
+
+// Each rain cell holds one impact. Its centre has room for the whole ripple
+// before the cell edge, so there are no seams or neighbouring cells to search.
+vec2 rainSlope(vec2 p) {
+  vec2 cell = floor(p);
+  float phase = hash(cell + vec2(17.0, 9.0));
+  float clock = uTime * (0.86 + phase * 0.47) + phase * 7.0;
+  vec3 seed = fract(vec3(cell, floor(clock)) * vec3(0.1031, 0.1030, 0.0973));
+  seed += dot(seed, seed.yxz + 33.33);
+  vec3 drop = fract((seed.xxy + seed.yzz) * seed.zyx);
+  vec2 delta = fract(p) - mix(vec2(0.27), vec2(0.73), drop.xy);
+  float d = length(delta);
+  float age = fract(clock);
+  float radius = 0.014 + 0.205 * age;
+  // Two crests spread from the dimple. Opposite slopes on their two sides
+  // reflect different parts of the sky, even under a flat grey cloud deck.
+  vec2 side = (d - radius + vec2(0.0, 0.068)) / vec2(0.040, 0.031);
+  vec2 bell = max(vec2(0.0), 1.0 - side * side);
+  float slope = dot(side * bell * bell, vec2(1.0, 0.48));
+  float life = smoothstep(0.0, 0.11, age) * (1.0 - smoothstep(0.42, 1.0, age));
+  float falling = smoothstep(drop.z * 0.93, drop.z * 0.93 + 0.07, uRain);
+  return delta / max(d, 0.008) * slope * life * falling;
 }
 
 // Water standing over the sand here, in metres. Sampled unconditionally at a
@@ -324,6 +348,24 @@ void main() {
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     return;
+  }
+
+  // Only the exposed surface receives rain. Fade out fine rings as they fall
+  // below a pixel or the eye moves away. Dry frames skip the impact field.
+  if (uRain > 0.001) {
+    float pixel = max(length(dFdx(vWorldPos.xz)), length(dFdy(vWorldPos.xz)));
+    float visible = (1.0 - smoothstep(5.0, 15.0, dist)) * (1.0 - smoothstep(0.014, 0.054, pixel));
+    if (visible > 0.0) {
+      vec2 p = vWorldPos.xz * 1.48;
+      vec2 slope = rainSlope(p);
+      #if DETAIL_OCT > 2
+        // A second field fills the gaps when the shower turns heavy.
+        mat2 turn = mat2(0.8, 0.6, -0.6, 0.8);
+        slope += transpose(turn) * rainSlope(turn * p * 1.27 + vec2(49.3, 81.7))
+          * smoothstep(0.40, 0.88, uRain) * 0.75;
+      #endif
+      N = normalize(N + vec3(slope.x, 0.0, slope.y) * visible * 1.10);
+    }
   }
 
   vec3 R = reflect(-V, N);
@@ -522,6 +564,7 @@ export function createOcean({ size = 560, segments = 280, detailOctaves = 4 }: O
     uniforms: {
       uTime: { value: 0 },
       uChopScale: { value: 1 },
+      uRain: { value: 0 },
       uAmp: { value: 1 },
       uTide: { value: 0 },
       uShelter: { value: new THREE.Vector4(0, 0, 0, -1) },

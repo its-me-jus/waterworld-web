@@ -33,6 +33,17 @@ for (const low of [true, false]) {
     assert(Number.isFinite(n.getX(i)) && Number.isFinite(n.getZ(i)) && n.getY(i) > 0)
   }
   const after = error(mesh)
+  // Surface marks must sit on the drawn triangle, on either side of the
+  // diagonal and in both coarse and subdivided cells.
+  const sampleHeight = (a, b, c, wa, wb, wc) => wa * p.getY(a) + wb * p.getY(b) + wc * p.getY(c)
+  for (let i = 0; i < mesh.index.count; i += 3) {
+    const a = mesh.index.getX(i), b = mesh.index.getX(i + 1), c = mesh.index.getX(i + 2)
+    const x = 0.2 * p.getX(a) + 0.3 * p.getX(b) + 0.5 * p.getX(c)
+    const z = 0.2 * p.getZ(a) + 0.3 * p.getZ(b) + 0.5 * p.getZ(c)
+    const y = sampleHeight(a, b, c, 0.2, 0.3, 0.5)
+    assert(Math.abs(mesh.sampleFace(x, z, sampleHeight) - y) < 1e-5, 'sample matches drawn triangle')
+  }
+  assert.equal(mesh.sampleFace(-span - 1, 0, sampleHeight), -Infinity)
   assert(after < before * 0.35, 'refinement reduces tidal-band surface error')
   assert(mesh.index.count <= segments ** 2 * 6 * (low ? 4 : 9), 'bounded geometry budget')
   console.log(`${low ? 'Phone' : 'Desktop'}: ${(100 * (1 - after / before)).toFixed(1)}% lower surface error; ${mesh.index.count / 3} triangles; winding and normals pass`)

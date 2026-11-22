@@ -126,8 +126,9 @@ export function fbm(x: number, z: number) {
   return v
 }
 
-export function sampleOcean(x: number, z: number, time: number, amp = oceanState.amp) {
+export function sampleOcean(x: number, z: number, time: number, amp = oceanState.amp, orbit?: { x: number; z: number }) {
   const lee = shelterAt(x, z)
+  if (orbit) orbit.x = orbit.z = 0
   let y = 0
   let tangentX = 1
   let tangentY = 0
@@ -150,6 +151,10 @@ export function sampleOcean(x: number, z: number, time: number, amp = oceanState
     const sinF = Math.sin(f)
 
     y += a * sinF
+    if (orbit) {
+      orbit.x += dX * a * cosF
+      orbit.z += dZ * a * cosF
+    }
 
     tangentX += -dX * dX * steepness * sinF
     tangentY += dX * steepness * cosF
