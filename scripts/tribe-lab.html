@@ -1,0 +1,233 @@
+<!doctype html>
+<!--
+  Dev-only turntable for the islanders (src/tribe/npc-mesh.ts). Not part of the game.
+  http://localhost:5175/scripts/tribe-lab.html
+  Driven from shots/tribe/lab-shot.mjs through window.lab; the in-game shots
+  (scripts/tribe-shot.mjs) stay the judge, since the game's light, fog and grade are what the player sees.
+-->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>tribe lab</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #222; overflow: hidden; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <script type="module">
+      import * as THREE from 'three'
+      import { setSkyFill } from '/src/skyfill.ts'
+
+      const q = new URLSearchParams(location.search)
+      // ?wip loads the scratch copy under shots/tribe/wip instead of the game's own file
+      const { buildIslander } = await import(q.has('wip') ? '/shots/tribe/wip/npc-mesh.ts' : '/src/tribe/npc-mesh.ts')
+      const low = q.has('low')
+      const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true })
+      renderer.setSize(innerWidth, innerHeight)
+      renderer.shadowMap.enabled = true
+      renderer.shadowMap.type = THREE.PCFShadowMap
+      renderer.toneMapping = THREE.ACESFilmicToneMapping
+      renderer.toneMappingExposure = 0.42
+      document.body.appendChild(renderer.domElement)
+
+      const scene = new THREE.Scene()
+      scene.background = new THREE.Color('#9fc4de')
+      const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.05, 200)
+      camera.layers.enable(1)
+
+      const sun = new THREE.DirectionalLight(new THREE.Color(1, 0.94, 0.83), 9)
+      sun.position.set(-3, 6, -5)
+      sun.castShadow = true
+      sun.shadow.mapSize.set(2048, 2048)
+      const sc = sun.shadow.camera
+      sc.left = -5; sc.right = 5; sc.top = 5; sc.bottom = -5; sc.near = 0.5; sc.far = 30
+      sun.shadow.bias = -0.0004
+      sun.shadow.normalBias = 0.02
+      scene.add(sun, sun.target)
+      const hemi = new THREE.HemisphereLight(0x9dc6e8, 0x07202b, 0.4)
+      scene.add(hemi)
+      // A fire-coloured point light, always in the scene (intensity 0 when off) so nothing recompiles
+      const fire = new THREE.PointLight(new THREE.Color('#ff8a3c'), 0, 9, 2)
+      fire.position.set(0, 0.5, -1.6)
+      scene.add(fire)
+
+      const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(60, 60),
+        new THREE.MeshStandardMaterial({ color: '#c9b384', roughness: 1 }),
+      )
+      ground.rotation.x = -Math.PI / 2
+      ground.receiveShadow = true
+      scene.add(ground)
+
+      const ids = ['kael', 'tala', 'oru']
+      const rigs = {}
+      // The first build also paints the atlas
+      const buildMs = {}
+      ids.forEach((id, i) => {
+        const t0 = performance.now()
+        const rig = buildIslander(id, { lowPower: low })
+        buildMs[id] = +(performance.now() - t0).toFixed(1)
+        rig.root.position.set((i - 1) * 1.25, 0, 0)
+        rig.root.traverse((o) => {
+          if (o.isMesh) {
+            o.castShadow = true
+            o.receiveShadow = true
+          }
+        })
+        scene.add(rig.root)
+        rigs[id] = rig
+      })
+
+      const motion = { speed: 0, turnRate: 0, wading: 0, slope: 0, reach: 0, swim: 0 }
+      const lookTarget = new THREE.Vector3()
+      let time = 0
+      const state = { walk: false }
+
+      function step(seconds, opts = {}) {
+        const dt = 1 / 60
+        const n = Math.max(1, Math.round(seconds / dt))
+        for (let k = 0; k < n; k++) {
+          time += dt
+          for (const id of ids) {
+            const rig = rigs[id]
+            if (opts.ids && !opts.ids.includes(id)) continue
+            Object.assign(motion, { speed: 0, turnRate: 0, wading: 0, slope: 0, reach: 0, swim: 0 }, opts.motion ?? {})
+            if (opts.travel && motion.speed > 0) {
+              // Walk on the spot is misleading for foot slide: actually move the root
+              const yaw = rig.root.rotation.y
+              rig.root.position.x += -Math.sin(yaw) * motion.speed * dt
+              rig.root.position.z += -Math.cos(yaw) * motion.speed * dt
+            }
+            rig.update(dt, time, motion)
+          }
+        }
+      }
+
+      function aim(id, view, opts = {}) {
+        const rig = rigs[id]
+        const p = rig.root.position
+        const h = rig.height
+        const yaw = rig.root.rotation.y
+        const f = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw))
+        const s = new THREE.Vector3(-f.z, 0, f.x)
+        const seated = rig.pose === 'sit_fire'
+        const headY = (seated ? h * 0.5 : h * 0.925) + (opts.dy ?? 0)
+        const midY = seated ? h * 0.3 : h * 0.55
+        const spots = {
+          front: [3.6, 0.5, midY + 0.2, midY, 38],
+          side: [0.2, 3.6, midY + 0.2, midY, 38],
+          back: [-3.6, 0.5, midY + 0.2, midY, 38],
+          q: [2.6, 2.4, midY + 0.4, midY, 38],
+          face: [1.05, 0.14, headY + 0.02, headY - 0.02, 24],
+          faceq: [0.85, 0.6, headY + 0.03, headY - 0.02, 24],
+          faceside: [0.02, 1.05, headY + 0.02, headY - 0.02, 24],
+          faceup: [0.95, 0.2, headY - 0.3, headY - 0.02, 24],
+          bust: [1.6, 0.5, headY - 0.1, headY - 0.22, 30],
+          eye: [0.42, 0.06, headY - 0.01, headY - 0.02, 12],
+          eyeside: [0.2, 0.38, headY - 0.01, headY - 0.02, 12],
+          hands: [1.1, 0.5, h * 0.52, h * 0.46, 30],
+          feet: [1.2, 0.9, 0.45, 0.1, 30],
+          far: [38, 6, 2.2, midY, 12],
+          all: [5.2, 0.8, 1.35, 0.9, 40],
+          allback: [-5.2, 0.8, 1.35, 0.9, 40],
+        }
+        const sp = spots[view] ?? spots.front
+        const group = view.startsWith('all') || view === 'far'
+        for (const other of ids) rigs[other].root.visible = group || other === id
+        camera.fov = opts.fov ?? sp[4]
+        camera.updateProjectionMatrix()
+        const centre = view.startsWith('all') || view === 'far' ? new THREE.Vector3(0, 0, p.z) : p
+        camera.position.copy(centre).addScaledVector(f, sp[0]).addScaledVector(s, sp[1])
+        camera.position.y = sp[2]
+        camera.lookAt(centre.x, sp[3], centre.z)
+      }
+
+      function light(mode) {
+        // sun | shade | dusk | night | fire
+        const m = mode ?? 'sun'
+        setSkyFill(m === 'night' || m === 'fire' ? 0 : m === 'dusk' ? 0.5 : 1)
+        if (m === 'sun') {
+          sun.intensity = 9; sun.color.setRGB(1, 0.94, 0.83); sun.position.set(-3, 6, -5)
+          hemi.intensity = 0.4; fire.intensity = 0
+          renderer.toneMappingExposure = 0.42; scene.background.set('#9fc4de')
+        } else if (m === 'noon') {
+          sun.intensity = 9; sun.color.setRGB(1, 0.94, 0.83); sun.position.set(-0.6, 8, -1.2)
+          hemi.intensity = 0.4; fire.intensity = 0
+          renderer.toneMappingExposure = 0.42; scene.background.set('#9fc4de')
+        } else if (m === 'shade') {
+          sun.intensity = 0.0001; hemi.intensity = 0.4; fire.intensity = 0
+          renderer.toneMappingExposure = 0.42; scene.background.set('#31503a')
+        } else if (m === 'dusk') {
+          sun.intensity = 1.6; sun.color.setRGB(1, 0.6, 0.35); sun.position.set(-7, 1.2, -3)
+          hemi.intensity = 0.3; fire.intensity = 0
+          renderer.toneMappingExposure = 0.8; scene.background.set('#6a6f8e')
+        } else if (m === 'night') {
+          sun.intensity = 0.6; sun.color.set('#8a9bb8'); sun.position.set(3, 6, -2)
+          hemi.intensity = 0.12; fire.intensity = 0
+          renderer.toneMappingExposure = 1.0; scene.background.set('#0b1220')
+        } else if (m === 'fire') {
+          sun.intensity = 0.6; sun.color.set('#8a9bb8'); sun.position.set(3, 6, -2)
+          hemi.intensity = 0.12; fire.intensity = 14
+          renderer.toneMappingExposure = 1.0; scene.background.set('#0b1220')
+        }
+      }
+
+      function render() {
+        renderer.render(scene, camera)
+      }
+
+      window.lab = {
+        rigs, ids, step, aim, light, render, THREE, scene, camera, buildMs,
+        setPose(pose, only) {
+          for (const id of ids) if (!only || only === id) rigs[id].setPose(pose)
+        },
+        snap() {
+          for (const id of ids) rigs[id].snapPose()
+        },
+        look(on, x = 0.4, y = 1.6, z = -3) {
+          for (const id of ids) {
+            const r = rigs[id]
+            if (on) r.lookAt(lookTarget.set(r.root.position.x + x, y, r.root.position.z + z))
+            else r.lookAt(null)
+          }
+        },
+        reset() {
+          ids.forEach((id, i) => {
+            rigs[id].root.position.set((i - 1) * 1.25, 0, 0)
+            rigs[id].root.rotation.set(0, 0, 0)
+          })
+        },
+        info() {
+          const out = {}
+          for (const id of ids) out[id] = { triangles: rigs[id].triangles, drawCalls: rigs[id].drawCalls, height: rigs[id].height }
+          return out
+        },
+        get time() { return time },
+        state,
+      }
+      light('sun')
+      step(0.5)
+      aim('tala', 'all')
+      render()
+      window.labReady = true
+      addEventListener('resize', () => {
+        renderer.setSize(innerWidth, innerHeight)
+        camera.aspect = innerWidth / innerHeight
+        camera.updateProjectionMatrix()
+        render()
+      })
+      if (q.has('live')) {
+        let last = performance.now()
+        const tick = (now) => {
+          const dt = Math.min(0.05, (now - last) / 1000)
+          last = now
+          step(dt, { motion: { speed: Number(q.get('speed') ?? 0) } })
+          render()
+          requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      }
+    </script>
+  </body>
+</html>

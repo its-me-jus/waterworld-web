@@ -1,5 +1,4 @@
 import * as THREE from 'three'
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { DETAIL_LAYER } from '../quality'
 import { skyFill } from '../skyfill'
 import { buildSpear } from '../spear'
@@ -13,6 +12,23 @@ import type {
   TribeWeather,
 } from '../tribe/types'
 import { oceanState, sampleOcean } from '../waves'
+import { createCamp } from './camp'
+import {
+  TAU,
+  UP,
+  emissiveByAlbedo,
+  fill,
+  hash,
+  hex,
+  lump,
+  merge,
+  paintFaces,
+  paintVerts,
+  place,
+  smooth,
+  stripBasic,
+  triangles,
+} from './prop-geo'
 
 /**
  * The heist's leftovers and the islanders' home, as things you can find, carry
@@ -28,8 +44,8 @@ import { oceanState, sampleOcean } from '../waves'
  *    sand or float on the sea until they fade, or curl up and burn to embers
  *    over the camp fire;
  *  - the islanders' warning post on the beach, a line of dark stones across the
- *    path in front of it, bare footprints leading home from it, and the fire
- *    pit by the rain pool with its one warm light;
+ *    path in front of it, bare footprints leading home from it, and the camp
+ *    by the rain pool (built in camp.ts) with the fire's one warm light;
  *  - salvage worth more than the money: a brass compass on the reef by the
  *    coaster, a flare and a spear on the Wanderer's spire, and a radio battery
  *    off the coaster's bow.
@@ -153,16 +169,8 @@ export interface HeistProps {
 
 // —— constants ——————————————————————————————————————————————————
 
-const TAU = Math.PI * 2
-const UP = new THREE.Vector3(0, 1, 0)
-const smooth = THREE.MathUtils.smoothstep
 const damp = (current: number, target: number, lambda: number, dt: number) =>
   current + (target - current) * (1 - Math.exp(-lambda * dt))
-/** Deterministic 0..1 from a number, so the props come out the same every load. */
-const hash = (n: number) => {
-  const s = Math.sin(n * 127.1 + 311.7) * 43758.5453
-  return s - Math.floor(s)
-}
 
 /** The trade wind's heading, mirrored from island.ts (WIND_HEADING) so this file can't disturb it. */
 const WIND_HEADING = 0.62
@@ -175,8 +183,6 @@ const FAR = 250
 const GLOW_REACH = 6
 /** How close the fire counts as "at the fire", where cash gets burnt. */
 const FIRE_REACH = 3.5
-/** The fire's light at full night, in candela (the cave's pool light is 39). */
-const FIRE_CANDELA = 40
 
 /** A $100 bill is 156 x 66 mm; drawn half as large again so one reads at arm's length. */
 const BILL_SCALE = 1.6
@@ -199,45 +205,41 @@ const BAG_MID = 0.14
 const CARRIED: MovementModifiers = { swimSpeedMult: 0.82, sinkBias: 0.18, walkSpeedMult: 0.93 }
 const UNBURDENED: MovementModifiers = { swimSpeedMult: 1, sinkBias: 0, walkSpeedMult: 1 }
 
-const hex = (h: string) => new THREE.Color(h)
-
-const NYLON = hex('#1b1d21')
-const NYLON_WET = hex('#0d0e10')
-const NYLON_PANEL = hex('#24272c')
-const PIPING = hex('#2c2f34')
-const ZIP = hex('#303338')
+// Soaked canvas, not gloss black: the first bag was so dark and so smooth it read as a gas bottle
+const NYLON = hex('#2c2f36')
+const NYLON_WET = hex('#17191d')
+const NYLON_PANEL = hex('#3b3f47')
+const PIPING = hex('#4b5059')
+const ZIP = hex('#5c6169')
 const STEEL = hex('#8b8f94')
 const MOUTH = hex('#050506')
-const STRAP = hex('#1f2226')
+const STRAP = hex('#40454d')
+const WEBBING = hex('#585d66')
+const GRIP = hex('#8b6a47')
+const TAG = hex('#d9cfb4')
 const BILL_FACE = hex('#a7b59b')
 const BILL_EDGE = hex('#d6dacb')
 const BAND = hex('#d3bd72')
 
-// Sun-bleached, but still wood: the first, cooler greys read as a concrete
-// post on the sand at midday
-const DRIFT = hex('#a8987f')
-const DRIFT_DARK = hex('#7b6c58')
-const DRIFT_PALE = hex('#c3b59d')
-const DRIFT_WET = hex('#6a6258')
-const GROOVE = hex('#4c4741')
-const ADZED = hex('#bcae96')
+// A hardwood post, weathered but kept: warm where it is sound, silvered only at
+// the crown. Greys, however sun-bleached, read as a concrete post on the sand.
+const DRIFT = hex('#9c7a56')
+const DRIFT_DARK = hex('#765a3e')
+const DRIFT_PALE = hex('#c2ad8c')
+const DRIFT_WET = hex('#655443')
+const GROOVE = hex('#42342a')
+const ADZED = hex('#c9aa7e')
+const LIME = hex('#e9e2cf')
+const SENNIT = hex('#b39c68')
+const SENNIT_DARK = hex('#8c7648')
+const BARK_CLOTH = hex('#d8c7a0')
+const BARK_CLOTH_DYE = hex('#6a4226')
 const OCHRE = hex('#9b3a1f')
 const OCHRE_LIGHT = hex('#b4502b')
 const SHELL = hex('#f1ece2')
 const SHELL_PINK = hex('#e8c8b8')
 const BASALT = hex('#38342f')
 const BASALT_LIGHT = hex('#4a453f')
-const SOOT = hex('#1b1917')
-const ASH = hex('#6e6a64')
-const ASH_WHITE = hex('#a8a39b')
-const BARK = hex('#56432f')
-const BARK_DARK = hex('#3e3124')
-const CUT_WOOD = hex('#ad8f64')
-const CHAR = hex('#191412')
-const CLAY = hex('#5a3f2c')
-const CORD = hex('#8d7a57')
-const EMBER_HOT = hex('#ff6b1f')
-const EMBER_DULL = hex('#3a2a20')
 
 const TEAK = hex('#6b4628')
 const BRASS = hex('#b08a3c')
@@ -261,128 +263,10 @@ const SHELF_SIDE = hex('#3a3632')
 /** The proximity glow on salvage: a warm shimmer, not a beacon. */
 const GLOW = hex('#ffe6b5')
 
-// —— geometry helpers (the islandlife.ts pattern) —————————————————————
+// —— geometry helpers (the rest are in prop-geo.ts) ——————————————————————
 
 const _v = new THREE.Vector3()
-const _m4 = new THREE.Matrix4()
-const _pos = new THREE.Vector3()
-const _quat = new THREE.Quaternion()
-const _scale = new THREE.Vector3()
 const _qa = new THREE.Quaternion()
-
-/** Non-indexed, with only position and normal, so parts can merge. */
-function stripBasic(geo: THREE.BufferGeometry) {
-  const g = geo.index ? geo.toNonIndexed() : geo.clone()
-  if (!g.attributes.normal) g.computeVertexNormals()
-  for (const k of Object.keys(g.attributes)) {
-    if (k !== 'position' && k !== 'normal') g.deleteAttribute(k)
-  }
-  geo.dispose()
-  return g
-}
-
-type Painter = (p: THREE.Vector3, n: THREE.Vector3, out: THREE.Color) => void
-
-/** A colour per vertex, from where it is: soft gradients (wet bottoms, grain, bleached tops). */
-function paintVerts(geo: THREE.BufferGeometry, pick: Painter) {
-  const pos = geo.attributes.position
-  const nor = geo.attributes.normal
-  const out = new Float32Array(pos.count * 3)
-  const p = new THREE.Vector3()
-  const n = new THREE.Vector3()
-  const c = new THREE.Color()
-  for (let i = 0; i < pos.count; i++) {
-    p.fromBufferAttribute(pos, i)
-    n.fromBufferAttribute(nor, i)
-    pick(p, n, c)
-    c.toArray(out, i * 3)
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(out, 3))
-  return geo
-}
-
-/**
- * A colour per triangle, from its middle: crisp bands and patches on a
- * low-poly shape, where per-vertex colour would smear into a gradient.
- * The geometry must be non-indexed.
- */
-function paintFaces(geo: THREE.BufferGeometry, pick: Painter) {
-  const pos = geo.attributes.position
-  const nor = geo.attributes.normal
-  const out = new Float32Array(pos.count * 3)
-  const p = new THREE.Vector3()
-  const n = new THREE.Vector3()
-  const a = new THREE.Vector3()
-  const c = new THREE.Color()
-  for (let f = 0; f + 2 < pos.count; f += 3) {
-    p.set(0, 0, 0)
-    n.set(0, 0, 0)
-    for (let k = 0; k < 3; k++) {
-      p.add(a.fromBufferAttribute(pos, f + k))
-      n.add(a.fromBufferAttribute(nor, f + k))
-    }
-    p.multiplyScalar(1 / 3)
-    n.normalize()
-    pick(p, n, c)
-    for (let k = 0; k < 3; k++) c.toArray(out, (f + k) * 3)
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(out, 3))
-  return geo
-}
-
-function fill(geo: THREE.BufferGeometry, color: THREE.Color) {
-  return paintVerts(geo, (_p, _n, c) => {
-    c.copy(color)
-  })
-}
-
-/** A faceted stone (or shell, or coal): an icosahedron with its corners pushed in and out. */
-function lump(seed: number, detail = 0) {
-  const g = new THREE.IcosahedronGeometry(1, detail)
-  const pos = g.attributes.position
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i)
-    const y = pos.getY(i)
-    const z = pos.getZ(i)
-    // Keyed on the rounded corner, so every face sharing a corner moves it the
-    // same way and the stone stays closed
-    const key = Math.round(x * 997) * 0.013 + Math.round(y * 991) * 0.029 + Math.round(z * 983) * 0.041
-    const k = 1 + (hash(key + seed * 17.3) - 0.5) * 0.4
-    pos.setXYZ(i, x * k, y * k, z * k)
-  }
-  g.deleteAttribute('uv')
-  g.deleteAttribute('normal')
-  // Non-indexed, so these come out per face: the facets are the point
-  g.computeVertexNormals()
-  return g
-}
-
-/** Scale, then turn, then move: the same order as an Object3D. */
-function place(
-  g: THREE.BufferGeometry,
-  x: number,
-  y: number,
-  z: number,
-  q?: THREE.Quaternion,
-  sx = 1,
-  sy = sx,
-  sz = sx,
-) {
-  _m4.compose(_pos.set(x, y, z), q ?? _quat.identity(), _scale.set(sx, sy, sz))
-  return g.applyMatrix4(_m4)
-}
-
-function merge(parts: THREE.BufferGeometry[]) {
-  const g = mergeGeometries(parts, false)
-  for (const p of parts) p.dispose()
-  if (!g) throw new Error('cash-bag: prop parts did not merge')
-  return g
-}
-
-/** Triangles in a geometry, for the budget. */
-function triangles(g: THREE.BufferGeometry) {
-  return Math.round((g.index ? g.index.count : g.attributes.position.count) / 3)
-}
 
 /** Layers are not inherited, so every part of a small thing on the ground is marked. */
 function smallThing(obj: THREE.Object3D) {
@@ -392,19 +276,6 @@ function smallThing(obj: THREE.Object3D) {
     // every lit shader twice
     if (!(part as THREE.Light).isLight) part.layers.set(DETAIL_LAYER)
   })
-}
-
-/**
- * Light the sky would give, carried in the colour of the surface itself. A
- * plain emissive adds the same light to dark basalt and pale driftwood alike,
- * so the stones glowed; scaled by the vertex colour (the albedo) the shade
- * keeps its contrast, as real skylight does.
- */
-function emissiveByAlbedo(shader: { fragmentShader: string }) {
-  shader.fragmentShader = shader.fragmentShader.replace(
-    '#include <emissivemap_fragment>',
-    '#include <emissivemap_fragment>\n\ttotalEmissiveRadiance *= vColor.rgb;',
-  )
 }
 
 // —— the duffel ———————————————————————————————————————————————————
@@ -425,7 +296,7 @@ function slump(p: THREE.Vector3) {
   const spread = 1 + 0.07 * smooth(-p.y, 0, BAG_R)
   // ...and the top sags between the end panels, where the zip has been forced
   const along = p.x / BAG_HALF
-  y -= 0.028 * Math.max(0, 1 - along * along) * smooth(y, 0, BAG_R)
+  y -= 0.042 * Math.max(0, 1 - along * along) * smooth(y, 0, BAG_R)
   return p.set(p.x, y + BAG_LIFT, p.z * spread)
 }
 
@@ -456,21 +327,38 @@ function cashStack() {
  * The holdall, in its own frame: length along x, resting on y = 0, the
  * shoulder strap lying on the +z side. One merged, vertex-coloured mesh.
  */
-function buildBag() {
+function buildBag(rich: boolean) {
   const parts: THREE.BufferGeometry[] = []
 
   // Body: a lathe of the squircle profile, turned so its axis runs along x
   const profile: THREE.Vector2[] = []
-  const rows = 10
+  const rows = rich ? 14 : 10
   for (let i = 0; i <= rows; i++) {
     const phi = -Math.PI / 2 + (Math.PI * i) / rows
     const s = Math.sin(phi)
     const x = BAG_HALF * Math.sign(s) * Math.abs(s) ** (2 / BAG_SQUARE)
     profile.push(new THREE.Vector2(Math.max(0.003, bagRadius(x)), x))
   }
-  const lathe = new THREE.LatheGeometry(profile, 14)
+  const lathe = new THREE.LatheGeometry(profile, rich ? 16 : 14)
   lathe.rotateZ(-Math.PI / 2)
   slumpGeometry(lathe)
+  // Cloth over a load of paper is never a clean cylinder: it puckers between
+  // the straps and creases along its length. Without this it shone like a tank.
+  const pucker = (x: number, y: number, z: number) => {
+    const round = Math.atan2(z, y - BAG_LIFT)
+    return Math.sin(x * 44 + round * 2) * 0.6 + Math.sin(round * 5 - x * 19) * 0.4
+  }
+  {
+    const lp = lathe.attributes.position
+    for (let i = 0; i < lp.count; i++) {
+      const x = lp.getX(i)
+      const y = lp.getY(i)
+      const z = lp.getZ(i)
+      if (Math.abs(x) > BAG_HALF - 0.07 || y < 0.045) continue
+      const k = 1 + 0.065 * pucker(x, y, z) * smooth(y, 0.045, 0.1)
+      lp.setXYZ(i, x, BAG_LIFT + (y - BAG_LIFT) * k, z * k)
+    }
+  }
   lathe.computeVertexNormals()
   const body = stripBasic(lathe)
   parts.push(
@@ -478,8 +366,21 @@ function buildBag() {
       // Darkest where it has sat in the wet; the end panels are a stiffer, matte fabric
       c.copy(NYLON).lerp(NYLON_WET, 1 - smooth(p.y, 0.015, 0.11))
       if (Math.abs(p.x) > BAG_HALF - 0.05) c.lerp(NYLON_PANEL, 0.55)
+      // and the folds hold the wet longer than the ridges between them
+      else c.multiplyScalar(0.9 + 0.14 * pucker(p.x, p.y, p.z))
     }),
   )
+
+  // Two bands of webbing round its girth, the carry handles sewn to them
+  for (const end of [-1, 1]) {
+    const x = end * 0.09
+    const band = new THREE.CylinderGeometry(bagRadius(x) + 0.014, bagRadius(x) + 0.014, 0.038, rich ? 16 : 12, 1, true)
+    band.rotateZ(-Math.PI / 2)
+    band.translate(x, 0, 0)
+    slumpGeometry(band)
+    band.computeVertexNormals()
+    parts.push(fill(stripBasic(band), WEBBING))
+  }
 
   // Piping round the end panels, so it reads as a sewn holdall and not a pillow
   for (const end of [-1, 1]) {
@@ -539,8 +440,8 @@ function buildBag() {
     const grip = stripBasic(new THREE.CylinderGeometry(0.017, 0.017, 0.075, 6, 1))
     grip.rotateZ(Math.PI / 2)
     grip.translate(0, 0.085, 0)
-    const handle = merge([fill(arch, STRAP), fill(grip, NYLON_PANEL)])
-    handle.rotateX(side * 0.6)
+    const handle = merge([fill(arch, WEBBING), fill(grip, GRIP)])
+    handle.rotateX(side * 0.45)
     handle.translate(0, bagTop(0.085) - 0.02, side * 0.075)
     parts.push(handle)
   }
@@ -567,6 +468,11 @@ function buildBag() {
     c.copy(p.y > 0.028 ? ZIP : NYLON_PANEL)
   })
   parts.push(place(pocket, 0, BAG_LIFT + 0.005, -BAG_R - 0.006))
+
+  // A card tag on a loop at one handle, the writing long since run
+  const tag = stripBasic(new THREE.BoxGeometry(0.05, 0.003, 0.03))
+  _qa.setFromEuler(e.set(0.5, 0.4, -0.5))
+  parts.push(fill(place(tag, -0.125, bagTop(-0.125) + 0.012, 0.115, _qa), TAG))
 
   return merge(parts)
 }
@@ -878,7 +784,8 @@ export function createHeistProps(scene: THREE.Scene, opts: HeistPropsOptions): H
     new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, emissive: '#8c9db3', emissiveIntensity: 0.32 }),
   )
   propMat.onBeforeCompile = emissiveByAlbedo
-  const bagMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.36, metalness: 0.04 })
+  // Damp canvas: a dull sheen, not a polish
+  const bagMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.02 })
 
   // —— the reef wreck's lie ——
   const site = opts.reefWreckPos
@@ -1106,7 +1013,8 @@ export function createHeistProps(scene: THREE.Scene, opts: HeistPropsOptions): H
       [0.136, 1.62], [0.135, 1.66], [0.13, 1.745], [0.109, 1.77], [0.109, 1.82], [0.13, 1.845], [0.12, 2.05],
       [0.104, 2.14], [0.074, 2.2], [0.03, 2.23], [0.004, 2.236],
     ].map(([r, y]) => new THREE.Vector2(r, y))
-    const post = stripBasic(new THREE.LatheGeometry(profile, 10))
+    const sides = opts.lowPower ? 10 : 14
+    const post = stripBasic(new THREE.LatheGeometry(profile, sides))
     const pos = post.attributes.position
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i)
@@ -1123,11 +1031,23 @@ export function createHeistProps(scene: THREE.Scene, opts: HeistPropsOptions): H
       const lz = p.z - crookZ(y)
       const phi = Math.atan2(lx, lz)
       const grain = 0.5 + 0.5 * Math.sin(phi * 5 + y * 2.3 + Math.sin(y * 7.1) * 0.8)
-      c.copy(DRIFT).lerp(DRIFT_DARK, grain * 0.4)
-      if (y > 1.95) c.lerp(DRIFT_PALE, smooth(y, 1.95, 2.2) * 0.6)
+      c.copy(DRIFT).lerp(DRIFT_DARK, grain * 0.5)
+      if (y > 2.05) c.lerp(DRIFT_PALE, smooth(y, 2.05, 2.2) * 0.7)
       if (y < 0.3) c.lerp(DRIFT_WET, 1 - smooth(y, -0.05, 0.3))
       const groove = (y > 0.53 && y < 0.61) || (y > 1.03 && y < 1.07) || (y > 1.755 && y < 1.835)
+      // Two painted bands, each a ring of teeth: ochre pointing up out of the
+      // lime, renewed often enough that they are the brightest thing on the beach.
+      // (Each facet of the ring is two triangles, one hanging from the top edge
+      // and one standing on the bottom: colouring them apart is the pattern.)
+      const tooth = (y0: number, y1: number) => (y > y0 && y < y1 ? (y - y0) / (y1 - y0) : -1)
+      const band = tooth(0.62, 0.95)
+      // (under the crown the same teeth are ochre on bare wood: in white they made a mouth of it)
+      const crown = tooth(1.845, 2.05)
       if (groove) c.copy(GROOVE)
+      else if (band >= 0) c.copy(band < 0.5 ? OCHRE : LIME).multiplyScalar(0.86 + grain * 0.14)
+      else if (crown >= 0) c.copy(crown < 0.5 ? OCHRE_LIGHT : ADZED).multiplyScalar(0.86 + grain * 0.14)
+      // Sennit bound round under the head, turn on turn
+      else if (y > 1.66 && y < 1.745) c.copy(Math.floor(((phi + Math.PI) / TAU) * sides * 2) % 2 ? SENNIT : SENNIT_DARK)
       else if (y > 1.19 && y < 1.63 && lz > PANEL - 0.006) c.copy(ADZED)
     })
     // The hand: ochre pressed on flat, fingers a little spread, as a person
@@ -1156,7 +1076,8 @@ export function createHeistProps(scene: THREE.Scene, opts: HeistPropsOptions): H
     }
     const print = merge(hand)
     print.rotateZ(0.12)
-    print.translate(0.004, 1.41, PANEL + 0.005)
+    print.scale(1.3, 1.3, 1)
+    print.translate(0.004, 1.4, PANEL + 0.005)
     const hp = print.attributes.position
     for (let i = 0; i < hp.count; i++) {
       const y = hp.getY(i)
@@ -1166,24 +1087,58 @@ export function createHeistProps(scene: THREE.Scene, opts: HeistPropsOptions): H
       // Pressed on unevenly: thicker in the middle of the palm
       c.copy(OCHRE).lerp(OCHRE_LIGHT, 0.5 + 0.5 * Math.sin(p.x * 140 + p.y * 90))
     })
-    const yaw = Math.atan2(outward.x, outward.y)
-    post.rotateY(yaw)
-    print.rotateY(yaw)
-    parts.push(post, print)
+    // A crosspiece lashed on under the head, hung with what says whose beach this is
+    const dress: THREE.BufferGeometry[] = []
+    {
+      const barY = 1.705
+      const bar = stripBasic(new THREE.CylinderGeometry(0.017, 0.021, 0.86, 5, 1))
+      bar.rotateZ(Math.PI / 2 + 0.03)
+      paintFaces(bar, (_p, nn, c) => {
+        c.copy(Math.abs(nn.x) > 0.9 ? ADZED : DRIFT_DARK)
+      })
+      dress.push(place(bar, crookX(barY), barY, crookZ(barY) + 0.012))
+      for (const side of [-1, 1]) {
+        const x = crookX(barY) + side * 0.39
+        const z = crookZ(barY) + 0.012
+        const y = barY + side * 0.012
+        // A string of cowries
+        const drop = 0.4 + (side > 0 ? 0.07 : 0)
+        dress.push(fill(place(stripBasic(new THREE.CylinderGeometry(0.004, 0.004, drop, 3, 1)), x, y - drop / 2, z), SENNIT_DARK))
+        const strung = opts.lowPower ? 2 : 4
+        for (let k = 0; k < strung; k++) {
+          const g = stripBasic(new THREE.OctahedronGeometry(1, 0))
+          place(g, x, y - drop * ((k + 1) / strung), z, yawQ(k * 1.3), 0.024, 0.03, 0.018)
+          dress.push(fill(g, k % 2 ? SHELL : SHELL.clone().lerp(SHELL_PINK, 0.4)))
+        }
+        // and a strip of bark cloth, dyed at the foot
+        const len = 0.34 + (side < 0 ? 0.08 : 0)
+        const strip = stripBasic(new THREE.BoxGeometry(0.05, len, 0.006, 1, 3, 1))
+        paintFaces(strip, (p, _n, c) => {
+          c.copy(p.y < -len * 0.2 ? BARK_CLOTH_DYE : BARK_CLOTH)
+        })
+        _qa.setFromEuler(new THREE.Euler(0.05 * side, 0.5 * side, 0.06 * side))
+        dress.push(place(strip, x - side * 0.13, y - len / 2 - 0.01, z, _qa))
+      }
+    }
+    // Half as tall again as a man, and stout: it has to be seen from a boat
+    const carved = merge([post, print, ...dress])
+    carved.scale(1.3, 1.27, 1.3)
+    carved.rotateY(Math.atan2(outward.x, outward.y))
+    parts.push(carved)
 
     const rel = (x: number, z: number) => H(totemAt.x + x, totemAt.z + z) - totemAt.y
     // A ring of white shells round its foot
     const shells = 15
     for (let i = 0; i < shells; i++) {
       const a = (i / shells) * TAU + (hash(i * 3.1) - 0.5) * 0.25
-      const r = 0.43 + hash(i * 7.7) * 0.09
+      const r = 0.52 + hash(i * 7.7) * 0.1
       const x = Math.cos(a) * r
       const z = Math.sin(a) * r
       groundQuat(totemAt.x + x, totemAt.z + z, a + hash(i) * 1.2, q)
       let g: THREE.BufferGeometry
       if (i % 3 === 1) {
         // An auger shell on its side
-        g = stripBasic(new THREE.ConeGeometry(0.024, 0.075, 5))
+        g = stripBasic(new THREE.ConeGeometry(0.03, 0.095, 5))
         g.rotateZ(Math.PI / 2)
         g.translate(0, 0.018, 0)
         const base = rel(x, z)
@@ -1195,7 +1150,7 @@ export function createHeistProps(scene: THREE.Scene, opts: HeistPropsOptions): H
       } else {
         // A cowrie, dome up
         g = lump(40 + i)
-        place(g, x, rel(x, z) + 0.008, z, q, 0.04, 0.02, 0.028)
+        place(g, x, rel(x, z) + 0.01, z, q, 0.052, 0.026, 0.036)
         fill(g, i % 2 ? SHELL : SHELL.clone().lerp(SHELL_PINK, 0.35))
       }
       parts.push(g)
@@ -1203,10 +1158,10 @@ export function createHeistProps(scene: THREE.Scene, opts: HeistPropsOptions): H
     // Three wedge stones that hold it upright
     for (let i = 0; i < 3; i++) {
       const a = (i / 3) * TAU + 0.5
-      const x = Math.cos(a) * 0.2
-      const z = Math.sin(a) * 0.2
+      const x = Math.cos(a) * 0.29
+      const z = Math.sin(a) * 0.29
       const g = lump(70 + i)
-      place(g, x, rel(x, z) + 0.02, z, groundQuat(totemAt.x + x, totemAt.z + z, a, q), 0.11, 0.08, 0.09)
+      place(g, x, rel(x, z) + 0.03, z, groundQuat(totemAt.x + x, totemAt.z + z, a, q), 0.15, 0.11, 0.12)
       parts.push(fill(g, BASALT))
     }
     // A short line of dark stones across the path, on the seaward side: this far, and no further
@@ -1332,211 +1287,31 @@ export function createHeistProps(scene: THREE.Scene, opts: HeistPropsOptions): H
     }
   }
 
-  // —— the fire pit ——
+  // —— the camp, and the fire at its heart ——
   const fireAt = places.campFire
   const fireGroup = new THREE.Group()
   fireGroup.name = 'Camp fire'
   fireGroup.position.copy(fireAt)
   group.add(fireGroup)
-  // Real fire, so its glow is not sky fill: it burns as bright at midnight as at noon
-  const emberMat = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    color: '#3a332d',
-    roughness: 0.95,
-    emissive: '#ff6a2a',
-    emissiveIntensity: 1.2,
-  })
-  emberMat.onBeforeCompile = emissiveByAlbedo
-  const flameMat = new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uStrength: { value: 1 } },
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide,
-    vertexShader: /* glsl */ `
-      varying vec2 vUv;
-      void main() {
-        vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }`,
-    fragmentShader: /* glsl */ `
-      uniform float uTime;
-      uniform float uStrength;
-      varying vec2 vUv;
-      // One tongue of flame: narrowing upward, swaying more toward its tip, flickering in height
-      float tongue(vec2 p, float x0, float height, float seed) {
-        float y = p.y / height;
-        if (y > 1.0) return 0.0;
-        float sway = (sin(uTime * 2.3 + seed * 5.0 + y * 4.0) * 0.06
-          + sin(uTime * 5.7 + seed * 11.0 + y * 9.0) * 0.025) * y;
-        float width = 0.16 * (1.0 - y) * (0.75 + 0.25 * sin(uTime * 9.0 + seed * 3.0)) + 0.012;
-        float d = abs(p.x - x0 - sway) / width;
-        return (1.0 - smoothstep(0.4, 1.0, d)) * (1.0 - smoothstep(0.6, 1.0, y)) * smoothstep(0.0, 0.08, y);
-      }
-      void main() {
-        vec2 p = vec2((vUv.x - 0.5) * 0.9, vUv.y * 0.75);
-        float flick = 0.8 + 0.2 * sin(uTime * 13.0) * sin(uTime * 7.3 + 1.0);
-        float a = tongue(p, 0.0, 0.62 * flick, 0.0);
-        a = max(a, tongue(p, -0.11, 0.4 * (0.85 + 0.15 * sin(uTime * 8.1)), 1.7) * 0.85);
-        a = max(a, tongue(p, 0.1, 0.46 * (0.85 + 0.15 * sin(uTime * 6.7 + 2.0)), 3.1) * 0.85);
-        vec3 col = mix(vec3(1.0, 0.78, 0.38), vec3(1.0, 0.32, 0.05), smoothstep(0.05, 0.45, vUv.y));
-        gl_FragColor = vec4(col * 1.6, a * uStrength);
-      }`,
-  })
   // Added once and never hidden or removed: a light leaving the scene rebuilds
   // every lit shader in it. By day it is simply at zero.
   const fireLight = new THREE.PointLight('#ff9a4a', 0, 22, 2)
   fireLight.castShadow = false
   fireLight.position.set(0, 0.6, 0)
   fireGroup.add(fireLight)
-  const flame = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.75).translate(0, 0.395, 0), flameMat)
-  flame.name = 'Flames'
-  flame.userData.noShadow = true
-  flame.renderOrder = 2
-  {
-    const parts: THREE.BufferGeometry[] = []
-    const coals: THREE.BufferGeometry[] = []
-    const rel = (x: number, z: number) => H(fireAt.x + x, fireAt.z + z) - fireAt.y
-    const pool = places.campPool
-    const toPool = Math.atan2(pool.z - fireAt.z, pool.x - fireAt.x)
-
-    // Ring of basalt stones, blackened on the side that faces the fire
-    const stones: THREE.BufferGeometry[] = []
-    for (let i = 0; i < 9; i++) {
-      const a = (i / 9) * TAU + (hash(i * 1.7 + 30) - 0.5) * 0.3
-      const r = 0.56 + (hash(i * 2.9 + 30) - 0.5) * 0.06
-      const x = Math.cos(a) * r
-      const z = Math.sin(a) * r
-      const sx = 0.13 + hash(i * 3.3 + 30) * 0.04
-      const sy = 0.09 + hash(i * 5.1 + 30) * 0.03
-      const sz = 0.11 + hash(i * 7.3 + 30) * 0.03
-      const g = lump(100 + i)
-      stones.push(place(g, x, rel(x, z) + sy * 0.4, z, groundQuat(fireAt.x + x, fireAt.z + z, -a, q), sx, sy, sz))
-    }
-    const ring = merge(stones)
-    paintFaces(ring, (p, nn, c) => {
-      const len = Math.hypot(p.x, p.z) || 1
-      const inward = -(nn.x * p.x + nn.z * p.z) / len
-      c.copy(nn.y > 0.7 ? BASALT_LIGHT : BASALT)
-      if (inward > 0.2) c.lerp(SOOT, 0.8)
-    })
-    parts.push(ring)
-
-    // The ash bed
-    const ash = stripBasic(new THREE.CylinderGeometry(0.44, 0.47, 0.03, 12, 1))
-    place(ash, 0, rel(0, 0) + 0.005, 0)
-    paintFaces(ash, (p, _n, c) => {
-      c.copy(ASH).lerp(ASH_WHITE, hash(p.x * 31.7 + p.z * 17.3) * 0.6)
-    })
-    parts.push(ash)
-
-    // Four logs burnt down from the middle, their inner ends still alight
-    const axis = new THREE.Vector3()
-    for (let i = 0; i < 4; i++) {
-      const a = toPool + 0.6 + i * (TAU / 4) + (hash(i * 6.1 + 50) - 0.5) * 0.4
-      const ca = Math.cos(a)
-      const sa = Math.sin(a)
-      const inner = new THREE.Vector3(ca * 0.1, rel(0, 0) + 0.13, sa * 0.1)
-      const outer = new THREE.Vector3(ca * 0.92, rel(ca * 0.92, sa * 0.92) + 0.05, sa * 0.92)
-      axis.subVectors(inner, outer)
-      const len = axis.length()
-      axis.normalize()
-      q.setFromUnitVectors(UP, axis)
-      const log = stripBasic(new THREE.CylinderGeometry(0.05, 0.06, len, 6, 4))
-      paintFaces(log, (p, _n, c) => {
-        c.copy(p.y > len * 0.22 ? CHAR : BARK)
-      })
-      parts.push(place(log, (inner.x + outer.x) / 2, (inner.y + outer.y) / 2, (inner.z + outer.z) / 2, q))
-      const tip = fill(stripBasic(new THREE.CylinderGeometry(0.052, 0.052, 0.07, 6, 1)), EMBER_HOT)
-      coals.push(place(tip, inner.x + axis.x * 0.02, inner.y + axis.y * 0.02, inner.z + axis.z * 0.02, q))
-    }
-
-    // Coals in the middle: some glowing, some gone dull
-    for (let i = 0; i < 13; i++) {
-      const a = hash(i * 3.7 + 60) * TAU
-      const r = Math.sqrt(hash(i * 5.9 + 60)) * 0.27
-      const x = Math.cos(a) * r
-      const z = Math.sin(a) * r
-      const g = lump(120 + i)
-      place(g, x, rel(0, 0) + 0.035 + hash(i * 1.3) * 0.02, z, yawQ(a), 0.045 + hash(i * 2.1) * 0.025, 0.03, 0.04 + hash(i * 4.3) * 0.02)
-      paintFaces(g, (p, nn, c) => {
-        const hot = nn.y > 0.1 && hash(p.x * 91.3 + p.z * 57.1 + i) > 0.3
-        c.copy(hot ? EMBER_HOT : EMBER_DULL)
-      })
-      coals.push(g)
-    }
-
-    // Two log seats on the far side from the pool, where the elder sits
-    for (const side of [-1, 1]) {
-      const b = toPool + Math.PI + side * 0.95
-      const cx = Math.cos(b) * 1.85
-      const cz = Math.sin(b) * 1.85
-      const tx = -Math.sin(b)
-      const tz = Math.cos(b)
-      const endA = new THREE.Vector3(cx - tx * 0.72, 0, cz - tz * 0.72)
-      const endB = new THREE.Vector3(cx + tx * 0.72, 0, cz + tz * 0.72)
-      endA.y = rel(endA.x, endA.z) + 0.13
-      endB.y = rel(endB.x, endB.z) + 0.13
-      axis.subVectors(endB, endA).normalize()
-      q.setFromUnitVectors(UP, axis)
-      const seat = stripBasic(new THREE.CylinderGeometry(0.14, 0.15, 1.5, 9, 1))
-      paintFaces(seat, (p, nn, c) => {
-        if (Math.abs(nn.y) > 0.9) c.copy(CUT_WOOD)
-        else c.copy(BARK).lerp(BARK_DARK, 0.5 + 0.5 * Math.sin(Math.atan2(p.x, p.z) * 4 + p.y * 3))
-      })
-      parts.push(place(seat, (endA.x + endB.x) / 2, (endA.y + endB.y) / 2, (endA.z + endB.z) / 2, q))
-    }
-
-    // A low tripod over it with a clay pot hung from a cord
-    const apex = new THREE.Vector3(0, rel(0, 0) + 1.42, 0)
-    for (let i = 0; i < 3; i++) {
-      const a = toPool + 0.5 + (i * TAU) / 3
-      const foot = new THREE.Vector3(Math.cos(a) * 0.8, 0, Math.sin(a) * 0.8)
-      foot.y = rel(foot.x, foot.z) - 0.03
-      axis.subVectors(apex, foot)
-      const len = axis.length() + 0.08
-      axis.normalize()
-      q.setFromUnitVectors(UP, axis)
-      const pole = fill(stripBasic(new THREE.CylinderGeometry(0.017, 0.022, len, 5, 1)), BARK_DARK)
-      parts.push(place(pole, (apex.x + foot.x) / 2, (apex.y + foot.y) / 2, (apex.z + foot.z) / 2, q))
-    }
-    parts.push(fill(place(stripBasic(new THREE.CylinderGeometry(0.035, 0.035, 0.07, 6, 1)), 0, apex.y - 0.02, 0), CORD))
-    const potTop = rel(0, 0) + 0.86
-    parts.push(fill(place(stripBasic(new THREE.CylinderGeometry(0.004, 0.004, apex.y - potTop, 3, 1)), 0, (apex.y + potTop) / 2, 0), CORD))
-    const pot = stripBasic(
-      new THREE.LatheGeometry(
-        [
-          [0.01, 0],
-          [0.07, 0.015],
-          [0.105, 0.07],
-          [0.1, 0.13],
-          [0.072, 0.17],
-          [0.078, 0.19],
-        ].map(([r, y]) => new THREE.Vector2(r, y)),
-        8,
-      ),
-    )
-    paintVerts(pot, (p, _n, c) => {
-      c.copy(CLAY).lerp(SOOT, 1 - smooth(p.y, 0.02, 0.12))
-    })
-    parts.push(place(pot, 0, potTop - 0.19, 0))
-
-    const body = merge(parts)
-    tris.fire = triangles(body)
-    const bodyMesh = new THREE.Mesh(body, propMat)
-    bodyMesh.name = 'Fire pit'
-    fireGroup.add(bodyMesh)
-    const emberGeo = merge(coals)
-    tris.embers = triangles(emberGeo)
-    const embers = new THREE.Mesh(emberGeo, emberMat)
-    embers.name = 'Embers'
-    embers.userData.noShadow = true
-    fireGroup.add(embers)
-    flame.position.y = rel(0, 0)
-    fireGroup.add(flame)
-    tris.flames = 2
-    smallThing(fireGroup)
-  }
+  // The houses, the hearth and everything a household leaves about (camp.ts)
+  const camp = createCamp({
+    scene,
+    parent: group,
+    fireGroup,
+    fireLight,
+    island,
+    // The real island has its terrain mesh to give; a stand-in for it need not
+    terrain: (island as { terrain?: THREE.Mesh }).terrain,
+    places,
+    lowPower: opts.lowPower,
+  })
+  Object.assign(tris, camp.triangles)
 
   // —— salvage ——
   const salvage: Salvage[] = []
@@ -1625,7 +1400,7 @@ export function createHeistProps(scene: THREE.Scene, opts: HeistPropsOptions): H
   }
 
   // —— the bag ——
-  const bagGeo = buildBag()
+  const bagGeo = buildBag(!opts.lowPower)
   tris.bag = triangles(bagGeo)
   const bagObj = new THREE.Group()
   bagObj.name = 'Cash duffel'
@@ -2148,25 +1923,8 @@ export function createHeistProps(scene: THREE.Scene, opts: HeistPropsOptions): H
     let anyNear = !eye
     if (eye) for (const a of anchors) if (eye.distanceToSquared(a) < FAR2) anyNear = true
 
-    // The fire: a light only after dark, damped by rain, never put away
-    if (anyNear && (!eye || eye.distanceToSquared(fireAt) < FAR2)) {
-      const night = 1 - smooth(weather.daylight, 0.2, 0.65)
-      const wet = 1 - 0.5 * weather.storm
-      const flicker =
-        0.78 +
-        0.1 * Math.sin(t * 7.3) +
-        0.07 * Math.sin(t * 12.9 + 1.3) +
-        0.05 * Math.sin(t * 23.1 + 0.4) +
-        (Math.random() - 0.5) * 0.06
-      fireLight.intensity = FIRE_CANDELA * night * wet * flicker
-      emberMat.emissiveIntensity = (0.9 + 1.1 * night) * wet * flicker
-      flameMat.uniforms.uTime.value = t
-      flameMat.uniforms.uStrength.value = (0.55 + 0.45 * night) * wet * (0.85 + 0.15 * flicker)
-      // Flames are one card, kept turned to the eye
-      if (eye) flame.rotation.y = Math.atan2(eye.x - fireAt.x, eye.z - fireAt.z)
-    } else if (fireLight.intensity !== 0) {
-      fireLight.intensity = 0
-    }
+    // The camp: its fire is a light only after dark, damped by rain, never put away
+    camp.update(dt, t, weather, eye)
 
     if (anyNear) {
       for (const s of salvage) {
@@ -2207,6 +1965,8 @@ export function createHeistProps(scene: THREE.Scene, opts: HeistPropsOptions): H
     footprints: footprintCount,
   }
   group.userData.triangles = tris
+  // Where the camp's houses and gear ended up, for checking the islanders' routes against
+  group.userData.camp = { sites: camp.sites, triangles: camp.triangles, parts: camp.parts, notes: camp.notes, draws: camp.draws }
 
   return {
     group,

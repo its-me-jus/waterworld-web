@@ -1,177 +1,658 @@
+/* Encounters. Whoever is in front of you is written on the air above them. What you can
+   answer sits low on the left, what your hands can do low on the right, and the middle of
+   the view stays theirs. Only transform and opacity ever animate. */
 .ww-encounters {
   --ink: #eff3e7;
   --muted: #bad3ca;
+  --sand: #f3e5bc;
   --line: #b5d1c941;
-  --glass: linear-gradient(145deg, #15353be8, #061018eb);
+  --tone: #ccc7ae;
+  --serif: Georgia, 'Times New Roman', serif;
+  --sans: "Segoe UI", system-ui, sans-serif;
+  --halo: 0 0 2px rgb(3 14 20 / 0.85), 0 1px 3px rgb(3 14 20 / 0.8), 0 1px 12px rgb(3 14 20 / 0.9);
+  --ease: cubic-bezier(0.2, 0.75, 0.25, 1);
   --left: max(0.85rem, env(safe-area-inset-left));
   --right: max(0.85rem, env(safe-area-inset-right));
+  --top: max(1.1rem, env(safe-area-inset-top));
   --foot: max(1.1rem, env(safe-area-inset-bottom));
   color: var(--ink);
-  font: 0.84rem/1.4 "Segoe UI", system-ui, sans-serif;
+  font: 0.84rem/1.4 var(--sans);
 }
 .ww-encounters [hidden], body.film .ww-encounters { display: none !important; }
+.ww-encounters [data-tone="warm"] { --tone: #9dd6bd; }
+.ww-encounters [data-tone="wary"] { --tone: #edc683; }
+.ww-encounters [data-tone="hot"] { --tone: #ee997a; }
+.ww-encounters [data-tone="unmet"] { --tone: #8fa9a2; }
+
 .ww-encounters button, .ww-encounters input { font: inherit; color: inherit; }
 .ww-encounters button {
+  position: relative;
   cursor: pointer;
   min-height: 44px;
-  padding: 0.45rem 0.72rem;
-  border: 1px solid var(--line);
-  border-radius: 0.65rem;
-  background: #b5d1c90b;
+  padding: 0.45rem 0.95rem;
+  border: 1px solid #eaf5ec40;
+  border-radius: 2rem;
+  background: #08252b85;
   touch-action: manipulation;
+  transition: transform 0.14s var(--ease), opacity 0.2s ease;
 }
-.ww-encounters button:enabled:hover, .ww-encounters button:focus-visible,
-.ww-encounters [aria-pressed="true"] { background-color: #b5d1c92b; }
-.ww-encounters button:disabled { cursor: default; color: #a1b6af; border-color: #b5d1c920; }
+/* Hover, press and "sent" are a wash that fades in over the button. */
+.ww-encounters button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #cfe6dd;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+}
+.ww-encounters button:focus-visible::after { opacity: 0.14; }
+/* Only where a pointer can hover: on a touch screen a hover would stick after every tap. */
+@media (hover: hover) { .ww-encounters button:enabled:hover::after { opacity: 0.14; } }
+.ww-encounters button:enabled:active { transform: scale(0.96); }
+.ww-encounters button:enabled:active::after { opacity: 0.28; }
+.ww-encounters button:disabled { cursor: default; opacity: 0.5; }
+.ww-encounters button.is-sent { opacity: 1; }
+.ww-encounters button.is-sent::after { background: var(--sand); opacity: 0.24; }
 .ww-encounters :focus-visible { outline: 2px solid #e9d6a4; outline-offset: -3px; }
+
+/* —— the money: $2.4M, and nowhere to spend it —— */
 .ww-encounters .ww-heist {
   position: fixed;
   z-index: 7;
-  top: max(1.1rem, env(safe-area-inset-top));
+  top: var(--top);
   left: var(--left);
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto auto;
+  justify-content: start;
   align-items: baseline;
-  gap: 0.05rem 0.6rem;
+  gap: 0 0.75rem;
   width: max-content;
   max-width: calc(100vw - var(--left) - var(--right) - 9rem);
-  padding: 0.36rem 0.85rem;
-  background: var(--glass);
-  border-radius: 1rem;
+  padding: 0.22rem 1.05rem 0.36rem;
+  border-color: #eaf5ec55;
+  border-radius: 1.5rem;
+  background: #08252b99;
   text-align: left;
-  box-shadow: 0 3px 15px #06101822;
 }
 .ww-heist > * { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ww-heist strong { font-size: 0.89rem; font-variant-numeric: tabular-nums; font-weight: 600; color: #f3e5bc; }
-.ww-heist span { font-size: 0.65rem; color: var(--muted); }
-.ww-heist .ww-notes-label { color: var(--ink); text-decoration: underline; text-underline-offset: 0.16rem; }
+.ww-heist strong {
+  padding-bottom: 0.12rem;
+  font: 1.02rem/1.45 var(--serif);
+  font-variant-numeric: tabular-nums;
+  color: var(--sand);
+  /* A waterline under the figure. It has been in the sea. */
+  text-decoration: underline wavy rgb(243 229 188 / 0.45) 1px;
+  text-underline-offset: 0.2em;
+}
+.ww-heist span { font-size: 0.68rem; font-style: italic; letter-spacing: 0.02em; color: var(--muted); }
+.ww-heist .ww-notes-label {
+  font: 600 0.54rem/1 var(--sans);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink);
+  opacity: 0.85;
+}
+.ww-heist .ww-heist-spent {
+  position: absolute;
+  top: 100%;
+  left: 1.05rem;
+  margin-top: 0.2rem;
+  overflow: visible;
+  font: italic 0.82rem/1 var(--serif);
+  font-variant-numeric: tabular-nums;
+  color: var(--sand);
+  text-shadow: var(--halo);
+  opacity: 0;
+  pointer-events: none;
+}
 #app:has(#skip-chute:not([hidden])) .ww-heist { top: max(4.5rem, calc(env(safe-area-inset-top) + 3.6rem)); }
 
+/* —— the dock: a clear pane over the whole view; only its buttons take a touch —— */
 .ww-dock {
+  --card-top: max(var(--top), 6.5vh);
+  --shade: 4 22 30;
+  --shade-w: 62%;
+  --enter: 0.55s;
+  --beat: 70ms;
   position: fixed;
+  inset: 0;
   z-index: 7;
-  right: var(--right);
-  bottom: var(--foot);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+  grid-template-areas: "said said" ". ." "thing thing" "replies hands" ". hint";
+  gap: 0.4rem 1rem;
+  padding: var(--card-top) var(--right) var(--foot) var(--left);
+  pointer-events: none;
+}
+.ww-dock[data-npc="kael"] { --enter: 0.34s; --beat: 55ms; --shade: 5 16 20; }
+.ww-dock[data-npc="tala"] { --enter: 0.5s; --beat: 62ms; --shade: 5 30 40; }
+.ww-dock[data-npc="oru"] { --enter: 0.85s; --beat: 95ms; --shade: 26 22 16; }
+.ww-dock > * { transition: opacity 0.24s ease, transform 0.24s ease; }
+.ww-dock button { pointer-events: auto; }
+/* Shade for the words, like cloud over the top of the view. Not a box. */
+.ww-dock::before, .ww-dock::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  opacity: 0;
+  animation: 0.7s ease backwards;
+}
+.ww-dock[data-scene="a"]::before, .ww-dock[data-scene="a"]::after { animation-name: ww-fade; }
+.ww-dock[data-scene="b"]::before, .ww-dock[data-scene="b"]::after { animation-name: ww-fade-b; }
+.ww-dock::before {
+  inset: 0 0 auto;
+  height: min(60vh, 31rem);
+  background: radial-gradient(ellipse var(--shade-w) 100% at 50% 0,
+    rgb(var(--shade) / 0.6), rgb(var(--shade) / 0.42) 48%, rgb(var(--shade) / 0) 84%);
+  opacity: 1;
+  transition: opacity 0.5s ease;
+}
+.ww-dock[data-air="light"]::before { opacity: 0.85; }
+/* A thing's name sits low on the right, so its shade gathers in that corner instead. */
+.ww-dock:not([data-kind="npc"])::before {
+  inset: auto 0 0 auto;
+  width: min(36rem, 100%);
+  height: min(46vh, 19rem);
+  background: radial-gradient(ellipse 100% 100% at 100% 100%,
+    rgb(var(--shade) / 0.6), rgb(var(--shade) / 0.36) 45%, rgb(var(--shade) / 0) 76%);
+}
+/* Unease closes in from the edges. */
+.ww-dock::after {
+  inset: 0;
+  background: radial-gradient(ellipse 80% 72% at 50% 46%, rgb(56 14 6 / 0) 52%, rgb(56 14 6 / 0.5) 100%);
+  transition: opacity 0.8s ease;
+}
+.ww-dock[data-air="taut"]::after { opacity: 0.5; }
+.ww-dock[data-air="tense"]::after { opacity: 1; }
+
+.ww-card {
+  grid-area: said;
+  justify-self: center;
   display: flex;
   flex-direction: column;
-  width: min(32rem, calc(100vw - var(--left) - var(--right)));
-  max-height: calc(48dvh - var(--foot));
-  border: 1px solid var(--line);
-  border-radius: 0.95rem;
-  overflow: hidden;
-  background: var(--glass);
-  box-shadow: 0 6px 24px #06101833;
-  animation: ww-surface 0.18s ease-out;
+  align-items: center;
+  width: min(34rem, 100%);
+  text-align: center;
 }
-.ww-card {
-  min-height: 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  padding: 0.65rem 0.85rem 0.5rem;
-  touch-action: pan-y;
+/* Their words hang from the top of their grid area on their own. However long they run,
+   they can never push the replies or the gestures down the screen and out of reach. */
+.ww-dock[data-kind="npc"] .ww-card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  margin-inline: auto;
 }
-.ww-encounter-heading { display: flex; align-items: baseline; gap: 0.53rem; }
-.ww-encounter-heading strong, .ww-panel h2 { font: normal 1.4rem/1.1 Georgia, serif; }
-.ww-encounter-heading small { color: var(--muted); font-size: 0.67rem; }
-.ww-encounter-heading .ww-interact-key { margin-left: auto; }
-body.touch-ui .ww-interact-key { display: none; }
-.ww-mood { margin-left: auto; font-size: 0.7rem; white-space: nowrap; }
+.ww-encounter-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem 0.6rem;
+}
+.ww-encounter-heading > *, .ww-rule { animation: var(--enter) var(--ease) backwards; }
+.ww-dock[data-scene="a"] :is(.ww-encounter-heading > *, .ww-rule) { animation-name: ww-rise-a; }
+.ww-dock[data-scene="b"] :is(.ww-encounter-heading > *, .ww-rule) { animation-name: ww-rise-b; }
+.ww-encounter-heading strong {
+  flex: 0 0 100%;
+  font: normal 1.75rem/1.1 var(--serif);
+  letter-spacing: -0.012em;
+  color: #f4f2df;
+  text-shadow: 0 1px 3px rgb(3 24 32 / 0.6), 0 2px 22px rgb(7 38 46 / 0.75);
+}
+.ww-encounter-heading small, .ww-mood {
+  font: 600 0.58rem/1 var(--sans);
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.ww-encounter-heading small { padding-left: 0.26em; color: var(--muted); text-shadow: var(--halo); animation-delay: 0.08s; }
+.ww-encounter-heading small:empty { display: none; }
+.ww-encounter-heading .ww-mood { text-shadow: var(--halo); animation-delay: 0.14s; }
+.ww-mood { display: inline-flex; align-items: center; color: var(--tone); }
+/* The mark: a ring while they watch, filled when at ease, a diamond when guarded, a beating one on edge. */
 .ww-mood::before {
   content: "";
-  display: inline-block;
-  width: 0.42rem;
-  height: 0.42rem;
-  margin-right: 0.36rem;
+  flex: none;
+  width: 0.34rem;
+  height: 0.34rem;
+  margin-right: 0.62rem;
+  border: 1px solid var(--tone);
   border-radius: 50%;
-  background: #ccc7ae;
 }
-.ww-mood[data-tone="warm"]::before { background: #9dd6bd; }
-.ww-mood[data-tone="wary"]::before { background: #edc683; }
-.ww-mood[data-tone="hot"]::before { background: #ee997a; }
-.ww-caption, .ww-translation { margin: 0.35rem 0 0; overflow-wrap: anywhere; }
-.ww-translation { color: #dfd6af; font: italic 0.84rem/1.4 Georgia, serif; }
-.ww-caption:empty, .ww-translation:empty, .ww-choices:empty { display: none; }
-.ww-choices, .ww-gesture-rail {
-  display: flex;
-  align-items: stretch;
-  gap: 0.3rem;
-  max-width: 100%;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  overscroll-behavior-x: contain;
-  touch-action: pan-x pan-y;
-}
-.ww-choices { margin-top: 0.35rem; }
-.ww-choices button, .ww-gesture-rail button { flex: 0 0 auto; white-space: nowrap; font-size: 0.75rem; }
-.ww-choices button { border-radius: 2rem; color: #c7e3dc; padding-inline: 0.78rem; }
-.ww-gesture-rail {
-  flex-shrink: 0;
-  border-top: 1px solid var(--line);
-  padding: 0.3rem;
-  background: #06101842;
-}
-.ww-gesture-rail button { flex-grow: 1; padding-inline: 0.48rem; }
-.ww-gesture-rail kbd { margin-right: 0.3rem; color: #adcfc8; font: 0.6rem/1 monospace; }
+.ww-mood[data-tone="warm"]::before { background: var(--tone); }
+.ww-mood[data-tone="wary"]::before, .ww-mood[data-tone="hot"]::before { border-radius: 0; transform: rotate(45deg); }
+.ww-mood[data-tone="hot"]::before { background: var(--tone); animation: ww-pulse 1.05s ease-in-out infinite; }
+.ww-mood[data-tone="unmet"]::before { border-style: dotted; }
 
-/* Keep the entire movement stick and both swim buttons below the interaction sheet. */
+/* The rule under the name holds the posture: it sways, breathes, pulls tight, or waits. */
+.ww-rule { display: block; width: 2.75rem; height: 1px; margin-top: 0.85rem; animation-delay: 0.2s; }
+.ww-rule::before { content: ""; display: block; height: 100%; background: var(--tone); opacity: 0.8; transition: transform 0.8s var(--ease); }
+.ww-dock[data-air="light"] .ww-rule::before { animation: ww-sway 3.4s ease-in-out infinite; }
+.ww-dock[data-air="warm"] .ww-rule::before { animation: ww-breathe 5.5s ease-in-out infinite; }
+.ww-dock[data-air="taut"] .ww-rule::before { transform: scaleX(0.55); }
+.ww-dock[data-beat="accept_offer"] .ww-rule::before { transform: scaleX(1.7); animation: none; }
+/* Amused at the money: the rule shakes with it, then settles back. Kael, pulled tight, is not amused. */
+.ww-dock[data-beat="scoff_at_cash"][data-air="light"] .ww-rule::before { animation: ww-chuckle 1.2s ease-out 0.5s backwards, ww-sway 3.4s ease-in-out 1.7s infinite; }
+.ww-dock[data-beat="scoff_at_cash"][data-air="warm"] .ww-rule::before { animation: ww-chuckle 1.2s ease-out 0.5s backwards, ww-breathe 5.5s ease-in-out 1.7s infinite; }
+.ww-dock[data-air="tense"] .ww-rule { height: 2px; }
+.ww-dock[data-air="tense"] .ww-rule::before { transform: scaleX(0.55); opacity: 1; animation: ww-pulse 1.05s ease-in-out infinite; }
+.ww-dock.ww-dock[data-state="pending"] .ww-rule::before { animation: ww-think 1.5s ease-in-out infinite; }
+
+/* One reserved line for "sent, waiting", so nothing below it moves. */
+.ww-status {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  max-width: 100%;
+  min-height: 2.05rem;
+  margin: 0;
+  padding: 0.5rem 0 0.4rem;
+  font-size: 0.74rem;
+  font-style: italic;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  color: var(--muted);
+  text-shadow: var(--halo);
+}
+.ww-status > * { animation: ww-fade 0.3s ease backwards; }
+.ww-status .ww-sep { white-space: pre; }
+.ww-ack { overflow: hidden; text-overflow: ellipsis; font-style: normal; color: var(--sand); }
+.ww-dock:not([data-kind="npc"]) :is(.ww-rule, .ww-status) { display: none; }
+
+/* —— what was said —— */
+.ww-said {
+  --lead: 0.1s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  transition: opacity 0.3s ease;
+}
+.ww-said[data-first] { --lead: 0.42s; }
+.ww-dock[data-state="pending"] .ww-said { opacity: 0.4; }
+.ww-said p { margin: 0; max-width: 100%; overflow-wrap: anywhere; text-wrap: balance; }
+.ww-said p:empty { display: none; }
+/* What you see: the same voice as the game's whisper line. */
+.ww-caption {
+  font-size: 0.98rem;
+  font-style: italic;
+  line-height: 1.5;
+  letter-spacing: 0.045em;
+  color: rgb(228 240 244 / 0.95);
+  text-shadow: var(--halo);
+}
+.ww-told { animation: ww-fade 0.6s ease backwards; animation-delay: calc(var(--lead) + var(--i, 0) * var(--beat)); }
+/* What you hear: their own voice, larger, arriving a word at a time. */
+.ww-voice, .ww-utterance {
+  font-family: var(--serif);
+  font-style: italic;
+  color: var(--sand);
+  text-shadow: 0 1px 3px rgb(3 24 32 / 0.7), 0 2px 18px rgb(7 38 46 / 0.8);
+}
+.ww-voice { font-size: 1.12em; letter-spacing: 0.01em; }
+.ww-voice.is-line { display: block; margin-top: 0.4rem; font-size: 1.36rem; line-height: 1.3; }
+.ww-voice.is-line.is-long { font-size: 1.16rem; line-height: 1.35; }
+.ww-utterance { font-size: 1.8rem; line-height: 1.2; letter-spacing: 0.05em; }
+.ww-word {
+  display: inline-block;
+  animation: ww-word 0.5s var(--ease) backwards;
+  animation-delay: calc(var(--lead) + var(--i, 0) * var(--beat));
+}
+/* What you make of it: under a dotted rule where theirs is solid, marked as roughly, a beat behind. */
+.ww-translation {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.42rem;
+  margin-top: 0.55rem;
+  animation: ww-guess 1.3s ease backwards;
+  animation-delay: calc(var(--lead) + var(--i, 0) * var(--beat) + 0.8s);
+}
+.ww-translation::before {
+  content: "";
+  width: 2.75rem;
+  margin-bottom: 0.3rem;
+  border-top: 1px dotted rgb(223 214 175 / 0.8);
+}
+.ww-by {
+  padding-left: 0.24em;
+  font: 600 0.56rem/1 var(--sans);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-shadow: var(--halo);
+}
+.ww-translation .ww-sep { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.ww-guess {
+  font: italic 1rem/1.45 var(--serif);
+  letter-spacing: 0.02em;
+  color: rgb(230 223 190 / 0.96);
+  text-shadow: var(--halo), 0 0 5px rgb(3 14 20 / 0.9);
+}
+.ww-guess::before { content: "≈"; content: "≈" / ""; display: inline-block; margin-right: 0.5em; font-style: normal; opacity: 0.8; }
+
+/* —— replies the moment offers: low on the left —— */
+.ww-choices {
+  grid-area: replies;
+  align-self: end;
+  justify-self: start;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  max-width: 100%;
+}
+.ww-choices:empty { display: none; }
+.ww-choices button {
+  max-width: 100%;
+  padding-inline: 1.05rem;
+  font: italic 0.92rem/1.2 var(--serif);
+  letter-spacing: 0.015em;
+  text-align: left;
+  color: #f2efdd;
+  animation: ww-rise-a 0.45s var(--ease) backwards;
+  animation-delay: calc(0.12s + var(--i, 0) * 70ms);
+}
+/* Replies you would say aloud take the colour of a voice; the rest are things you do. */
+.ww-choices button:is([data-says], [aria-haspopup]) { color: var(--sand); }
+
+/* —— your hands: one quiet list, low on the right —— */
+.ww-gesture-rail {
+  grid-area: hands;
+  justify-self: end;
+  display: flex;
+  flex-direction: column;
+  min-width: 10.5rem;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid #eaf5ec38;
+  border-radius: 1.2rem;
+  background: #08252b8f;
+  animation: ww-fade 0.45s ease backwards;
+}
+.ww-gesture-rail:empty { display: none; }
+.ww-gesture-rail button {
+  display: flex;
+  align-items: center;
+  min-height: 2.5rem;
+  padding: 0.3rem 1.15rem 0.3rem 0.85rem;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: 0.8rem;
+  letter-spacing: 0.01em;
+  text-align: left;
+  white-space: nowrap;
+  animation: ww-rise-a 0.4s var(--ease) backwards;
+  animation-delay: calc(0.16s + var(--i, 0) * 45ms);
+}
+.ww-gesture-rail button + button { box-shadow: inset 0 1px 0 #eaf5ec1f; }
+.ww-gesture-rail button[data-ending] { font: italic 0.95rem/1.2 var(--serif); color: var(--sand); }
+.ww-gesture-rail kbd, .ww-interact-key kbd {
+  flex: none;
+  display: inline-block;
+  min-width: 1.2rem;
+  height: 1.2rem;
+  margin-right: 0.6rem;
+  padding: 0 0.28rem;
+  border: 1px solid #eaf5ec66;
+  border-radius: 0.3rem;
+  font: 600 0.62rem/1.1rem var(--sans);
+  letter-spacing: 0;
+  text-align: center;
+  color: var(--sand);
+}
+.ww-gesture-rail .is-sent kbd { border-color: var(--sand); background: var(--sand); color: #0b252d; }
+.ww-interact-key {
+  grid-area: hint;
+  justify-self: end;
+  padding-right: 0.5rem;
+  font: 600 0.54rem/1.2rem var(--sans);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-shadow: var(--halo);
+  opacity: 0.9;
+  animation: ww-fade 0.6s ease 0.3s backwards;
+}
+.ww-interact-key kbd { margin-right: 0.1rem; text-shadow: none; background: #08252b8f; vertical-align: 0.06em; }
+
+/* A thing, not a person: its name sits low on the right, on top of what you can do with it. */
+.ww-dock:not([data-kind="npc"]) .ww-card {
+  grid-area: thing;
+  justify-self: end;
+  align-items: flex-end;
+  width: min(26rem, 100%);
+  padding-right: 0.45rem;
+  text-align: right;
+}
+.ww-dock:not([data-kind="npc"]) .ww-gesture-rail { grid-column: 1 / -1; }
+.ww-dock:not([data-kind="npc"]) .ww-encounter-heading { justify-content: flex-end; }
+.ww-dock:not([data-kind="npc"]) .ww-encounter-heading strong { font-size: 1.5rem; }
+.ww-dock:not([data-kind="npc"]) .ww-said { align-items: flex-end; margin: 0.25rem 0 0.2rem; }
+
+/* Leaving is quick and quiet. */
+.ww-dock.is-leaving > * { opacity: 0; transform: translateY(6px); }
+.ww-dock.is-leaving[data-kind="npc"] > .ww-card { transform: translateY(-6px); }
+.ww-dock.is-leaving::before, .ww-dock.is-leaving::after { opacity: 0; transition-duration: 0.24s; }
+
+/* Touch: the movement stick and both swim buttons stay clear below the dock, and with no
+   box behind the words a look-drag passes straight through them. */
 body.touch-ui .ww-dock {
   --foot: calc(max(2rem, env(safe-area-inset-bottom) + 1rem) + 9rem);
 }
-body.touch-ui .ww-gesture-rail kbd { display: none; }
-@media (max-width: 600px) {
-  .ww-dock { right: var(--right); left: var(--left); width: auto; }
-  .ww-heist .ww-notes-label { max-width: 3.5rem; }
-  .ww-encounters .ww-heist { gap: 0.05rem 0.4rem; padding-inline: 0.55rem; }
+body.touch-ui .ww-gesture-rail button { min-height: 44px; padding-inline: 1.05rem; }
+body.touch-ui .ww-gesture-rail kbd, body.touch-ui .ww-interact-key { display: none; }
+@media (max-width: 58rem) {
+  /* Narrower than this the name would run into the money, so it starts a line lower. */
+  .ww-dock { --card-top: calc(var(--top) + 4.1rem); }
 }
-/* In landscape there is room for a strip between the two control clusters. */
+@media (max-width: 600px) {
+  .ww-dock { --shade-w: 135%; column-gap: 0; }
+  .ww-encounters .ww-heist { gap: 0 0.6rem; padding-inline: 0.9rem; }
+  .ww-encounter-heading strong { font-size: 1.55rem; }
+  .ww-caption { font-size: 0.93rem; }
+  .ww-voice.is-line { font-size: 1.24rem; }
+  .ww-voice.is-line.is-long { font-size: 1.08rem; }
+  .ww-utterance { font-size: 1.6rem; }
+  .ww-guess { font-size: 0.92rem; line-height: 1.4; }
+  /* Replies over the left thumb, gestures over the right, and a clear lane between
+     them for whoever you are facing. Long replies wrap instead of reaching across. */
+  .ww-dock[data-kind="npc"] :is(.ww-choices, .ww-gesture-rail) { max-width: calc(100% - 2.9rem); }
+  .ww-choices button { border-radius: 1.35rem; padding-inline: 0.95rem; }
+  .ww-gesture-rail { min-width: 8.3rem; }
+  .ww-gesture-rail button { white-space: normal; }
+  /* A thing keeps to the right-hand side too, clear of whatever it is you are standing over. */
+  .ww-dock:not([data-kind="npc"]) .ww-card { width: min(13rem, 100%); }
+  .ww-dock:not([data-kind="npc"]) .ww-encounter-heading strong { font-size: 1.38rem; }
+}
+/* On its side, the lists stand just inside the two control clusters. */
 @media (orientation: landscape) and (min-width: 540px) {
   body.touch-ui .ww-dock {
     --foot: max(0.65rem, env(safe-area-inset-bottom));
-    left: max(9.5rem, calc(env(safe-area-inset-left) + 8rem));
-    right: max(6rem, calc(env(safe-area-inset-right) + 4.8rem));
-    width: auto;
-    max-width: 36rem;
-    margin-inline: auto;
+    padding-left: max(9.5rem, calc(env(safe-area-inset-left) + 8rem));
+    padding-right: max(6rem, calc(env(safe-area-inset-right) + 4.8rem));
   }
 }
+@media (max-height: 500px) {
+  .ww-dock { --card-top: var(--top); row-gap: 0.3rem; }
+  .ww-card { width: min(21rem, 100%); }
+  .ww-encounter-heading strong { flex: 0 0 auto; font-size: 1.25rem; }
+  .ww-rule { margin-top: 0.45rem; }
+  .ww-status { min-height: 1.3rem; padding: 0.25rem 0 0.15rem; }
+  .ww-said { gap: 0.25rem; }
+  .ww-caption { font-size: 0.84rem; line-height: 1.35; }
+  .ww-voice.is-line, .ww-voice.is-line.is-long { margin-top: 0.15rem; font-size: 1.02rem; }
+  .ww-utterance { font-size: 1.3rem; }
+  .ww-translation { gap: 0.25rem; margin-top: 0.1rem; }
+  .ww-translation::before { margin-bottom: 0.1rem; }
+  .ww-guess { font-size: 0.84rem; }
+  .ww-choices { gap: 0.25rem; }
+}
 
+/* —— dialogs: field notes, speaking, the last card. Same family as the World panel. —— */
 .ww-panel {
   color: var(--ink);
-  background: linear-gradient(145deg, #173e43fa, #091e27fc);
+  background: linear-gradient(150deg, #173e43fa, #0b252dfc);
   border: 1px solid #b5d1c966;
   border-radius: 1rem;
   box-shadow: 0 10px 40px #031b254d;
-  width: min(22rem, calc(100vw - var(--left) - var(--right)));
+  width: min(23rem, calc(100vw - var(--left) - var(--right)));
   max-height: calc(100dvh - max(1rem, env(safe-area-inset-top)) - max(1rem, env(safe-area-inset-bottom)));
-  padding: 1rem 1.1rem;
+  padding: 1.05rem 1.2rem 1.25rem;
   overflow: auto;
   overscroll-behavior: contain;
   touch-action: pan-y;
 }
-.ww-panel::backdrop { background: #06101872; }
+.ww-panel[open] { animation: ww-panel 0.32s var(--ease); }
+.ww-panel::backdrop { background: #06101872; animation: ww-fade 0.32s ease; }
 .ww-panel header, .ww-notes-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
-.ww-panel .ww-close { width: 44px; border-radius: 50%; font-size: 1.2rem; }
-.ww-panel h2 { margin: 0; font-size: 1.6rem; }
-.ww-panel h3 { margin: 0 0 0.55rem; font-size: 0.83rem; }
-.ww-panel section, .ww-panel form { border-top: 1px solid var(--line); margin-top: 0.75rem; padding-top: 0.8rem; }
-.ww-panel .ww-note { color: var(--muted); margin: 0.15rem 0 0.55rem; font-size: 0.78rem; }
-.ww-panel .ww-notes-row:not(:first-of-type) { margin-top: 0.45rem; }
-.ww-panel ul { padding-left: 1.15rem; }
-.ww-panel li + li { margin-top: 0.45rem; }
+.ww-panel .ww-close { width: 44px; padding: 0; background: none; font-size: 1.2rem; }
+.ww-panel h2 { margin: 0; font: normal 1.6rem/1.1 var(--serif); }
+.ww-panel h3, .ww-panel label {
+  display: block;
+  margin: 0 0 0.7rem;
+  font: 600 0.58rem/1 var(--sans);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #adcfc8;
+}
+.ww-panel section, .ww-panel form { border-top: 1px solid var(--line); margin-top: 0.85rem; padding-top: 0.95rem; }
+.ww-panel .ww-note { margin: 0.2rem 0 0.75rem; font-size: 0.8rem; font-style: italic; line-height: 1.45; letter-spacing: 0.02em; color: var(--muted); }
+.ww-notes-row strong { font: normal 1.1rem/1.2 var(--serif); }
+.ww-panel .ww-notes-row:not(:first-of-type) { margin-top: 0.55rem; }
+.ww-panel .ww-mood { font: 600 0.56rem/1 var(--sans); letter-spacing: 0.22em; text-transform: uppercase; }
+.ww-panel ul { margin: 0; padding: 0; list-style: none; }
+.ww-panel li { font: italic 0.86rem/1.45 var(--serif); letter-spacing: 0.01em; color: #dfe9e2; }
+.ww-panel li + li { margin-top: 0.55rem; padding-top: 0.55rem; border-top: 1px dotted var(--line); }
 .ww-pack, .ww-outcome-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-.ww-outcome-actions { flex-direction: column; }
-.ww-outcome-actions button:first-child { background-color: #a6d6c826; border-color: #e9d6a477; }
+.ww-pack button { background: #b5d1c90b; font-size: 0.8rem; }
+.ww-pack [aria-pressed="true"] { border-color: #e9d6a4b0; color: var(--sand); }
+.ww-pack [aria-pressed="true"]::after { opacity: 0.1; }
+.ww-pack [aria-pressed="true"]::before {
+  content: "";
+  display: inline-block;
+  width: 0.36rem;
+  height: 0.36rem;
+  margin-right: 0.5rem;
+  border-radius: 50%;
+  background: var(--sand);
+  vertical-align: 0.12em;
+}
+
+/* Speaking: one line to write on, not a form. */
+.ww-speak { width: min(26rem, calc(100vw - var(--left) - var(--right))); }
+.ww-speak label { margin: 0; }
 .ww-panel input {
   display: block;
   width: 100%;
-  margin: 0.45rem 0 0.65rem;
-  border: 1px solid var(--line);
-  background: #06101880;
-  border-radius: 0.5rem;
-  min-height: 44px;
-  padding: 0.5rem;
-  font-size: 1rem;
+  min-height: 48px;
+  margin: 0.2rem 0 0.9rem;
+  padding: 0.45rem 0;
+  border: 0;
+  border-bottom: 1px solid #b5d1c97a;
+  border-radius: 0;
+  background: none;
+  font: italic 1.2rem/1.3 var(--serif);
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: var(--ink);
 }
-@keyframes ww-surface { from { opacity: 0; transform: translateY(4px); } }
-@media (prefers-reduced-motion: reduce) { .ww-dock { animation: none; } }
+.ww-panel input::placeholder { color: #bad3ca8c; }
+.ww-panel input:focus-visible { outline: none; border-bottom-color: var(--sand); box-shadow: 0 1px 0 var(--sand); }
+.ww-speak button[type="submit"] { border-color: #e9d6a48f; color: var(--sand); padding-inline: 1.3rem; }
+.ww-speak [data-live] { border-color: #ee997a; }
+.ww-speak [data-live]::before {
+  content: "";
+  display: inline-block;
+  width: 0.4rem;
+  height: 0.4rem;
+  margin-right: 0.5rem;
+  border-radius: 50%;
+  background: #ee997a;
+  animation: ww-pulse 1.05s ease-in-out infinite;
+}
+/* The mic's one line of status sits beside the buttons, so the card never changes height. */
+.ww-speak form { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 0.9rem; }
+.ww-speak label { grid-column: 1 / -1; }
+.ww-speak .ww-note { margin: 0; }
+/* With a real keyboard it sits low, so their last words and their face stay in view while you write. */
+.ww-speak { margin-bottom: max(3.5rem, 11vh); padding-bottom: 0.9rem; }
+@media (max-width: 600px), (max-height: 500px) {
+  /* Sit high, so the on-screen keyboard has the bottom half to itself. */
+  .ww-speak { margin-top: max(1rem, env(safe-area-inset-top)); margin-bottom: auto; }
+}
+@media (max-width: 600px) and (min-height: 501px) {
+  .ww-speak { margin-top: max(4.6rem, calc(env(safe-area-inset-top) + 3.6rem)); }
+}
+
+/* The last card: a title over the dark, like the one the island opened with. */
+.ww-ending {
+  width: min(27rem, calc(100vw - var(--left) - var(--right)));
+  padding: 2rem 1.6rem 1.5rem;
+  border-color: #b5d1c93d;
+  background: linear-gradient(170deg, #0f2f36f2, #071a22f7);
+  text-align: center;
+}
+.ww-ending[open] { animation: ww-panel 0.9s var(--ease) 0.15s backwards; }
+.ww-ending::backdrop { background: #061018c2; animation: ww-fade 1.1s ease; }
+.ww-ending header { justify-content: center; }
+.ww-ending h2 { font-size: 2.05rem; letter-spacing: -0.02em; color: #f4f2df; }
+.ww-ending h2::after {
+  content: "";
+  display: block;
+  width: 2.5rem;
+  height: 1px;
+  margin: 1.1rem auto 0;
+  background: currentColor;
+  opacity: 0.65;
+}
+.ww-ending p { margin: 1.1rem 0 1.6rem; font: italic 1rem/1.6 var(--serif); letter-spacing: 0.03em; color: #dfe9e2; text-wrap: balance; }
+.ww-outcome-actions { flex-direction: column; }
+.ww-outcome-actions button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.32rem;
+  padding: 0.75rem 1rem 0.7rem;
+  border-radius: 1.1rem;
+  background: #b5d1c90b;
+  font: 1.05rem/1.2 var(--serif);
+}
+.ww-outcome-actions small { font: 600 0.54rem/1 var(--sans); letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); }
+.ww-outcome-actions button:first-child { border-color: #e9d6a48f; color: var(--sand); }
+
+@keyframes ww-fade { from { opacity: 0; } }
+@keyframes ww-fade-b { from { opacity: 0; } }
+@keyframes ww-rise-a { from { opacity: 0; transform: translateY(8px); } }
+@keyframes ww-rise-b { from { opacity: 0; transform: translateY(8px); } }
+@keyframes ww-word { from { opacity: 0; transform: translateY(0.32em); } }
+@keyframes ww-guess { from { opacity: 0; transform: translateY(0.3rem); } }
+@keyframes ww-panel { from { opacity: 0; transform: translateY(10px) scale(0.985); } }
+@keyframes ww-sway { 0%, 100% { transform: scaleX(0.7); } 50% { transform: scaleX(1.08); } }
+@keyframes ww-breathe { 0%, 100% { transform: scaleX(0.8); opacity: 0.6; } 50% { transform: scaleX(1.3); opacity: 0.95; } }
+@keyframes ww-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@keyframes ww-think { 0%, 100% { transform: scaleX(0.3); opacity: 0.35; } 50% { transform: scaleX(1.35); opacity: 0.95; } }
+@keyframes ww-chuckle {
+  0%, 100% { transform: scaleX(0.8); }
+  14% { transform: scaleX(1.55); }
+  30% { transform: scaleX(0.8); }
+  46% { transform: scaleX(1.4); }
+  62% { transform: scaleX(0.85); }
+  78% { transform: scaleX(1.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Nothing moves and nothing loops. Things are simply there, then simply gone. */
+  .ww-encounters *, .ww-encounters *::before, .ww-encounters *::after,
+  .ww-dock::before, .ww-dock::after, .ww-panel::backdrop {
+    animation: none !important;
+    transition-duration: 0.1s !important;
+  }
+  .ww-encounters button:enabled:active { transform: none; }
+  .ww-dock.is-leaving > *, .ww-dock.is-leaving[data-kind="npc"] > .ww-card { transform: none; }
+}

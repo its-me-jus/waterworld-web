@@ -1,11 +1,11 @@
 import './interaction-ui.css'
-import type { EndingId, HeldItem, NpcAiDecision, NpcId, PlayerGesture } from './contract.ts'
+import type { EndingId, HeldItem, NpcAction, NpcAiDecision, NpcId, PlayerGesture } from './contract.ts'
 import type { NpcBrain } from './npc-brain.ts'
 import type { StoryManager } from './story-state.ts'
 
 type Salvage = Extract<HeldItem, 'spear' | 'salvage_compass' | 'salvage_flare' | 'radio_battery'>
 export type InteractionContext =
-  | { kind: 'npc'; npcId: NpcId; talaPresent?: boolean; trespassing?: boolean }
+  | { kind: 'npc'; npcId: NpcId; talaPresent?: boolean; trespassing?: boolean; /** Spear up, stalking or charging right now. Only changes the panel's posture. */ hostile?: boolean }
   | { kind: 'salvage'; item: Salvage }
   | { kind: 'cave' | 'campfire' | 'escape' | 'dropped_bag' | 'totem' }
 
@@ -22,6 +22,10 @@ export type InteractionOptions = {
 
 const names = { kael: 'Kael', tala: 'Tala', oru: 'Oru' }
 const roles = { kael: 'The watcher', tala: 'Reef diver', oru: 'The elder' }
+const firstLook = {
+  kael: 'The spear stops tapping.', tala: 'A diver tips water out of one ear.',
+  oru: 'The elder watches the space between your hands.',
+}
 const items: Record<HeldItem, string> = {
   none: 'Empty hands', cash_bag: 'Cash duffel', cash_wad: 'Cash wad', spear: 'Spear',
   salvage_compass: 'Brass compass', salvage_flare: 'Signal flare', radio_battery: 'Radio battery',
@@ -36,6 +40,10 @@ const gestures: [PlayerGesture, string][] = [
   ['empty_hands', 'Empty hands'], ['crouch', 'Kneel'], ['back_away', 'Back away'],
   ['offer_cash', 'Flash $10k'], ['offer_item', 'Offer item'],
 ]
+/** Beats that put the whole encounter on edge, whoever it is with. */
+const edgy: readonly NpcAction[] = ['warn', 'stalk', 'attack_chase']
+/** Words an islander says aloud inside a line of narration. Only Tala has any. */
+const quoted = /“[^”]+”|"[^"]+"/g
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const make = <K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', text = '') => {
   const el = document.createElement(tag)
@@ -48,6 +56,39 @@ function button(text: string, act: () => void) {
   b.type = 'button'
   b.onclick = act
   return b
+}
+// The game calls setContext every frame and the story commits often, so nothing below
+// touches the DOM unless what it shows has changed. That also keeps animations from restarting.
+function put(el: HTMLElement, text: string) {
+  if (el.textContent !== text) el.textContent = text
+}
+function mark(el: HTMLElement, name: string, value: string | null) {
+  if (value === null) el.removeAttribute('data-' + name)
+  else if (el.getAttribute('data-' + name) !== value) el.setAttribute('data-' + name, value)
+}
+const still = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
+function play(el: Element | null | undefined, frames: Keyframe[], duration: number, easing = 'ease-out') {
+  if (el && typeof el.animate === 'function') el.animate(frames, { duration, easing })
+}
+/** The small give of a pressed key, for presses that came from the keyboard too. */
+function nudge(el: Element | null | undefined) {
+  if (!still()) play(el, [{ transform: 'scale(0.94)' }, { transform: 'scale(1)' }], 300, 'cubic-bezier(0.2, 0.9, 0.3, 1.4)')
+}
+/** One span per word (grouped when the line is long) so a voice arrives a word at a time. Returns the next beat. */
+function voiced(el: HTMLElement, text: string, beat: number) {
+  const parts = text.split(/\s+/).filter(Boolean)
+  const size = Math.ceil(parts.length / 16) || 1
+  for (let at = 0; at < parts.length; at += size) {
+    const word = make('span', 'ww-word', parts.slice(at, at + size).join(' '))
+    word.style.setProperty('--i', String(beat++))
+    el.append(word, ' ')
+  }
+  return beat
+}
+function told(text: string, beat: number) {
+  const el = make('span', 'ww-told', text)
+  el.style.setProperty('--i', String(beat))
+  return el
 }
 
 type Mic = {
@@ -79,23 +120,34 @@ export function createInteractionUI(app: HTMLElement, options: InteractionOption
   notesToggle.setAttribute('aria-expanded', 'false')
   const cash = make('strong'), tag = make('span'), held = make('span', 'ww-heist-hand')
   const notesLabel = make('span', 'ww-notes-label', 'Field notes')
-  notesToggle.append(cash, notesLabel, tag, held)
+  const spent = make('span', 'ww-heist-spent')
+  spent.setAttribute('aria-hidden', 'true')
+  notesToggle.append(cash, notesLabel, tag, held, spent)
+
+  // Their words sit above them, your replies low on the left, your hands low on the right.
   const dock = make('section', 'ww-dock')
   dock.setAttribute('aria-label', 'Nearby interaction')
   dock.hidden = true
   const card = make('div', 'ww-card')
   const heading = make('div', 'ww-encounter-heading')
   const title = make('strong'), subtitle = make('small'), mood = make('span', 'ww-mood')
-  const interactHint = make('small', 'ww-interact-key', 'E · interact')
-  heading.append(title, subtitle, mood, interactHint)
-  const caption = make('p', 'ww-caption')
-  caption.setAttribute('aria-live', 'polite')
-  const translation = make('p', 'ww-translation')
+  heading.append(title, subtitle, mood)
+  const rule = make('span', 'ww-rule')
+  rule.setAttribute('aria-hidden', 'true')
+  const status = make('p', 'ww-status')
+  status.setAttribute('role', 'status')
+  const said = make('div', 'ww-said')
+  said.setAttribute('aria-live', 'polite')
+  said.setAttribute('aria-atomic', 'true')
+  const caption = make('p', 'ww-caption'), utterance = make('p', 'ww-utterance'), translation = make('p', 'ww-translation')
+  said.append(caption, utterance, translation)
+  card.append(heading, rule, status, said)
   const choices = make('div', 'ww-choices')
   const rail = make('div', 'ww-gesture-rail')
   rail.setAttribute('aria-label', 'Actions')
-  card.append(heading, caption, translation, choices)
-  dock.append(card, rail)
+  const interactHint = make('small', 'ww-interact-key')
+  interactHint.append(make('kbd', '', 'E'), ' · interact')
+  dock.append(card, choices, rail, interactHint)
   root.append(notesToggle, dock)
 
   function panel(label: string, dismissible = true) {
@@ -127,6 +179,7 @@ export function createInteractionUI(app: HTMLElement, options: InteractionOption
   }
 
   const notes = panel('Field notes')
+  notes.classList.add('ww-notes')
   const notesBody = make('div')
   notes.append(notesBody)
   notesToggle.onclick = () => {
@@ -151,7 +204,10 @@ export function createInteractionUI(app: HTMLElement, options: InteractionOption
     for (const id of ['kael', 'tala', 'oru'] as const) {
       const r = s.relationships[id]
       const row = make('div', 'ww-notes-row')
-      row.append(make('strong', '', names[id]), make('span', '', r.met ? readMood(id)[1] : 'Unmet'))
+      const [tone, label] = r.met ? readMood(id) : ['unmet', 'Unmet']
+      const feeling = make('span', 'ww-mood', label)
+      feeling.dataset.tone = tone
+      row.append(make('strong', '', names[id]), feeling)
       people.append(row)
       const previous = r.history.at(-1)
       if (previous) people.append(make('p', 'ww-note', previous.caption))
@@ -177,11 +233,13 @@ export function createInteractionUI(app: HTMLElement, options: InteractionOption
   }
 
   const speech = panel('Speak / ask')
+  speech.classList.add('ww-speak')
   const form = make('form'), speechLabel = make('label', '', 'Your words')
   const words = make('input')
   words.type = 'text'
   words.maxLength = 160
   words.autocomplete = 'off'
+  words.enterKeyHint = 'send'
   words.placeholder = 'How do I cross the reef?'
   speechLabel.append(words)
   const formActions = make('div', 'ww-pack')
@@ -207,11 +265,13 @@ export function createInteractionUI(app: HTMLElement, options: InteractionOption
         session.onend = () => {
           if (mic === session) mic = null
           listen.textContent = 'Use mic'
+          mark(listen, 'live', null)
           if (micStatus.textContent === 'Listening…') micStatus.textContent = 'Mic off.'
         }
         session.onerror = () => { micStatus.textContent = 'Mic unavailable. You can type instead.' }
         session.start()
         listen.textContent = 'Stop mic'
+        mark(listen, 'live', '')
         micStatus.textContent = 'Listening…'
       } catch { stopMic(); micStatus.textContent = 'Mic unavailable. You can type instead.' }
     })
@@ -236,6 +296,7 @@ export function createInteractionUI(app: HTMLElement, options: InteractionOption
   speech.onclose = () => { stopMic(); words.value = ''; micStatus.textContent = '' }
 
   const outcome = panel('Wash ashore', false)
+  outcome.classList.add('ww-ending')
   const summary = make('p'), outcomeActions = make('div', 'ww-outcome-actions')
   outcome.addEventListener('cancel', e => e.preventDefault())
   function leaveOutcome(fresh: boolean) {
@@ -246,8 +307,13 @@ export function createInteractionUI(app: HTMLElement, options: InteractionOption
     if (fresh) { story.reset(); options.onFreshDrop() }
     else { story.resumeAfterEnding(); options.onWashAshore() }
   }
-  outcomeActions.append(button('Wash Up on the Cove (Keep Progress)', () => leaveOutcome(false)),
-    button('Fresh Parachute Drop (Reset)', () => leaveOutcome(true)))
+  function way(label: string, cost: string, act: () => void) {
+    const b = button(label, act)
+    b.append(' ', make('small', '', cost))
+    return b
+  }
+  outcomeActions.append(way('Wash up on the cove', 'Keep progress', () => leaveOutcome(false)),
+    way('Fresh parachute drop', 'Reset', () => leaveOutcome(true)))
   outcome.append(summary, outcomeActions)
   function showOutcome(id: EndingId | 'captured') {
     if (activeOutcome || disposed) return
@@ -268,11 +334,15 @@ export function createInteractionUI(app: HTMLElement, options: InteractionOption
     story.onCaptured()
   }
 
-  async function takeTurn(input: { gesture?: PlayerGesture; say?: string }) {
+  /** What the player just did, kept lit while the islander makes up their mind. */
+  type Sent = { ack: string; el: Element | null }
+  let sent: Sent | null = null
+  async function takeTurn(input: { gesture?: PlayerGesture; say?: string }, from?: Sent) {
     if (context?.kind !== 'npc' || activeOutcome || pending || (input.say && !canSpeak())) return
     const current = context
     const controller = new AbortController()
     pending = controller
+    sent = from ?? { ack: input.say ? '“' + input.say + '”' : '', el: null }
     notice = ''
     renderDock()
     try {
@@ -287,130 +357,268 @@ export function createInteractionUI(app: HTMLElement, options: InteractionOption
     } catch {
       if (!controller.signal.aborted) notice = 'The moment passes. Try another gesture.'
     } finally {
-      if (pending === controller) { pending = null; renderDock() }
+      if (pending === controller) { pending = null; sent = null; renderDock() }
     }
   }
 
-  type Action = { label: string; run: () => void; disabled?: boolean }
+  type Action = { label: string; run: () => void; disabled?: boolean; ending?: boolean }
+  type Reply = { label: string; gesture?: PlayerGesture; say?: string; opens?: boolean }
   let actions: Action[] = []
   let primary: Action | undefined
+  // What each part of the dock last drew. A part is rebuilt only when its key changes.
+  let saidKey = '', statusKey = '', replyKey = '', railKey = ''
+  let shownTone: string | null = null
+  let scene = false
+  let leaving = 0
+  function arrive() {
+    if (leaving) { window.clearTimeout(leaving); leaving = 0 }
+    dock.classList.remove('is-leaving')
+    dock.inert = false
+    dock.hidden = false
+  }
+  /** Fade out first, then leave the layout: the game's whisper line watches the hidden attribute. */
+  function leave() {
+    if (dock.hidden || leaving) return
+    dock.classList.add('is-leaving')
+    dock.inert = true
+    leaving = window.setTimeout(() => {
+      leaving = 0
+      dock.hidden = true
+      dock.classList.remove('is-leaving')
+    }, still() ? 110 : 260)
+  }
   function worldAction(label: string, act: () => boolean, message: string, disabled = false): Action {
     return { label, disabled, run: () => {
       if (!context || !act()) return
       notice = message
+      saidKey = ''
       options.onWorldAction?.(context)
       renderDock()
     } }
   }
+  /** Narration in the game's whisper voice, the islander's own voice a word at a time, the guess a beat later. */
+  function renderSaid(line: string, heard: string, hint: string, plain: boolean) {
+    const key = [plain ? 'plain' : 'voiced', line, heard, hint].join('\n')
+    if (key === saidKey) return
+    saidKey = key
+    caption.replaceChildren()
+    utterance.replaceChildren()
+    translation.replaceChildren()
+    let beat = 0
+    if (plain) {
+      if (line) caption.append(told(line, 0))
+    } else {
+      const spoken = [...line.matchAll(quoted)]
+      let from = 0
+      for (const quote of spoken) {
+        const before = line.slice(from, quote.index).trim()
+        if (before) { caption.append(told(before, beat), ' '); beat += 5 }
+        const voice = make('span', 'ww-voice')
+        from = quote.index + quote[0].length
+        if (spoken.length === 1 && (!before || !line.slice(from).trim())) voice.classList.add('is-line')
+        if (quote[0].length > 64) voice.classList.add('is-long')
+        beat = voiced(voice, quote[0], beat)
+        caption.append(voice, ' ')
+      }
+      const rest = line.slice(from).trim()
+      if (rest) { caption.append(told(rest, beat)); beat += 5 }
+    }
+    if (heard) beat = voiced(utterance, heard, beat)
+    if (hint) {
+      translation.append(make('span', 'ww-by', 'Tala translates'), make('span', 'ww-sep', ' · '), make('span', 'ww-guess', hint))
+      translation.style.setProperty('--i', String(beat))
+    }
+  }
   function renderDock() {
     if (disposed) return
     const s = story.getState()
-    dock.hidden = !context
-    if (!context) { actions = []; primary = undefined; return }
-    choices.replaceChildren()
-    mood.hidden = context.kind !== 'npc'
-    subtitle.textContent = ''
-    translation.textContent = ''
+    if (!context) { actions = []; primary = undefined; leave(); return }
+    arrive()
     actions = []
     primary = undefined
-    let line = ''
+    const replies: Reply[] = []
+    let line = '', heard = '', hint = ''
+    let tone: string | null = null, air: string | null = null
     if (context.kind === 'npc') {
       const { npcId } = context
-      title.textContent = names[npcId]
-      subtitle.textContent = roles[npcId]
-      const [tone, label] = readMood(npcId)
-      mood.dataset.tone = tone
-      mood.textContent = label
-      line = lastTurn?.caption ?? { kael: 'The spear stops tapping.', tala: 'A diver tips water out of one ear.', oru: 'The elder watches the space between your hands.' }[npcId]
-      if (lastTurn?.utterance && !line.includes(lastTurn.utterance)) line += ' · ' + lastTurn.utterance
-      if (lastTurn?.translationHint && npcId === 'oru' && canSpeak()) translation.textContent = 'Tala translates · ' + lastTurn.translationHint
+      const speaks = canSpeak()
+      put(title, names[npcId])
+      put(subtitle, roles[npcId])
+      const [feel, label] = readMood(npcId)
+      tone = feel
+      put(mood, label)
+      line = lastTurn?.caption ?? firstLook[npcId]
+      if (lastTurn?.utterance && !line.includes(lastTurn.utterance)) heard = lastTurn.utterance
+      if (lastTurn?.translationHint && npcId === 'oru' && speaks) hint = lastTurn.translationHint
       for (const c of lastTurn?.suggestedChoices ?? []) {
-        if ((!c.gesture && !c.say) || (c.say && !canSpeak())) continue
-        const b = button(c.label, () => void takeTurn({ gesture: c.gesture, say: c.say }))
-        b.disabled = !!pending
-        choices.append(b)
+        if ((!c.gesture && !c.say) || (c.say && !speaks)) continue
+        replies.push(c)
       }
-      if (canSpeak()) {
-        const speak = button('Speak / ask', () => openDialog(speech))
-        speak.setAttribute('aria-haspopup', 'dialog')
-        speak.disabled = !!pending
-        choices.append(speak)
-      }
-      actions = gestures.map(([gesture, label]) => ({
-        label, run: () => void takeTurn({ gesture }),
+      if (speaks) replies.push({ label: 'Speak / ask', opens: true })
+      actions = gestures.map(([gesture, label], index) => ({
+        label, run: () => void takeTurn({ gesture }, { ack: label, el: rail.children[index] ?? null }),
         disabled: !!pending || (gesture === 'offer_item' && s.heldItem === 'none') ||
           (gesture === 'offer_cash' && (s.cashAmount < 10_000 || s.bagState !== 'carried')),
       }))
       primary = actions[0]
+      // The mood is carried by the panel's posture. Kael is taut until he trusts you.
+      air = context.hostile || feel === 'hot' || (lastTurn && edgy.includes(lastTurn.action)) ? 'tense'
+        : npcId === 'kael' ? (feel === 'warm' ? 'calm' : 'taut')
+        : feel === 'wary' ? 'calm' : npcId === 'tala' ? 'light' : 'warm'
     } else {
+      put(subtitle, '')
       if (context.kind === 'salvage') {
         const item = context.item
-        title.textContent = items[item]
+        put(title, items[item])
         const flag = { salvage_compass: 'salvagedCompass', salvage_flare: 'salvagedFlare', radio_battery: 'salvagedBattery' } as const
         const recovered = item === 'spear' ? s.inventory.includes(item) : s.flags[flag[item]]
         actions.push(worldAction(recovered ? 'Recovered' : 'Take ' + items[item].toLowerCase(),
           () => story.acquire(item), items[item] + ' in hand.', recovered))
       } else if (context.kind === 'totem') {
-        title.textContent = 'Carved totem'
+        put(title, 'Carved totem')
         actions.push(worldAction(s.flags.foundTotem ? 'Markings recorded' : 'Study the markings', () => {
           story.discover('foundTotem')
           return story.getState().flags.foundTotem
         }, 'Your fingers follow a channel worn smooth by salt.', s.flags.foundTotem))
       } else if (context.kind === 'cave') {
-        title.textContent = 'Tidal caves'
+        put(title, 'Tidal caves')
         if (s.bagState === 'stashed_caves') actions.push(worldAction('Retrieve duffel', () => story.retrieveBag(), 'Duffel in hand.'))
         else actions.push(worldAction('Stash bag', () => story.stashBag(), 'The tide keeps your secret.', s.bagState !== 'carried'))
       } else if (context.kind === 'dropped_bag') {
-        title.textContent = 'Waterlogged duffel'
+        put(title, 'Waterlogged duffel')
         actions.push(worldAction('Pick up duffel', () => story.retrieveBag(), 'Duffel in hand.', s.bagState !== 'dropped'))
       } else if (context.kind === 'campfire') {
-        title.textContent = 'Campfire'
+        put(title, 'Campfire')
         actions.push(worldAction('Burn $10k', () => story.burnCash(), 'A very short-lived investment.', s.cashAmount < 10_000 || s.bagState !== 'carried'))
       } else {
-        title.textContent = 'Reef passage'
+        put(title, 'Reef passage')
         line = 'Beyond the breakers lies open water.'
       }
       for (const ending of story.availableEndings()) {
         if (context.kind === (ending === 'burn_the_bag' ? 'campfire' : 'escape')) {
-          actions.push({ label: endings[ending][1], run: () => { story.finish(ending) } })
+          actions.push({ label: endings[ending][1], ending: true, run: () => { story.finish(ending) } })
         }
       }
       primary = actions.find(a => !a.disabled)
     }
-    const feedback = notice || (pending ? 'Watching for a response…' : line)
-    if (caption.textContent !== feedback) caption.textContent = feedback
-    rail.replaceChildren(...actions.map((action, index) => {
-      const b = button('', action.run)
-      const key = make('kbd', '', String(index + 1))
-      key.setAttribute('aria-hidden', 'true')
-      b.append(key, document.createTextNode(action.label))
-      b.disabled = !!action.disabled
-      b.title = action.label + ' · ' + (index + 1) + (action === primary ? ' / E' : '')
-      return b
-    }))
+    const person = context.kind === 'npc'
+    mood.hidden = !person
+    mark(dock, 'kind', context.kind)
+    mark(dock, 'npc', context.kind === 'npc' ? context.npcId : null)
+    mark(dock, 'tone', tone)
+    mark(mood, 'tone', tone)
+    mark(dock, 'air', air)
+    mark(dock, 'beat', person && lastTurn ? lastTurn.action : null)
+    mark(dock, 'state', pending ? 'pending' : null)
+    mark(said, 'first', person && !lastTurn ? '' : null)
+    if (tone && shownTone && tone !== shownTone && !still()) {
+      play(rule, [{ transform: 'scaleX(2.4)', opacity: 1 }, { transform: 'scaleX(1)' }], 900, 'cubic-bezier(0.2, 0.75, 0.25, 1)')
+    }
+    shownTone = tone
+
+    // While the islander thinks, the last line stays where it is and dims. Nothing jumps.
+    const waiting = pending ? 'wait\n' + (sent?.ack ?? '') : ''
+    if (waiting !== statusKey) {
+      statusKey = waiting
+      status.replaceChildren()
+      if (pending) {
+        if (sent?.ack) status.append(make('span', 'ww-ack', sent.ack), make('span', 'ww-sep', ' · '))
+        status.append(make('span', 'ww-wait', 'Watching for a response…'))
+      }
+    }
+    renderSaid(notice || line, notice ? '' : heard, hint, !person || !!notice)
+
+    const nextReplies = replies.map(r => [r.label, r.gesture ?? '', r.say ?? '', r.opens ? 'opens' : ''].join('\t')).join('\n')
+    if (nextReplies !== replyKey) {
+      replyKey = nextReplies
+      choices.replaceChildren(...replies.map((reply, index) => {
+        const b: HTMLButtonElement = reply.opens
+          ? button(reply.label, () => openDialog(speech))
+          : button(reply.label, () => void takeTurn({ gesture: reply.gesture, say: reply.say }, { ack: reply.label, el: b }))
+        if (reply.opens) b.setAttribute('aria-haspopup', 'dialog')
+        else if (reply.say) b.dataset.says = ''
+        b.style.setProperty('--i', String(index))
+        return b
+      }))
+    }
+    for (const el of choices.children) {
+      const b = el as HTMLButtonElement
+      if (b.disabled !== !!pending) b.disabled = !!pending
+      b.classList.toggle('is-sent', sent?.el === b)
+    }
+
+    const nextRail = actions.map(a => (a.ending ? 'ending\t' : '\t') + a.label).join('\n')
+    if (nextRail !== railKey) {
+      railKey = nextRail
+      rail.replaceChildren(...actions.map((action, index) => {
+        const b = button('', () => {
+          const live = actions[index]
+          if (live && !live.disabled) live.run()
+        })
+        const key = make('kbd', '', String(index + 1))
+        key.setAttribute('aria-hidden', 'true')
+        b.append(key, document.createTextNode(action.label))
+        if (action.ending) b.dataset.ending = ''
+        b.style.setProperty('--i', String(index))
+        return b
+      }))
+    }
+    actions.forEach((action, index) => {
+      const b = rail.children[index] as HTMLButtonElement
+      if (b.disabled !== !!action.disabled) b.disabled = !!action.disabled
+      const tip = action.label + ' · ' + (index + 1) + (action === primary ? ' / E' : '')
+      if (b.title !== tip) b.title = tip
+      b.classList.toggle('is-sent', sent?.el === b)
+    })
   }
   function setContext(next: InteractionContext | null) {
     if (disposed || next === context) return
     if (context && next && next.kind === context.kind) {
       if (next.kind === 'npc' && context.kind === 'npc') {
-        if (next.npcId === context.npcId && !!next.talaPresent === !!context.talaPresent && !!next.trespassing === !!context.trespassing) return
+        if (next.npcId === context.npcId && !!next.talaPresent === !!context.talaPresent && !!next.trespassing === !!context.trespassing) {
+          // The spear going up or down changes the panel's posture only: the turn in hand and the words stay.
+          if (!!next.hostile !== !!context.hostile) {
+            context.hostile = !!next.hostile
+            renderDock()
+          }
+          return
+        }
       } else if (next.kind !== 'salvage' || (context.kind === 'salvage' && context.item === next.item)) return
     }
     pending?.abort()
     pending = null
+    sent = null
     if (speech.open) speech.close()
+    // Tala walking up, or a step over the camp line, changes what you can do, not who you are with.
+    const sameFace = !!context && !!next && context.kind === 'npc' && next.kind === 'npc' && context.npcId === next.npcId
     context = next ? { ...next } : null
     lastTurn = null
     notice = ''
-    rail.scrollLeft = 0
-    card.scrollTop = 0
+    if (context && !sameFace) {
+      // A new face or a new thing: let every part make its entrance again.
+      saidKey = replyKey = railKey = '\n'
+      shownTone = null
+      scene = !scene
+      mark(dock, 'scene', scene ? 'b' : 'a')
+    }
     renderDock()
   }
+  let purse: number | null = null
   const unsubscribe = story.subscribe(s => {
-    cash.textContent = money.format(s.cashAmount)
-    tag.textContent = statusTags[s.bagState]
-    held.textContent = items[s.heldItem]
-    notesToggle.setAttribute('aria-label', 'Field notes · ' + [cash.textContent, tag.textContent, held.textContent].join(' · '))
+    put(cash, money.format(s.cashAmount))
+    put(tag, statusTags[s.bagState])
+    put(held, items[s.heldItem])
+    const reading = 'Field notes · ' + [cash.textContent, tag.textContent, held.textContent].join(' · ')
+    if (notesToggle.getAttribute('aria-label') !== reading) notesToggle.setAttribute('aria-label', reading)
+    if (purse !== null && s.cashAmount < purse) {
+      // The ledger takes the loss without comment.
+      spent.textContent = '−' + money.format(purse - s.cashAmount)
+      play(spent, still()
+        ? [{ opacity: 0 }, { opacity: 1, offset: 0.15 }, { opacity: 1, offset: 0.75 }, { opacity: 0 }]
+        : [{ opacity: 0, transform: 'translateY(-0.35rem)' }, { opacity: 1, transform: 'translateY(0)', offset: 0.12 },
+          { opacity: 1, transform: 'translateY(0.2rem)', offset: 0.7 }, { opacity: 0, transform: 'translateY(1rem)' }], 2400)
+    }
+    purse = s.cashAmount
     if (s.ending) showOutcome(s.ending)
     if (speech.open && !canSpeak()) speech.close()
     if (notes.open) renderNotes()
@@ -436,7 +644,12 @@ export function createInteractionUI(app: HTMLElement, options: InteractionOption
       first?.focus({ preventScroll: true })
       return
     }
-    if (action && !action.disabled) { e.preventDefault(); e.stopImmediatePropagation(); action.run() }
+    if (action && !action.disabled) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      nudge(rail.children[actions.indexOf(action)])
+      action.run()
+    }
   }, { capture: true, signal })
   function dispose() {
     disposed = true
@@ -444,6 +657,7 @@ export function createInteractionUI(app: HTMLElement, options: InteractionOption
     stopMic()
     listeners.abort()
     unsubscribe()
+    window.clearTimeout(leaving)
     for (const modal of [notes, speech, outcome]) if (modal.open) modal.close()
     root.remove()
   }

@@ -672,9 +672,9 @@ const tribe = createTribeSim(scene, {
     playerCrouched = false
     interactionUI?.capture()
   },
-  onProximityEnter: (id) => {
-    if (id === 'kael') hud.whisper('A figure steps clear of the trees.')
-  },
+  // The sim narrates Kael's approach itself now (its far-notice lines, with its own gap between whispers),
+  // so nothing is said here: a line from here used to land on top of them.
+  onProximityEnter: () => {},
 })
 
 const heistIntro = createHeistIntro(app, {
@@ -1488,6 +1488,7 @@ function frame() {
           npcId: nearest.id,
           talaPresent,
           trespassing: places.inSacredZone(player.x, player.z),
+          hostile: kaelHostile,
         }
       }
       const hit = heistProps.getNearbyInteractable(playerPosVec, 4.2)

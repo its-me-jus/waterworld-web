@@ -5,6 +5,37 @@ For whoever wires this into `src/main.ts` (Antigravity, as planned). Written 22 
 Everything here is new files in `src/story/` and `src/tribe/`. No existing file was changed, nothing is committed,
 and `npx tsc --noEmit` is clean. Until `main.ts` imports these, the live game is unchanged.
 
+## Polish round, 22 Nov afternoon (after the integration commit 0583a9d)
+
+Four agents reworked the look and feel on top of the wired game. Where this section disagrees with the older text
+below, this section is right. Uncommitted when written.
+
+- **Bodies (`npc-mesh.ts`)**: each islander is now ONE skinned mesh on a 25-bone skeleton (Tala has a second mesh
+  for her brass), with a face (eyes, lids, brows, nose, lips, ears), blinking, eyes that lead the head on `lookAt`,
+  cloth and ornament from a small atlas painted at load, spring-eased poses and a walk that plants its feet against
+  `motion.speed`. Skin carries a sky-fill emissive registered with `skyFill()`. Measured: Kael 3,626 triangles /
+  1 draw, Tala 3,898 / 2, Oru 3,906 / 1 on full; 2,508 / 2,686 / 2,758 on lowPower. The first islander built costs
+  about 390 ms at load on full (atlas paint). Exports, `IslanderRig`, `IslanderMotion` and the pose names are unchanged.
+  Dev turntable: `/scripts/tribe-lab.html`.
+- **Behaviour (`tribe-sim.ts`)**: eased speed and heading, gaze before body, seeded variety (reef work, fire
+  tending, lookouts, night camp), nobody's feet nearer than 1.25 m to the fire centre, Oru capped at 0.95 m/s.
+  Kael's chase gate, its constants and the public surface are byte-identical to the original. Evening homing is
+  earlier and staggered: Tala at dayPhase 0.745, Kael at 0.775 (both were 0.82); mornings Kael 0.235, Tala 0.25.
+  Out on his rounds Kael now stands his ground while warning, so a walk-up reaches the 9 m line later than before.
+- **Camp (`src/story/camp.ts`, `camp-fire.ts`, `camp-tex.ts`, `prop-geo.ts`, built from `createHeistProps`)**: two
+  open-sided thatched houses on stone platforms, a hearth with animated flames (the tripod is gone), drying rack,
+  earth oven, woodpile, midden, net pole, outrigger canoe, worn-ground decal; totem and bag reworked. Sites are
+  searched for at load and differ by budget: read `ww.heistProps.group.userData.camp.sites` ({ id, x, y, z, radius }).
+  +8,326 triangles / 5 draws (+2 shadow) on full, +3,921 / 5 on lowPower. Still 5 lights in the scene; the fire's
+  PointLight only changes intensity and height. The sim cannot read `sites`; it keeps camp activity to the fire side
+  and the open lane north of the fire.
+- **Encounter panel (`src/ai/interaction-ui.*`)**: the islander's words hang top-centre, replies low left, gestures
+  low right; behaviour and keys A/B-tested identical to the old panel. The npc context has one new optional field,
+  `hostile`, set by main.ts from Kael's pose: it only changes the panel's posture.
+- **main.ts**: `onProximityEnter` no longer whispers (the sim narrates Kael's approach itself).
+- **Shots**: `node scripts/tribe-shot.mjs` (see its header) shoots islanders, camp and panel in the running game.
+- **Not checked**: a real phone, frame rate, rain on the fire, the real brain's latency, the mic.
+
 ## Files
 
 | File | What it is |
